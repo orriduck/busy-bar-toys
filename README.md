@@ -1,0 +1,132 @@
+# BUSY Bar · AI Status
+
+把 AI 的工作状态放到桌面的 BUSY Bar 上。
+
+普通 ChatGPT/Codex 任务显示 ChatGPT 图标；Your dot 使用原创五点图标。前屏显示状态和耗时，背屏显示项目文件夹名与并行任务数。
+
+![设备实际显示：ChatGPT 工作状态与 Your dot 等待演示](docs/images/actual-device.png)
+
+| 状态 | 前屏 | 含义 |
+|---|---|---|
+| working | 蓝色 WORK | 任务正在执行 |
+| waiting | 橙色 WAIT | 任务正在等待输入或权限 |
+| done | 绿色 DONE | 本轮结束，12 秒后让出屏幕 |
+| error | 红色 ERROR | 收到任务级错误事件 |
+| stopped | 灰色 STOP | 用户中断了本轮任务 |
+| unknown | 灰色 CHECK | 30 分钟没有收到新事件，不推断已完成 |
+
+## 目前能自动跟踪什么
+
+**本机 Codex Desktop / CLI：**增量读取 `~/.codex/sessions` 中的生命周期事件，只提取会话 ID、轮次 ID、来源、项目文件夹名和时间。子 agent 不单独占屏。工具命令失败不会被误报为整个任务失败。用户输入工具可提供 WAIT；原生权限等待可通过下面的可选 hooks 明确上报。
+
+**Your dot：**从 Codex 本地显式 Orbit 身份元数据识别 dot 会话，或通过 `--dot-thread` 指定身份。仅有身份元数据时不会点亮工作状态。**纯云端 Your dot 没有本地生命周期事件，不能由此后台程序自动跟踪**；可用 `emit --source dots` 从 dot 的本地执行环境桥接真实事件。云端缓存里的 `active` 表示身份存续，不表示正在工作。
+
+本项目不读取网页 ChatGPT 对话状态，不推断任何云端任务已完成。Codex 会话日志是兼容适配器，并非稳定公共接口；升级后可用 hooks 或显式 `emit` 作为事件来源。
+
+## 安装（macOS）
+
+需要 Python 3.10+、Swift 编译器和联网的 BUSY Bar。
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
+swiftc scripts/store-token.swift -o .venv/bin/busy-token-store
+.venv/bin/busy-bar token-set
+.venv/bin/busy-bar status
+.venv/bin/busy-bar install
+```
+
+`token-set` 隐藏输入，只通过 stdin 把 token 交给 macOS Security framework。token 放在钥匙串的 `app.busybar.ai-status` 条目中；不写入源码、配置文件、命令行参数或日志。首次 `/usr/bin/security` 读取可能弹出钥匙串授权提示，需要你手动允许。
+
+`install` 安装当前用户的 LaunchAgent，立即启动并在登录后运行。它不会改动 Codex 的通知配置、hooks 信任配置、设备计时、亮度、声音、账户或网络设置。观察程序退出后，画面最多保留 15 秒；连接出错会退避重试，token 被拒绝则停止而不是反复认证。
+
+```sh
+# 查看真实设备连接和后台服务状态
+.venv/bin/busy-bar status
+
+# 停止并移除自动启动；保留钥匙串条目
+.venv/bin/busy-bar uninstall
+
+# 手动运行；只改变该会话使用的来源图标
+.venv/bin/busy-bar watch --dot-thread YOUR_DOT_THREAD_ID
+```
+
+后台日志：`~/Library/Logs/BusyBarAI/service.log`，只记录状态词和通用连接错误。事件缓冲：`~/Library/Application Support/BusyBarAI/events`，目录权限 0700，文件权限 0600。
+
+## 事件桥接
+
+外部脚本应围绕**同一轮真实任务**使用同一个 session 和 turn ID：
+
+```sh
+.venv/bin/busy-bar emit working --source dots --session-id YOUR_DOT_THREAD_ID --turn-id RUN_ID --project my-project
+.venv/bin/busy-bar emit waiting --source dots --session-id YOUR_DOT_THREAD_ID --turn-id RUN_ID --project my-project
+.venv/bin/busy-bar emit done --source dots --session-id YOUR_DOT_THREAD_ID --turn-id RUN_ID --project my-project
+```
+
+事件命令只在本机写入元数据，后台程序再发送显示数据。云端 dot 必须能够在这台 Mac 执行命令才能使用这条桥；没有本地访问时不声称已接通。
+
+### 可选 Codex hooks
+
+`busy-bar hook` 从 stdin 消费官方 hooks JSON，把 `UserPromptSubmit` / `PreToolUse` / `PostToolUse` 映射为 WORK，`PermissionRequest` 映射为 WAIT，`Stop` 映射为 DONE，`Interrupt` 映射为 STOP。
+
+将下面片段**合并**到你已有的 `~/.codex/hooks.json` 的 `hooks` 对象，替换命令中的绝对路径。不要覆盖已有 hooks。对上面六种事件分别配置同样的 handler：
+
+```json
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/busy-bar/.venv/bin/busy-bar hook",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+按 Codex 的正常流程审核并信任新增 hook。程序不修改信任记录、不绕过审核。hook 丢弃 prompt、tool_input 和工具输出，且不做网络请求，避免拖慢任务。
+
+## 预览与演示
+
+```sh
+.venv/bin/busy-bar preview --output .local/preview
+
+# 先停掉观察程序，防止真实状态覆盖演示
+.venv/bin/busy-bar uninstall
+.venv/bin/busy-bar demo --source dots --state waiting --seconds 5
+.venv/bin/busy-bar install
+
+# 读取设备实际像素（用于验证，不是本地模拟图）
+.venv/bin/busy-bar capture --output .local/device
+```
+
+演示背屏明确标记 DEMO。前屏 72×16 RGB；背屏 160×80 OLED。中文项目名在 Mac 上渲染为图片，不依赖设备的 ASCII 字体。
+
+## 屏幕共存
+
+只使用 `application_name=ai-status`，清理时只删除本应用元素。显示优先级为 50；内置 BUSY/CUSTOM 专注阶段是 90，所以专注时收到 HTTP 409 会正常让出屏幕。其他同优先级应用可能覆盖画面；本程序不改变它们的设置。所有显示元素 15 秒后自动失效，每 5 秒刷新。
+
+## 验证与来源
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+测试覆盖真实事件状态机、跨轮次乱序、部分 JSONL 写入、过期状态、来源识别、并发优先级、XPM2 尺寸、权限冲突、定向清理与错误脱敏。
+
+接口核查：2026-10-14，BUSY Bar 固件 1.2.4 / API 27.5.0。
+
+验收记录：[verification.md](docs/verification.md)。
+
+- [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api)
+- [固件 1.2.4 OpenAPI](https://api.busy.app/busybar/openapi.yaml?Name=1.2.4)
+- [硬件规格](https://docs.busy.app/bar/tech-specs)
+- [Codex hooks](https://learn.chatgpt.com/docs/hooks)
+- [ChatGPT 官方图标来源](https://help.openai.com/en/articles/7905742-what-does-the-official-chatgpt-ios-app-icon-look-like)
+
+ChatGPT 图标归 OpenAI 所有，仅用来识别对应任务；本项目并非 OpenAI 或 BUSY 官方产品。五点 Your dot 标记为本项目原创。

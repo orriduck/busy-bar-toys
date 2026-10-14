@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "busy-bar-status"
+version = "0.1.0"
+description = "A BUSY Bar status light for local Codex tasks and Your dot events"
+requires-python = ">=3.10"
+dependencies = ["Pillow>=10.1,<13"]
+
+[project.scripts]
+busy-bar = "busybar_status.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+busybar_status = ["assets/*"]
+
