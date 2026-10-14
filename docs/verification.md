@@ -1,6 +1,6 @@
 # Verification — 2026-10-14
 
-- Local unittest suite: 45 tests, all passed on Python 3.14 / Pillow 12.3.
+- Local unittest suite: 46 tests, all passed on Python 3.14 / Pillow 12.3.
 - BUSY device status: HTTP 200; firmware 1.2.4, API 27.5.0.
 - Authenticated Python client: identifies itself as `busy-bar-status/0.1`; the cloud rejected the default Python urllib user agent, so generic HTTP 403 must not alone be treated as proof of a bad token during troubleshooting.
 - Keychain: authorized by the user through the native system dialog; token read through `/usr/bin/security`, never committed or logged.
@@ -12,6 +12,7 @@
 - Actual local lifecycle: bootstrap observed the originating busy-bar session as working, project `busy-bar`, one active task. Background service rendered that real state; both framebuffers were read back.
 - LaunchAgent: loaded and running under the current user's GUI session, automatically starts at login. Log records actual working transition. No Codex hooks, hook trust records, device timers, brightness or audio settings changed.
 - Cloud-only Your dot status: **not automatically connected**. Explicit Orbit identity classification and metadata event bridge provided; cached profile status is never used as task state. Dots WAIT screenshot is labeled DEMO on the device.
+- Reinstall race: launchd may report transient EIO immediately after bootout; installation now retries only that local teardown condition, bounded to 3 seconds. Regression test and live reinstall passed.
 - Actual completion of the originating conversation occurs after this report is written. Completion/interrupt, waiting correlation and expiration are covered by synthetic lifecycle regressions; no claim of a live completed conversation test is made.
 
 ![Actual device demos](images/actual-device.png)

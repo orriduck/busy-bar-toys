@@ -51,8 +51,14 @@ def install():
     _service("bootout")
     PLIST.write_bytes(plistlib.dumps(config))
     PLIST.chmod(0o600)
-    result = subprocess.run(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(PLIST)],
-                            capture_output=True, text=True)
+    # bootout can return before launchd releases the old registration. Retry only
+    # that transient local EIO; other setup errors remain immediate failures.
+    for attempt in range(6):
+        result = subprocess.run(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(PLIST)],
+                                capture_output=True, text=True)
+        if result.returncode != 5 or attempt == 5:
+            break
+        time.sleep(0.5)
     if result.returncode:
         raise RuntimeError("Could not load the per-user BUSY Bar service.")
     print("BUSY Bar service installed. Starts now and at login.")
