@@ -222,6 +222,38 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(w.poll(101),1)
         self.assertEqual(r.select(101).state,"done")
 
+    def test_same_inode_rewrite_at_same_or_larger_size_is_replayed(self):
+        for padding in (0, 100):
+            with self.subTest(padding=padding):
+                started = json.dumps({"timestamp":100,"type":"event_msg","payload":{"type":"task_started","turn_id":"a"}})+" \n"
+                completed = json.dumps({"timestamp":101,"type":"event_msg","payload":{"type":"task_complete","turn_id":"a"}})+"\n"
+                self.path.write_text(started)
+                os.utime(self.path,(100,100))
+                inode = self.path.stat().st_ino
+                r = TaskRegistry()
+                w = RolloutWatcher(self.root,r)
+                self.assertEqual(w.poll(100),1)
+                self.path.write_text(completed+" "*(len(started)-len(completed)+padding))
+                os.utime(self.path,(101,101))
+                self.assertEqual(self.path.stat().st_ino,inode)
+                self.assertGreaterEqual(self.path.stat().st_size,len(started))
+                self.assertEqual(w.poll(101),1)
+                self.assertEqual(r.select(101).state,"done")
+                self.assertEqual(w.poll(102),0)
+
+    def test_in_place_rewrite_with_restored_mtime_is_replayed(self):
+        started = json.dumps({"timestamp":100,"type":"event_msg","payload":{"type":"task_started","turn_id":"a"}})+" \n"
+        completed = json.dumps({"timestamp":101,"type":"event_msg","payload":{"type":"task_complete","turn_id":"a"}})+"\n"
+        self.path.write_text(started)
+        os.utime(self.path,(100,100))
+        r = TaskRegistry()
+        w = RolloutWatcher(self.root,r)
+        w.poll(100)
+        self.path.write_text(completed+" "*(len(started)-len(completed)))
+        os.utime(self.path,(100,100))
+        self.assertEqual(w.poll(101),1)
+        self.assertEqual(r.select(101).state,"done")
+
     def test_boot_recovers_long_turn_start_outside_tail_before_recent_heartbeat(self):
         records = [{"type":"session_meta","payload":{"id":"actual","cwd":"/work/long"}},
                    {"timestamp":1,"type":"event_msg","payload":{"type":"task_started","turn_id":"long"}}]

@@ -53,10 +53,11 @@ def install():
     PLIST.chmod(0o600)
     # bootout can return before launchd releases the old registration. Retry only
     # that transient local EIO; other setup errors remain immediate failures.
-    for attempt in range(6):
+    # Up to 10s for an in-flight request plus 10s for scoped final cleanup.
+    for attempt in range(51):
         result = subprocess.run(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(PLIST)],
                                 capture_output=True, text=True)
-        if result.returncode != 5 or attempt == 5:
+        if result.returncode != 5 or attempt == 50:
             break
         time.sleep(0.5)
     if result.returncode:

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 import math
 from pathlib import Path
@@ -179,6 +180,12 @@ class RolloutWatcher:
         return match.group(1) if match else path.stem
 
     @staticmethod
+    def _tail_fingerprint(stream, offset: int) -> bytes:
+        start = max(0, offset - 256)
+        stream.seek(start)
+        return sha256(stream.read(offset - start)).digest()
+
+    @staticmethod
     def _is_boundary(record: dict) -> bool:
         payload = record.get("payload")
         payload = payload if isinstance(payload, dict) else {}
@@ -265,6 +272,9 @@ class RolloutWatcher:
                 if info is None and now - stat.st_mtime > STALE_SECONDS:
                     continue
                 boot = info is None or stat.st_size < info["offset"] or stat.st_ino != info["inode"]
+                if not boot and (stat.st_mtime_ns != info.get("mtime_ns") or stat.st_ctime_ns != info.get("ctime_ns")):
+                    with path.open("rb") as stream:
+                        boot = self._tail_fingerprint(stream, info["offset"]) != info.get("fingerprint")
                 if boot:
                     info = {"offset": max(0, stat.st_size - TAIL_BYTES), "buffer": b"", "session": self._filename_id(path), "ignored": False, "inode": stat.st_ino}
                     self._files[path] = info
@@ -288,6 +298,9 @@ class RolloutWatcher:
                         stream.seek(info["offset"])
                     data = stream.read()
                     info["offset"] = stream.tell()
+                    info["fingerprint"] = self._tail_fingerprint(stream, info["offset"])
+                    info["mtime_ns"] = stat.st_mtime_ns
+                    info["ctime_ns"] = stat.st_ctime_ns
                 lines = (info["buffer"] + data).split(b"\n")
                 info["buffer"] = lines.pop()
                 for line in lines:

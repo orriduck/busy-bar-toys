@@ -11,7 +11,7 @@ class InstallTests(unittest.TestCase):
     def test_reinstall_waits_for_previous_launchd_registration_to_release(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            attempts=[subprocess.CompletedProcess([],5),subprocess.CompletedProcess([],0)]
+            attempts=[subprocess.CompletedProcess([],5)]*8+[subprocess.CompletedProcess([],0)]
             with patch('busybar_status.cli.RUNTIME',root/'runtime'), \
                  patch('busybar_status.cli.PLIST',root/'agent.plist'), \
                  patch('busybar_status.cli.Path.home',return_value=root), \
@@ -20,7 +20,7 @@ class InstallTests(unittest.TestCase):
                  patch('busybar_status.cli.time.sleep'), \
                  patch('busybar_status.cli.subprocess.run',side_effect=attempts) as launcher:
                 install()
-                self.assertEqual(launcher.call_count,2)
+                self.assertEqual(launcher.call_count,9)
 
 
 if __name__=='__main__':unittest.main()
