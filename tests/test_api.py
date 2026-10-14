@@ -35,6 +35,31 @@ class APITests(unittest.TestCase):
         BusyAPI("secret", open_url=open_url).status()
         self.assertEqual(seen, ["busy-bar-status/0.1"])
 
+    def test_animation_upload_is_binary_and_stays_in_our_namespace(self):
+        requests=[]
+        def open_url(req, timeout):
+            requests.append(req)
+            return Response(b'{}')
+        BusyAPI("secret", open_url=open_url).upload_asset("thinking-v2.anim", b"bicycle0")
+        self.assertEqual(requests[0].data, b"bicycle0")
+        self.assertEqual(requests[0].get_header("Content-type"), "application/octet-stream")
+        self.assertEqual(requests[0].full_url,
+                         "https://api.busy.app/busybar/assets/upload?application_name=ai-status&file=thinking-v2.anim")
+
+    def test_changing_animation_type_clears_only_our_namespace_first(self):
+        requests=[]
+        def open_url(req, timeout):
+            requests.append(req)
+            return Response(b'{}')
+        client=BusyAPI("secret",open_url=open_url)
+        for kind in ["animation","animation","xpmbitmap","xpmbitmap"]:
+            client.draw({"elements":[{"id":"thinking","type":kind}]})
+        deletes=[r for r in requests if r.method=="DELETE"]
+        self.assertEqual(len(deletes),2)
+        self.assertTrue(all(json.loads(r.data)=={
+            "application_name":"ai-status"} for r in deletes))
+        self.assertEqual([r.method for r in requests],["DELETE","POST","POST","DELETE","POST","POST"])
+
     def test_auth_errors_do_not_echo_response_or_token(self):
         def open_url(req, timeout):
             raise HTTPError(req.full_url, 403, "private-secret", {},

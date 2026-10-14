@@ -22,3 +22,7 @@ Use macOS Keychain, read via `/usr/bin/security`. Initial secret is supplied on 
 
 Meaningful tests cover overlapping turns, stale turns, partial JSONL writes, source classification, multi-task arbitration, selective cleanup, priority conflict and credential redaction. Verify fresh device API responses and both rendered screens. A demo is identified as a demo. A real running state must come from this session's actual lifecycle event.
 
+
+## Approved follow-up: clock and reciprocating motion
+
+2026-10-14: keep the wall clock visible during monitoring and make thinking move back and forth. Front clock uses white 5×7 digits, New York time with DST; status and elapsed time remain separately visible. Native 30fps 52×1 strip uses the installed firmware 1.2.4 bicycle0 format, not the incompatible dev format. Upload only the helper-owned animation asset. Type transitions clear only our `ai-status` namespace before redrawing it; same-type refreshes preserve playback. See ../../clock-and-animation.md for tests and actual-frame verification.

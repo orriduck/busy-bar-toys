@@ -1,6 +1,9 @@
 """Render compact bitmaps locally; the device receives ASCII XPM2 only."""
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from .animation import ANIMATION_FILE, thinking_offset
 
 ASSETS = Path(__file__).parent / "assets"
 COLORS = {"working": "#459AFF", "waiting": "#FFBE45", "done": "#52DE96",
@@ -23,6 +26,34 @@ GLYPHS = {
     "W": ["101","101","111","111","101"], "X": ["101","101","010","101","101"],
     "+": ["000","010","111","010","000"], " ": ["000"] * 5,
 }
+
+CLOCK_DIGITS = {
+    "0": ["01110","10001","10011","10101","11001","10001","01110"],
+    "1": ["00100","01100","00100","00100","00100","00100","01110"],
+    "2": ["01110","10001","00001","00010","00100","01000","11111"],
+    "3": ["11110","00001","00001","01110","00001","00001","11110"],
+    "4": ["00010","00110","01010","10010","11111","00010","00010"],
+    "5": ["11111","10000","10000","11110","00001","00001","11110"],
+    "6": ["01110","10000","10000","11110","10001","10001","01110"],
+    "7": ["11111","00001","00010","00100","01000","01000","01000"],
+    "8": ["01110","10001","10001","01110","10001","10001","01110"],
+    "9": ["01110","10001","10001","01111","00001","00001","01110"],
+    ":": ["0","1","1","0","1","1","0"],
+}
+
+
+def clock_text(now, timezone="America/New_York"):
+    return datetime.fromtimestamp(now, ZoneInfo(timezone)).strftime("%H:%M")
+
+
+def draw_clock(draw, xy, value):
+    x,y = xy
+    for character in value:
+        glyph = CLOCK_DIGITS[character]
+        for row,pixels in enumerate(glyph):
+            for col,bit in enumerate(pixels):
+                if bit == "1": draw.point((x+col,y+row), fill="#FFFFFF")
+        x += len(glyph[0])+1
 
 
 def tiny_text(draw, xy, text, fill):
@@ -83,13 +114,14 @@ def render(task, now, count=1):
     draw = ImageDraw.Draw(front)
     color = COLORS[task.state]
     elapsed = max(0, int(now - task.started_at))
-    tiny_text(draw, (20, 2), LABELS[task.state], color)
+    draw_clock(draw, (20, 1), clock_text(now))
+    tiny_text(draw, (52, 2), LABELS[task.state], color)
     minutes = elapsed // 60
-    tiny_text(draw, (20, 9), f"{min(minutes, 999)}M", "#CCD4E0")
-    if count > 1: tiny_text(draw, (53, 9), f"X{min(count,99)}", color)
+    tiny_text(draw, (20, 10), f"{min(minutes, 999)}M", "#8893A4")
+    if count > 1: tiny_text(draw, (52, 10), f"X{min(count,99)}", color)
     draw.line((20, 15, 71, 15), fill="#102030")
     if task.state == "working":
-        x = 20 + (int(now) // 2 % 46)
+        x = 20 + thinking_offset(now)
         draw.line((x, 15, x + 5, 15), fill=color)
     else:
         draw.line((20, 15, 71, 15), fill=color)
@@ -98,8 +130,9 @@ def render(task, now, count=1):
     back.paste(source_icon(task.source, 24), (4, 4))
     draw = ImageDraw.Draw(back)
     draw.text((36, 5), "Your dot" if task.source == "dots" else "ChatGPT", font=font(16), fill="white")
-    draw.text((5, 31), LABELS[task.state], font=font(15), fill="white")
-    fitted_text(draw, (5, 51), task.project or "AI task", 150, 12)
+    draw.text((5, 29), clock_text(now), font=font(18), fill="white")
+    draw.text((88, 33), LABELS[task.state], font=font(11), fill="white")
+    fitted_text(draw, (5, 51), task.project or "AI task", 135, 12)
     draw.text((5, 68), f"{minutes:02d}:{elapsed%60:02d}  |  {count} active", font=font(9), fill="#AAAAAA")
     return front, back
 
@@ -122,7 +155,16 @@ def to_xpm(image):
 
 def make_payload(task, now, count=1):
     images = render(task, now, count)
-    return {"application_name": "ai-status", "priority": 50, "elements": [
+    elements = [
         {"id": name, "type": "xpmbitmap", "display": name, "x": 0, "y": 0,
          "timeout": 15, "data": to_xpm(image)}
-        for name, image in zip(("front", "back"), images)]}
+        for name, image in zip(("front", "back"), images)]
+    strip = {"id": "thinking", "display": "front", "x": 20, "y": 15,
+             "timeout": 15, "z_index": 1}
+    if task.state == "working":
+        strip.update(type="animation", path=ANIMATION_FILE, loop=True,
+                     await_previous_end=True, section="default")
+    else:
+        strip.update(type="xpmbitmap", data=to_xpm(images[0].crop((20,15,72,16))))
+    elements.append(strip)
+    return {"application_name": "ai-status", "priority": 50, "elements": elements}

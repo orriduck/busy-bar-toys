@@ -2,9 +2,11 @@
 
 把 AI 的工作状态放到桌面的 BUSY Bar 上。
 
-普通 ChatGPT/Codex 任务显示 ChatGPT 图标；Your dot 使用原创五点图标。前屏显示状态和耗时，背屏显示项目文件夹名与并行任务数。
+普通 ChatGPT/Codex 任务显示 ChatGPT 图标；Your dot 使用原创五点图标。监控期间，前屏保留纽约时间（24 小时制、自动夏令时），右侧显示任务状态，下方显示耗时和并行任务数；背屏显示时钟、项目文件夹名与任务详情。
 
-![设备实际显示：ChatGPT 工作状态与 Your dot 等待演示](docs/images/actual-device.png)
+思考指示条在底部左右往复，由设备原生动画以 30 fps 播放，一次完整往返约 3.1 秒。时钟与状态仍每 5 秒刷新，不需要用频繁的云端绘图驱动动画。
+
+![当前时间与 Codex 任务同时显示](docs/images/actual-clock.png)
 
 | 状态 | 前屏 | 含义 |
 |---|---|---|
@@ -121,7 +123,7 @@ swiftc scripts/store-token.swift -o .venv/bin/busy-token-store
 
 接口核查：2026-10-14，BUSY Bar 固件 1.2.4 / API 27.5.0。
 
-验收记录：[verification.md](docs/verification.md)。
+验收记录：[初版](docs/verification.md)、[时钟与往复动画](docs/clock-and-animation.md)。
 
 - [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api)
 - [固件 1.2.4 OpenAPI](https://api.busy.app/busybar/openapi.yaml?Name=1.2.4)
