@@ -7,8 +7,8 @@ import struct
 from types import SimpleNamespace
 from PIL import Image,ImageDraw
 
-from busybar_status.motion import MotionDirector
-from busybar_status.network import NetworkRates
+from busybar_agents.motion import MotionDirector
+from busybar_agents.network import NetworkRates
 
 
 def decode_asset(data):
