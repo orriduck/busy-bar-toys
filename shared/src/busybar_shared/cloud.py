@@ -575,22 +575,24 @@ class Producer:
         if snapshot.get('protocol')==1: self.accept(snapshot)
         return response
 
-    def _upload_assets(self,hashes,*,force=False):
+    def _upload_assets(self,hashes,asset_bodies,*,force=False):
         for digest in hashes:
             if not force and self.clock()-self._assets.get(digest,-float('inf'))<1800: continue
-            asset=self.state.data['assets'][digest]
-            result=self.http.request('POST','/api/assets',{k:asset[k] for k in ('hash','type','data')})
+            asset=asset_bodies.get(digest)
+            if asset is None: raise CloudError('local_asset_unavailable')
+            result=self.http.request('POST','/api/assets',asset)
             if result.get('hash')!=digest: raise CloudError('asset_hash_mismatch')
-            self._assets[digest]=self.clock()
-            if len(self._assets)>LOCAL_ASSET_COUNT:
-                del self._assets[min(self._assets,key=self._assets.get)]
+            with self.state.lock:
+                self._assets[digest]=self.clock()
+                if len(self._assets)>LOCAL_ASSET_COUNT:
+                    del self._assets[min(self._assets,key=self._assets.get)]
 
-    def _content(self,path,body,hashes):
+    def _content(self,path,body,hashes,asset_bodies):
         try: return self._response('POST',path,body)
         except CloudError as error:
             if error.code!='asset_not_authorized': raise
             for digest in hashes: self._assets.pop(digest,None)
-            self._upload_assets(hashes,force=True)
+            self._upload_assets(hashes,asset_bodies,force=True)
             # At most one immediate repair. Another eviction goes through the
             # normal bounded worker backoff, with the exact frozen body retained.
             return self._response('POST',path,body)
@@ -599,6 +601,13 @@ class Producer:
         identity={'instanceId':self.config['instanceId'],'epoch':self.config['epoch']}
         with self.state.lock:
             records=copy.deepcopy(list(self.state.records.values()))
+            # Copy immutable payloads in the same critical section as records.
+            # A collector may replace a scene and reclaim its old LRU hashes
+            # as soon as this lock is released. One sequential flush retains at
+            # most the bounded local cache (128 assets / 8 MiB) until return,
+            # including bytes needed by its exact frozen-body repair retry.
+            asset_bodies={digest:{k:asset[k] for k in ('hash','type','data')}
+                          for digest,asset in self.state.data['assets'].items()}
             results=copy.deepcopy(self.state.data['actions']); inputs=copy.deepcopy(self.state.data['inputs'])
             ends=copy.deepcopy(self.state.data['ends'])
         for ident,body in ends.items():
@@ -624,7 +633,7 @@ class Producer:
             scene=rec['scene']
             hashes={e['assetHash'] for c in scene.get('commands',[]) for e in c['elements'] if 'assetHash' in e}
             hashes|={e['assetHash'] for e in rec.get('update',[]) if 'assetHash' in e}
-            self._upload_assets(hashes)
+            self._upload_assets(hashes,asset_bodies)
             body={**identity,**{k:rec[k] for k in ('itemId','version','firstRecognizedAt','kind','level','title','detail','scene')}}
             for field in ('groupKey','actionKeys','businessId'):
                 if field in rec: body[field]=rec[field]
@@ -641,17 +650,18 @@ class Producer:
             item=next((i for i in snap.get('items',[]) if i.get('itemId')==rec['itemId']),{})
             if rec.get('update') and snap.get('selected')==item.get('itemKey') and item:
                 with self.state.lock:
-                    live=next(r for r in self.state.records.values() if r['itemId']==rec['itemId'])
+                    live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
+                    if live is None or live['version']!=rec['version'] or live.get('cleared') or live.get('tombstone'): continue
                     if 'updateBody' not in live:
                         live['updateBody']={**identity,'itemId':rec['itemId'],'version':rec['version'],
                                             'generation':snap['generation'],'elements':rec['update'],'scene':rec['scene']}
                         self.state.save()
                     update=copy.deepcopy(live['updateBody'])
                 if update['generation']!=snap['generation']:
-                    response=self._content('/api/publish',body,hashes)
+                    response=self._content('/api/publish',body,hashes,asset_bodies)
                 else:
-                    response=self._content('/api/update',update,hashes)
-            else: response=self._content('/api/publish',body,hashes)
+                    response=self._content('/api/update',update,hashes,asset_bodies)
+            else: response=self._content('/api/publish',body,hashes,asset_bodies)
             with self.state.lock:
                 live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
                 if live:
