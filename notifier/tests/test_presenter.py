@@ -4,6 +4,8 @@ import unittest
 from busybar_notifier import display
 from busybar_notifier.model import Notification
 from busybar_notifier.presenter import NotificationPresenter
+from busybar_shared.graphics import to_xpm
+from PIL import Image
 
 
 class Device:
@@ -26,6 +28,15 @@ def ids(draw):
 
 
 class PresenterTest(unittest.TestCase):
+    def test_final_title_is_not_visible_before_the_entrance_loads(self):
+        self.presenter.start(self.short)
+        self.assertEqual(ids(self.api.draws[-1])["front"]["data"],
+                         to_xpm(Image.new("RGB", (72, 16), "black")))
+        self.clock[0] += display.entrance_seconds(self.short) + .01
+        self.presenter.advance()
+        self.assertEqual(ids(self.api.draws[-1])["front"]["data"],
+                         to_xpm(display.render(self.short, settled=True)[0]))
+
     def test_reduced_motion_exit_hides_native_text_before_restoration(self):
         self.presenter = NotificationPresenter(self.api, reduced=True, clock=lambda: self.clock[0])
         self.presenter.start(self.long)
