@@ -71,7 +71,8 @@ class Transport:
 
     def _open(self, method, path, body=None):
         if not path.startswith('/api/') or '?' in path or '#' in path: raise CloudError('invalid_path')
-        headers = {'Authorization':'Bearer ' + self._credential, 'Accept':'application/json'}
+        headers = {'Authorization':'Bearer ' + self._credential, 'Accept':'application/json',
+                   'User-Agent':'busy-bar-toys/0.1'}
         data = None if body is None else json.dumps(body, separators=(',',':'),allow_nan=False).encode()
         if data is not None:
             if len(data) > 512 * 1024: raise CloudError('request_too_large')

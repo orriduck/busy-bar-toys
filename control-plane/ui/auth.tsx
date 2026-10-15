@@ -7,7 +7,7 @@ export function SignIn({
   onError,
 }: {
   demo: boolean;
-  onSignIn: (deviceId: string) => void;
+  onSignIn: (deviceId: string, demo: boolean | undefined) => void;
   onError: (error: string) => void;
 }) {
   const [token, setToken] = useState("");
@@ -17,9 +17,12 @@ export function SignIn({
     setBusy(true);
     onError("");
     try {
-      const result = await api<{ deviceId: string }>("/session", { token });
+      const result = await api<{ deviceId: string; demo?: boolean }>(
+        "/session",
+        { token },
+      );
       setToken("");
-      onSignIn(result.deviceId);
+      onSignIn(result.deviceId, result.demo);
     } catch (e) {
       onError(message(e));
     } finally {
@@ -69,6 +72,7 @@ export function SignIn({
 export function Credential({
   value,
   template,
+  setupMode,
   onClose,
 }: {
   value: {
@@ -78,6 +82,7 @@ export function Credential({
     id: string;
   };
   template?: string;
+  setupMode: "unknown" | "public-demo" | "allowed";
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -145,10 +150,22 @@ export function Credential({
           <input readOnly value={value.epoch} />
         </label>
         <p className="muted">
-          Expires {new Date(value.epochExpiresAt).toLocaleString()}. Keep this
-          credential in your local Keychain. It cannot access the BUSY token.
+          Expires {new Date(value.epochExpiresAt).toLocaleString()}. Keep this{" "}
+          {setupMode !== "allowed"
+            ? "credential for synthetic publishers only."
+            : "credential in your local Keychain."}{" "}
+          It cannot access the BUSY token.
         </p>
-        {template === "agent" || template === "notifier" ? (
+        {setupMode === "unknown" ? (
+          <p>
+            Server mode is unverified. Reload before connecting a collector.
+          </p>
+        ) : setupMode === "public-demo" ? (
+          <p>
+            Public demo: use synthetic data only. Do not connect a real Mac
+            collector.
+          </p>
+        ) : template === "agent" || template === "notifier" ? (
           <>
             <p>
               Run this command on the source Mac. Paste the credential at the

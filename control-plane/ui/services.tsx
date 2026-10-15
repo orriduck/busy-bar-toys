@@ -114,10 +114,11 @@ export function ServiceEditor({
             type="number"
             required
             min="1"
+            step="any"
             max="86400"
             value={config.visibleMs / 1000}
             onChange={(event) =>
-              edit("visibleMs", Number(event.target.value) * 1000)
+              edit("visibleMs", Math.round(Number(event.target.value) * 1000))
             }
           />
         </label>
@@ -131,7 +132,7 @@ export function ServiceEditor({
             max="1440"
             value={config.snoozeMs / 60000}
             onChange={(event) =>
-              edit("snoozeMs", Number(event.target.value) * 60000)
+              edit("snoozeMs", Math.round(Number(event.target.value) * 60000))
             }
           />
         </label>
@@ -141,10 +142,11 @@ export function ServiceEditor({
             type="number"
             required
             min="5"
+            step="any"
             max="300"
             value={config.heartbeatMs / 1000}
             onChange={(event) =>
-              edit("heartbeatMs", Number(event.target.value) * 1000)
+              edit("heartbeatMs", Math.round(Number(event.target.value) * 1000))
             }
           />
         </label>

@@ -4,7 +4,7 @@
 
 Cloud mode sends local agent states and notifications to the control plane. The control plane owns the device display, queue, grouping, snooze, and calendar return. Source tools and their credentials stay on the Mac. The default mode remains `standalone`.
 
-This branch is for local development. Mock acceptance does not prove physical display behavior. No production deployment or device migration is part of these steps.
+The shared cloud preview accepts synthetic data only. Use your private production origin for real collectors. Mock acceptance does not prove physical display behavior. No production deployment or device migration is part of these steps.
 
 ## 1. Prepare the client
 

@@ -18,6 +18,8 @@ class CloudHTTPTest(unittest.TestCase):
             def log_message(self,*args): pass
             def do_GET(self):
                 cls.headers.append(dict(self.headers))
+                if self.path=='/api/client' and not self.headers.get('User-Agent','').startswith('busy-bar-toys/'):
+                    self.send_response(403); self.end_headers(); self.wfile.write(b'client identification required'); return
                 if self.path in ('/api/stalled','/api/events'):
                     self.send_response(200); self.send_header('Content-Length','100'); self.end_headers()
                     self.wfile.write(b'{'); self.wfile.flush(); time.sleep(.2); return
@@ -49,6 +51,10 @@ class CloudHTTPTest(unittest.TestCase):
         with self.assertRaises(CloudError) as error: http.request('GET','/api/error')
         self.assertEqual(error.exception.status,401)
         self.assertNotIn('private',str(error.exception))
+
+    def test_application_identifies_itself_to_the_hosted_api(self):
+        http=Transport('http://127.0.0.1:'+str(self.server.server_port),'test-publisher')
+        self.assertEqual(http.request('GET','/api/client'),{'protocol':1})
 
     def test_stalled_and_truncated_success_bodies_are_sanitized_failures(self):
         http=Transport('http://127.0.0.1:'+str(self.server.server_port),'test-publisher',timeout=.05)

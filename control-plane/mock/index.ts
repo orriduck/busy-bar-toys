@@ -1,4 +1,4 @@
-/** Local demonstration only. No network egress and no actual BUSY credentials. */
+/** Simulated BUSY upstream. No network egress and no actual BUSY credentials. */
 let draws = 0,
   uploads = 0,
   clears = 0;

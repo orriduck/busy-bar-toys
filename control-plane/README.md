@@ -6,9 +6,15 @@ Manage one BUSY Bar from a browser. Register display services. Set their priorit
 
 The Cloudflare backend schedules the queue and writes the display. A local Mac collects Codex, Your dot and notification data. It sends complete scenes to the backend. Closing the browser does not stop cloud scheduling.
 
-**This branch is under local development. It has not been deployed. The real Bar and its existing service have not been migrated.** The local demo uses a simulated BUSY API. It cannot control a real device.
+**The real Bar and its existing service have not been migrated.** Both the local demo and cloud preview use a simulated BUSY API. They cannot control a real device. Production deployment remains pending.
 
-![Local management demo with a grouped queue and service settings](../docs/images/control-plane-management.jpg)
+![Management demo with a grouped queue and service settings](../docs/images/control-plane-management.jpg)
+
+## Open the cloud preview
+
+Open [the preview](https://busy-bar-control-plane-preview.orriduck.workers.dev) and enter `demo-token`. This is a shared public demo. Use synthetic data only. Do not connect real Mac collectors or source credentials to it. Hosted demo credential dialogs omit real-collector setup commands.
+
+The preview has a separate SQLite namespace and fresh secret bindings. Its simulated BUSY Worker has no public route and no network egress. The production configuration has no simulated upstream binding.
 
 ## Run the local demo
 
@@ -28,7 +34,7 @@ npm run dev:demo
 6. Connect a publisher with the command in the credential dialog.
 7. Open a second browser page to check SSE updates.
 
-The page shows **LOCAL DEMO**. `/api/mode` reports `demo:true`. The mock API listens on port 8790. Its diagnostic state is at `http://localhost:8790/__demo/state`.
+The page shows **DEMO**. `/api/mode` reports `demo:true`. The mock API listens on port 8790. Its diagnostic state is at `http://localhost:8790/__demo/state`.
 
 Use `demo-blocked` or `demo-offline` to test device rejection or loss of connection. These tokens select the same fake device. A real device token is rejected by the mock. The mock never forwards a request to BUSY.
 
@@ -91,7 +97,7 @@ The production configuration has no mock upstream binding. It uses the fixed BUS
 
 For a device migration, first prepare both Macs. Create a new device-scoped cloud token for the backend. Replace local direct writers with scoped publishers. Then revoke old direct-writer cloud tokens and verify they fail. Deleting a Keychain item alone does not revoke a token. Cloud token revocation does not disable USB or local Wi-Fi access.
 
-This iteration performs none of those deployment or migration actions.
+Only the isolated preview has been deployed. Production deployment, device-token rotation and Mac migration remain separate release steps.
 
 ## Storage and failure rules
 

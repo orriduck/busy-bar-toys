@@ -25,3 +25,11 @@ export class SessionFence {
     return true;
   }
 }
+
+/** A collector command requires a verified server mode. */
+export function collectorSetupMode(demo: boolean | null, hostname: string) {
+  if (demo === null) return "unknown";
+  if (demo && !["localhost", "127.0.0.1", "[::1]"].includes(hostname))
+    return "public-demo";
+  return "allowed";
+}

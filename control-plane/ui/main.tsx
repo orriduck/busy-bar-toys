@@ -6,12 +6,12 @@ import { Brand, Icon, Meta, serviceName } from "./common";
 import { SignIn, Credential } from "./auth";
 import { Queue } from "./queue";
 import { ServiceEditor, Register } from "./services";
-import { SessionFence } from "./session";
+import { SessionFence, collectorSetupMode } from "./session";
 import "./style.css";
 function App() {
   const [session, setSession] = useState<boolean | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [demo, setDemo] = useState(false);
+  const [demo, setDemo] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [stream, setStream] = useState("Connecting");
   const [lastSync, setLastSync] = useState<number>();
@@ -40,7 +40,7 @@ function App() {
     return generation;
   }, []);
   const beginSession = useCallback(
-    (deviceId: string) => {
+    (deviceId: string, serverDemo: boolean | undefined) => {
       if (!/^[a-f0-9]{64}$/.test(deviceId)) {
         clearSession(null);
         setSession(false);
@@ -48,6 +48,7 @@ function App() {
         return;
       }
       clearSession(deviceId);
+      setDemo(typeof serverDemo === "boolean" ? serverDemo : null);
       setError("");
       setSession(true);
     },
@@ -93,11 +94,14 @@ function App() {
   useEffect(() => {
     const generation = fence.current.generation;
     void api<{ demo: boolean }>("/mode")
-      .then((v) => setDemo(v.demo === true))
-      .catch(() => {});
-    void api<{ deviceId: string }>("/session")
       .then((v) => {
-        if (fence.current.current(generation)) beginSession(v.deviceId);
+        // Deployment mode also applies to the signed-out page.
+        setDemo(typeof v.demo === "boolean" ? v.demo : null);
+      })
+      .catch(() => {});
+    void api<{ deviceId: string; demo?: boolean }>("/session")
+      .then((v) => {
+        if (fence.current.current(generation)) beginSession(v.deviceId, v.demo);
       })
       .catch(() => {
         if (fence.current.current(generation)) invalidate();
@@ -124,7 +128,7 @@ function App() {
     events.onerror = () => {
       if (!fence.current.current(generation)) return;
       setStream("Reconnecting");
-      void api<{ deviceId: string }>("/session")
+      void api<{ deviceId: string; demo?: boolean }>("/session")
         .then((value) => {
           if (
             fence.current.current(generation) &&
@@ -222,7 +226,8 @@ function App() {
     <>
       {demo && (
         <div className="demo-banner">
-          LOCAL DEMO · Simulated device. No real BUSY Bar is controlled.
+          DEMO · Simulated device. Use test data only. No real BUSY Bar is
+          controlled.
         </div>
       )}
       <header>
@@ -260,7 +265,11 @@ function App() {
           <h1>Connecting…</h1>
         </main>
       ) : !session ? (
-        <SignIn demo={demo} onSignIn={beginSession} onError={setError} />
+        <SignIn
+          demo={demo === true}
+          onSignIn={beginSession}
+          onError={setError}
+        />
       ) : !snapshot ? (
         <main className="signin">
           <h1>Loading your device…</h1>
@@ -454,6 +463,7 @@ function App() {
           </footer>
           {secret && (
             <Credential
+              setupMode={collectorSetupMode(demo, location.hostname)}
               value={secret}
               template={
                 snapshot.services.find((service) => service.id === secret.id)

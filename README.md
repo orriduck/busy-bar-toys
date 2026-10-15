@@ -13,7 +13,7 @@ The browser manages priorities, exit rules, switches and an event queue.
 Local collectors publish scenes with separate service credentials.
 SSE keeps management pages in sync.
 
-The current branch includes an isolated local demo. Production deployment and real-device migration remain pending.
+Try the [cloud preview](https://busy-bar-control-plane-preview.orriduck.workers.dev) with `demo-token`. Use synthetic data only; do not connect real collectors to this shared demo. A local demo is also included. Production deployment and real-device migration remain pending.
 See the [control plane guide](control-plane/README.md), [local client setup](docs/cloud-mode.md), and [protocol](control-plane/PROTOCOL.md).
 The existing standalone installation remains the default.
 

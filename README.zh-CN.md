@@ -12,7 +12,7 @@
 浏览器管理优先级、退出规则、开关和逐条事件队列。
 本地采集器使用独立服务凭证发布画面，管理页通过 SSE 同步。
 
-当前分支提供隔离的本地演示，生产部署与真实设备迁移仍待完成。
+可以用 `demo-token` 进入[云端预览](https://busy-bar-control-plane-preview.orriduck.workers.dev)。共享演示仅使用模拟数据，请勿接入真实采集器。仓库也提供本地演示。生产部署与真实设备迁移仍待完成。
 参见[管理页指南](control-plane/README.zh-CN.md)、[本地客户端接入](docs/cloud-mode.zh-CN.md)和[协议](control-plane/PROTOCOL.md)。
 原有独立安装仍是默认模式。
 
