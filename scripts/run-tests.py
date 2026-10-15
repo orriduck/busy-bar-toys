@@ -5,7 +5,7 @@ import unittest
 
 root=Path(__file__).resolve().parents[1]
 suite=unittest.TestSuite()
-for directory in ('shared','codex-checker','adsbao-checker'):
+for directory in ('shared','agent-checker','notifier','apps','service'):
     tests=root/directory/'tests'
     if tests.exists():
         suite.addTests(unittest.TestLoader().discover(str(tests)))
