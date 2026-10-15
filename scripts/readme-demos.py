@@ -25,7 +25,7 @@ from busybar_shared.graphics import clock_font, clock_text, draw_clock, tiny_tex
 ROOT = Path(__file__).resolve().parents[1]
 FPS = 30
 WALL = datetime(2026, 10, 15, 15, 59, 58, tzinfo=timezone.utc).timestamp()
-SIZE = (600, 196)
+SIZE = (600, 214)
 
 # Reuse the native .anim decoder used by the existing motion preview.
 spec = importlib.util.spec_from_file_location("motion_preview", ROOT / "scripts/motion-preview.py")
@@ -96,8 +96,8 @@ def card(screen, title, phase, note):
     draw = ImageDraw.Draw(image)
     draw.text((12, 8), "DEMO / OFFLINE RENDER / " + title, fill="#F3F5F8")
     image.paste(screen.resize((576, 128), Image.Resampling.NEAREST), (12, 30))
-    draw.text((12, 164), phase, fill="#D6DFED")
-    draw.text((12, 180), note, fill="#8795AB")
+    draw.text((12, 166), phase, fill="#D6DFED")
+    draw.text((12, 194), note, fill="#8795AB")
     return image
 
 
