@@ -4,7 +4,7 @@ Baseline: main@93e0688. Worktree has its own editable Python environment; baseli
 
 ## Local verification
 
-2026-10-15: 279 Python tests and 49 Worker/UI tests pass. TypeScript, Vite build, production dry-run and both preview dry-runs pass. The new Swift helper compiles; it was not invoked against Keychain. CLI help and local Markdown links were checked. Python 3.10 syntax was parsed; its runtime matrix is checked in GitHub CI.
+2026-10-15: 280 Python tests and 49 Worker/UI tests pass. TypeScript, Vite build, production dry-run and both preview dry-runs pass. The new Swift helper compiles; it was not invoked against Keychain. CLI help and local Markdown links were checked. Python 3.10 CI exposed a fixture clock shared with logging; the observer/motion test clocks are now isolated. A regression forces the older logging behavior on newer Python. The runtime matrix is checked in GitHub CI.
 
 Backend, Python and UI spec/quality reviews passed after focused fixes. Regressions include bounded64-element batches, actual TTL expiry, clear-only ACK coverage, transient masks and recovery scenes, session/device fences, fail-closed collector setup mode, interrupted actions, expired urgent fallback, sleep/clock changes, aircraft rearm, partial HTTP bodies, asset eviction/concurrent LRU, revoked input grants and urgent recognition before rendering.
 
