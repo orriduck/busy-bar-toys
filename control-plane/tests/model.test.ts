@@ -291,3 +291,44 @@ describe("generation admission", () => {
     expect(i?.queueProof?.validUntil).toBeGreaterThan(now);
   });
 });
+
+describe("optional queue provenance and preview capability", () => {
+  it("retains app without changing recognition, receipt or queue order", () => {
+    const s = state();
+    const item = publish(s, "a", p("one", { app: "Mail" }), now);
+    expect(item.app).toBe("Mail");
+    const updated = publish(
+      s,
+      "a",
+      p("one", { app: "Mail", version: 2 }),
+      now + 1000,
+    );
+    expect(updated.receivedAt).toBe(now);
+    expect(updated.enqueueSeq).toBe(item.enqueueSeq);
+    expect(publish(s, "a", p("old"), now).app).toBeUndefined();
+  });
+  it("rejects empty, control-containing, whitespace-only, and overlong app strings", () => {
+    for (const app of ["", " ", "a\n", "a".repeat(65), 1])
+      expect(() => publish(state(), "a", p("one", { app }), now)).toThrow();
+  });
+  it("defaults allowPreview false including old config and validates admin changes", () => {
+    const s = state();
+    expect(s.services.a.config.allowPreview).toBe(false);
+    delete (s.services.a.config as any).allowPreview;
+    patchConfig(s, "a", { priority: 51 }, s.configRevision, now);
+    expect(s.services.a.config.allowPreview).toBe(false);
+    patchConfig(s, "a", { allowPreview: true }, s.configRevision, now);
+    expect(s.services.a.config.allowPreview).toBe(true);
+    expect(() =>
+      patchConfig(s, "a", { allowPreview: 1 }, s.configRevision, now),
+    ).toThrow();
+  });
+});
+
+it("normalizes legacy service preview capability in snapshots", () => {
+  const s = state();
+  delete (s.services.a.config as any).allowPreview;
+  expect(
+    snapshot(s, now).services.find((v) => v.id === "a")!.config.allowPreview,
+  ).toBe(false);
+});

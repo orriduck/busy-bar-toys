@@ -1,4 +1,5 @@
 import { StateStore } from "./store";
+import { PreviewRelay } from "./preview";
 import { DurableObject } from "cloudflare:workers";
 import {
   Action,
@@ -68,6 +69,7 @@ function hashesEqual(a: string, b: string) {
 
 export class DeviceControl extends DurableObject<RuntimeEnv> {
   private store: StateStore;
+  private preview = new PreviewRelay();
   private dispatching = false;
   private lastBroadcastRevision: number | null = null;
   private streams = new Map<
@@ -85,6 +87,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, revision INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL)",
     );
     const s = this.load();
+    if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
       tick(s, Date.now());
       const item = s.selected ? s.items[s.selected] : null;
@@ -131,6 +134,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         Date.now() - 7 * 86400000,
       );
     });
+    this.preview.update(s);
     if (this.lastBroadcastRevision !== s.revision) {
       this.lastBroadcastRevision = s.revision;
       this.broadcast(s);
@@ -155,6 +159,53 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       401,
     );
     return service.id;
+  }
+  async fetch(request: Request): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+      requireThat(
+        url.origin === "https://device.internal" &&
+          request.method === "GET" &&
+          !url.search,
+        "FORBIDDEN",
+        403,
+      );
+      const raw = request.headers.get("X-Busy-Internal-Auth");
+      requireThat(raw, "FORBIDDEN", 403);
+      const auth = JSON.parse(raw) as Auth;
+      requireThat(
+        auth && (auth.kind === "session" || auth.kind === "publisher"),
+        "FORBIDDEN",
+        403,
+      );
+      const s = this.load();
+      requireThat(s, "UNAUTHORIZED", 401);
+      this.authorize(s, auth);
+      this.preview.update(s);
+      if (url.pathname === "/api/preview/publish") {
+        requireThat(auth.kind === "publisher", "FORBIDDEN", 403);
+        requireThat(
+          request.headers.get("Upgrade")?.toLowerCase() === "websocket",
+          "WEBSOCKET_REQUIRED",
+          426,
+        );
+        return this.preview.openPublisher(
+          auth,
+          request.headers.get("X-Busy-Instance"),
+          request.headers.get("X-Busy-Epoch"),
+        );
+      }
+      requireThat(auth.kind === "session", "FORBIDDEN", 403);
+      if (url.pathname === "/api/preview/status")
+        return json(this.preview.status());
+      const match = /^\/api\/preview\/frames\/([a-f0-9]{64})$/.exec(
+        url.pathname,
+      );
+      requireThat(match, "NOT_FOUND", 404);
+      return this.preview.openViewer(auth, match[1], request.signal);
+    } catch (error) {
+      return safeError(error);
+    }
   }
   async login(
     deviceId: string,
@@ -218,6 +269,12 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       requireThat(s, "UNAUTHORIZED", 401);
       const serviceId = this.authorize(s, auth),
         now = Date.now();
+      if (path === "/api/preview/viewer" && method === "POST") {
+        this.preview.update(s);
+        return json(
+          this.preview.viewer(auth, identifier(body.viewerId), body.operation),
+        );
+      }
       tick(s, now);
       const admin = () =>
         requireThat(auth.kind === "session", "FORBIDDEN", 403);
@@ -1246,6 +1303,27 @@ export default {
           id: session.id,
           expiresAt: session.expiresAt,
         };
+      }
+      if (
+        path.startsWith("/api/preview/") &&
+        !(path === "/api/preview/viewer" && request.method === "POST")
+      ) {
+        requireThat(request.method === "GET", "NOT_FOUND", 404);
+        // Do not proxy user headers or URLs into the DO. Authentication is independently
+        // checked against current persisted state before a transport is opened.
+        const forwarded = new Headers({
+          "X-Busy-Internal-Auth": JSON.stringify(auth),
+        });
+        for (const key of ["Upgrade", "X-Busy-Instance", "X-Busy-Epoch"]) {
+          const value = request.headers.get(key);
+          if (value !== null) forwarded.set(key, value);
+        }
+        return await env.DEVICES.getByName(deviceId).fetch(
+          new Request("https://device.internal" + path, {
+            headers: forwarded,
+            signal: request.signal,
+          }),
+        );
       }
       return await env.DEVICES.getByName(deviceId).handle(
         auth,

@@ -30,6 +30,7 @@ export interface Scene {
 export interface Config {
   enabled: boolean;
   allowInput: boolean;
+  allowPreview: boolean;
   priority: number;
   visibleMs: number;
   snoozeMs: number;
@@ -55,6 +56,7 @@ export interface Item {
   kind: "event" | "condition" | "agent";
   level: Level;
   groupKey?: string;
+  app?: string;
   title: string;
   detail: string;
   firstRecognizedAt: number;
@@ -198,6 +200,7 @@ export function createState(deviceId: string): State {
 export const defaults: Config = {
   enabled: true,
   allowInput: false,
+  allowPreview: false,
   priority: 50,
   visibleMs: 10_000,
   snoozeMs: 1_800_000,
@@ -231,6 +234,10 @@ export function validateConfig(v: unknown, base = defaults): Config {
   const x = record(v);
   requireThat(Object.keys(x).every((k) => k in defaults));
   return {
+    allowPreview:
+      x.allowPreview === undefined
+        ? (base.allowPreview ?? false)
+        : (requireThat(typeof x.allowPreview === "boolean"), x.allowPreview),
     allowInput:
       x.allowInput === undefined
         ? base.allowInput
@@ -463,6 +470,11 @@ export function groups(s: State) {
       );
     });
 }
+function plainApp(value: unknown): string {
+  const app = text(value, 64);
+  requireThat(app.trim().length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(app));
+  return app;
+}
 export function publish(
   s: State,
   serviceId: string,
@@ -507,6 +519,7 @@ export function publish(
     kind: body.kind as Item["kind"],
     level: body.level as Level,
     groupKey,
+    ...(body.app === undefined ? {} : { app: plainApp(body.app) }),
     title: text(body.title, 256),
     detail: text(body.detail, 2048, true),
     scene,
@@ -1019,7 +1032,10 @@ export function snapshot(s: State, now: number, serviceId?: string) {
     displaying: s.displaying,
     services: Object.values(s.services)
       .filter((v) => !serviceId || v.id === serviceId)
-      .map(({ credentialHash, ...v }) => v),
+      .map(({ credentialHash, ...v }) => ({
+        ...v,
+        config: { ...v.config, allowPreview: v.config.allowPreview ?? false },
+      })),
     items,
     groups: [
       ...new Set([
