@@ -6,11 +6,13 @@ The detail line always appears as native small text after the entrance and scrol
 
 ## Levels
 
-| Level | Icon background | Hold for a new event | Start/Pause |
+| Level | Detail and LED color | Hold for a new event | Start/Pause |
 |---|---|---|---|
 | urgent | Red | Until the condition clears | Runs the app action, for example a page acknowledgement. |
 | attention | Amber | Ten seconds | Dismisses all notifications and shows the calendar. |
-| info | The app color | Ten seconds | Dismisses all notifications and shows the calendar. |
+| info | The app accent | Ten seconds | Dismisses all notifications and shows the calendar. |
+
+The icon background always uses the app color.
 
 Urgent items show first, then new events, then standing conditions.
 An urgent action dismisses its item only after success.

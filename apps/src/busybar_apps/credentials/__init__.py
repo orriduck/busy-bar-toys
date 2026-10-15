@@ -37,6 +37,6 @@ def sources(config, state_dir, **_):
         if not needs:
             return []
         return [Notification("credentials:" + ",".join(needs), "attention", "credentials", "LOGIN", "CRED EXPIRE",
-                             " | ".join(needs), accent=(229, 165, 10), icon=badge(GLYPH, "attention", COLOR))]
+                             " | ".join(needs), accent=(229, 165, 10), icon=badge(GLYPH, COLOR))]
 
-    return [Source("credentials", "credentials", config.get("every", 120), "state", poll, icon=badge(GLYPH, "attention", COLOR))]
+    return [Source("credentials", "credentials", config.get("every", 120), "state", poll, icon=badge(GLYPH, COLOR))]
