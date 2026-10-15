@@ -4,32 +4,47 @@ Format reference (read 2026-10-14): official busybar-firmware tag 1.2.4,
 scripts/seq2anim.py Header/Section/FileFrame. Only raw full BGR frames are
 emitted. That firmware requires bicycle0; dev's bicycle1 is incompatible.
 """
+import math
 import struct
 
-ANIMATION_FILE = "thinking-v2.anim"
-WIDTH = 52
-MARKER_WIDTH = 6
+ANIMATION_FILE = "thinking-v3.anim"
+WIDTH = 4
+HEIGHT = 16
 FPS = 30
-TRAVEL = WIDTH - MARKER_WIDTH
-FRAME_COUNT = TRAVEL * 2
+FRAME_COUNT = 92
+TRAVEL = 13
 
 
 def thinking_offset(now):
     phase = int(now * FPS + 1e-7) % FRAME_COUNT
-    return phase if phase <= TRAVEL else FRAME_COUNT - phase
+    leg = phase if phase <= FRAME_COUNT//2 else FRAME_COUNT-phase
+    return 1 + TRAVEL * leg / (FRAME_COUNT//2)
+
+
+def glow_frame(now, color=(69,154,255), *, moving=True, intensity=1):
+    """RGB pixels: small bright core, wider dim halo, smooth subpixel travel."""
+    center = thinking_offset(now) if moving else 7.5
+    bright = tuple(c + .35*(255-c) for c in color)
+    pixels = bytearray()
+    for y in range(HEIGHT):
+        for x in range(WIDTH):
+            core = math.exp(-.5*((y-center)**2 + (x/.8)**2))
+            halo = .18*math.exp(-.5*(((y-center)/3.5)**2 + (x/1.8)**2))
+            pixels.extend(max(0,min(255,round(intensity*(b*core+c*halo))))
+                          for b,c in zip(bright,color))
+    return bytes(pixels)
 
 
 def thinking_animation():
     frames = []
     for number in range(FRAME_COUNT):
-        left = thinking_offset(number / FPS)
-        pixels = b"".join(bytes((255,154,69)) if left <= x < left+MARKER_WIDTH
-                          else bytes((48,32,16)) for x in range(WIDTH))
+        rgb = glow_frame(number/FPS)
+        pixels = b"".join(rgb[i:i+3][::-1] for i in range(0,len(rgb),3))
         frames.append(struct.pack("<BBH", 0, 1, len(pixels)) + pixels)
     name = b"default\0"
     section_length = 13 + len(name)
     section = struct.pack("<IIIB", 0, FRAME_COUNT-1, 36+section_length, 1) + name
     body = b"".join(frames)
-    header = struct.pack("<8sBBBBBHBIIIII", b"bicycle0", 0, WIDTH, 1, 0,
-                         FPS, WIDTH*3, 0, section_length, len(body), 1, FRAME_COUNT, FRAME_COUNT)
+    header = struct.pack("<8sBBBBBHBIIIII", b"bicycle0", 0, WIDTH, HEIGHT, 0,
+                         FPS, WIDTH*HEIGHT*3, 0, section_length, len(body), 1, FRAME_COUNT, FRAME_COUNT)
     return header + section + body

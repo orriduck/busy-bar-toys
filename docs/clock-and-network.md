@@ -1,5 +1,7 @@
 # Native clock and real network rates — 2026-10-14
 
+Historical layout. The follow-up [centered layout and glow](centered-glow.md) moves the animation to the left and colors the arrows while preserving the sampling behavior described here.
+
 The user requested the attached BUSY clock style, approved the existing source icons, replaced gray text with upload/download speed and removed WORK/WAIT labels.
 
 The front uses the unmodified BUSY Bold 7 pixel font from firmware 1.2.4, matching the built-in clock's font choice. Its 6×7 glyphs are rendered at their native TTF size, with HH:MM at x=20/y=1. A gray speed row at y=9 displays upload then download using arrows. Native 30fps motion continues on y=15. Task states affect only the strip, with no state words on either display. Idle continues to refresh clock and speed without inventing a running task. The back shows the source, time and explicit UP/DN byte rates. Finite demos retain a DEMO header.

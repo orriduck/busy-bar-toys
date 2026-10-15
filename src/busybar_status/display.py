@@ -4,7 +4,7 @@ from functools import lru_cache
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from .animation import ANIMATION_FILE, thinking_offset
+from .animation import ANIMATION_FILE, thinking_offset, glow_frame, WIDTH, HEIGHT
 from .network import compact_rate
 
 ASSETS = Path(__file__).parent / "assets"
@@ -112,18 +112,25 @@ def render(task, now, count=1, rates=None):
     upload = rates.upload if rates else None
     download = rates.download if rates else None
     front = Image.new("RGB", (72, 16), "black")
-    front.paste(source_icon(source), (0, 0))
+    # Center the fixed 57px group inside the area to the right of the 4px
+    # status effect and its 3px gutter. Keep the icon/clock stable as rates vary.
+    front.paste(source_icon(source, 14), (11, 1))
     draw = ImageDraw.Draw(front)
-    color = COLORS.get(state, "#28313C")
-    draw_clock(draw, (20, 1), clock_text(now))
-    tiny_text(draw, (20, 9), "↑" + compact_rate(upload), "#505050")
-    tiny_text(draw, (46, 9), "↓" + compact_rate(download), "#505050")
-    draw.line((20, 15, 71, 15), fill="#102030")
-    if state == "working":
-        x = 20 + thinking_offset(now)
-        draw.line((x, 15, x + 5, 15), fill=color)
-    else:
-        draw.line((20, 15, 71, 15), fill=color)
+    value = clock_text(now)
+    clock_width = round(clock_font().getlength(value))
+    draw_clock(draw, (28 + (40-clock_width)//2, 1), value)
+    up, down = compact_rate(upload), compact_rate(download)
+    up_width, down_width = (len(up)+1)*4-1, (len(down)+1)*4-1
+    left = 28 + (40-up_width-2-down_width)//2
+    tiny_text(draw, (left, 10), "↑", "#FFBE45")
+    tiny_text(draw, (left+4, 10), up, "#505050")
+    left += up_width + 2
+    tiny_text(draw, (left, 10), "↓", "#45D7FF")
+    tiny_text(draw, (left+4, 10), down, "#505050")
+    color = tuple(bytes.fromhex(COLORS.get(state, "#28313C")[1:]))
+    light = glow_frame(now, color, moving=state == "working",
+                       intensity=.2 if state == "idle" else 1)
+    front.paste(Image.frombytes("RGB", (WIDTH,HEIGHT), light), (0,0))
     back = Image.new("RGB", (160, 80), "black")
     draw = ImageDraw.Draw(back)
     back.paste(source_icon(source, 24), (4, 4))
@@ -137,8 +144,21 @@ def render(task, now, count=1, rates=None):
     return front, back
 
 
-def to_xpm(image):
-    image = image.convert("RGB").quantize(colors=16, dither=Image.Dither.NONE)
+# Reserve the two arrow colors so a tiny colored arrow cannot be averaged
+# into the much larger grayscale icon during 16-color XPM quantization.
+UI_PALETTE = [(v,v,v) for v in (0,24,48,64,80,96,112,128,144,160,176,192,224,255)] + [
+    (255,190,69), (69,215,255)]
+
+
+def to_xpm(image, palette_colors=None):
+    image = image.convert("RGB")
+    if palette_colors:
+        palette_image = Image.new("P", (1,1))
+        values = [channel for rgb in palette_colors for channel in rgb]
+        palette_image.putpalette(values + [0]*(768-len(values)))
+        image = image.quantize(palette=palette_image, dither=Image.Dither.NONE)
+    else:
+        image = image.quantize(colors=16, dither=Image.Dither.NONE)
     used = sorted(image.getcolors(), key=lambda pair: pair[1])
     palette = image.getpalette()
     symbols = "ABCDEFGHIJKLMNOP"
@@ -155,16 +175,20 @@ def to_xpm(image):
 
 def make_payload(task, now, count=1, rates=None):
     images = render(task, now, count, rates)
+    background = images[0].copy()
+    # The dedicated widget owns the full glow area; avoid double drawing or
+    # spending the clock/icon palette on glow colors.
+    ImageDraw.Draw(background).rectangle((0,0,WIDTH-1,HEIGHT-1), fill="black")
     elements = [
         {"id": name, "type": "xpmbitmap", "display": name, "x": 0, "y": 0,
-         "timeout": 15, "data": to_xpm(image)}
-        for name, image in zip(("front", "back"), images)]
-    strip = {"id": "thinking", "display": "front", "x": 20, "y": 15,
+         "timeout": 15, "data": to_xpm(image, UI_PALETTE if name == "front" else None)}
+        for name, image in zip(("front", "back"), (background,images[1]))]
+    strip = {"id": "thinking", "display": "front", "x": 0, "y": 0,
              "timeout": 15, "z_index": 1}
     if task and task.state == "working":
         strip.update(type="animation", path=ANIMATION_FILE, loop=True,
                      await_previous_end=True, section="default")
     else:
-        strip.update(type="xpmbitmap", data=to_xpm(images[0].crop((20,15,72,16))))
+        strip.update(type="xpmbitmap", data=to_xpm(images[0].crop((0,0,WIDTH,HEIGHT))))
     elements.append(strip)
     return {"application_name": "ai-status", "priority": 50, "elements": elements}

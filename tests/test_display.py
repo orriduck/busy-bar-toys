@@ -20,8 +20,8 @@ class DisplayTests(unittest.TestCase):
     def test_dots_has_distinct_source_icon(self):
         front, _ = render(self.task("chatgpt"), 100, 1)
         dots, _ = render(self.task("dots"), 100, 1)
-        self.assertNotEqual(front.crop((0, 0, 16, 16)).tobytes(),
-                            dots.crop((0, 0, 16, 16)).tobytes())
+        self.assertNotEqual(front.crop((11, 1, 25, 15)).tobytes(),
+                            dots.crop((11, 1, 25, 15)).tobytes())
 
     def test_xpm_is_ascii_and_has_complete_rows(self):
         for screen in render(self.task(), 120, 1):
@@ -53,30 +53,42 @@ class DisplayTests(unittest.TestCase):
         now = datetime(2026,10,14,22,34,tzinfo=timezone.utc).timestamp()
         work, _ = render(self.task(state="working"), now, 1)
         wait, _ = render(self.task(state="waiting"), now, 1)
-        clock = work.crop((20,1,49,8))
-        self.assertEqual(clock.tobytes(), wait.crop((20,1,49,8)).tobytes())
+        clock = work.crop((33,1,63,8))
+        self.assertEqual(clock.tobytes(), wait.crop((33,1,63,8)).tobytes())
         self.assertIsNotNone(clock.getbbox())
 
-    def test_front_dedicates_both_rows_to_clock_and_gray_network_rates(self):
+    def test_centered_clock_and_compact_rates_have_distinct_colored_arrows(self):
         now = 100
         slow = NetworkRates(123,456,'en0')
         fast = NetworkRates(4096,8192,'en0')
         front, _ = render(self.task(),now,1,slow)
         updated, _ = render(self.task(),now,1,fast)
-        self.assertEqual(front.crop((20,0,72,9)).tobytes(),
-                         updated.crop((20,0,72,9)).tobytes())
-        self.assertNotEqual(front.crop((20,9,72,14)).tobytes(),
-                            updated.crop((20,9,72,14)).tobytes())
-        raw=front.crop((20,0,72,14)).tobytes()
-        pixels=zip(raw[0::3],raw[1::3],raw[2::3])
-        self.assertTrue(all(r==g==b for r,g,b in pixels))
-        self.assertIn(80,raw)
+        self.assertEqual(front.crop((28,0,72,9)).tobytes(),
+                         updated.crop((28,0,72,9)).tobytes())
+        self.assertNotEqual(front.crop((28,10,72,15)).tobytes(),
+                            updated.crop((28,10,72,15)).tobytes())
+        raw=front.crop((28,10,72,15)).tobytes()
+        colors=set(zip(raw[0::3],raw[1::3],raw[2::3]))
+        self.assertIn((255,190,69),colors)  # upload amber
+        self.assertIn((69,215,255),colors)  # download cyan
+        self.assertIn((80,80,80),colors)
+        self.assertTrue(all(r==g==b or (r,g,b) in {(255,190,69),(69,215,255)}
+                            for r,g,b in colors))
+        for value in (slow,fast):
+            im=render(self.task(),now,1,value)[0]
+            self.assertEqual(im.crop((11,1,25,15)).tobytes(),
+                             front.crop((11,1,25,15)).tobytes())
+        bounds=updated.crop((7,0,72,16)).getbbox()
+        self.assertLessEqual(abs((bounds[0]+bounds[2])/2-32.5),1)
+        xpm=make_payload(self.task(),now,1,slow)['elements'][0]['data']
+        self.assertIn('#FFBE45',xpm)
+        self.assertIn('#45D7FF',xpm)
 
     def test_state_words_are_removed_from_both_screens(self):
         work, back = render(self.task(),100,1)
         wait, waiting_back = render(self.task(state='waiting'),100,1)
-        self.assertEqual(work.crop((0,0,72,15)).tobytes(),
-                         wait.crop((0,0,72,15)).tobytes())
+        self.assertEqual(work.crop((4,0,72,16)).tobytes(),
+                         wait.crop((4,0,72,16)).tobytes())
         self.assertEqual(back.tobytes(),waiting_back.tobytes())
 
     def test_idle_keeps_clock_and_network_without_a_working_animation(self):
@@ -95,10 +107,10 @@ class DisplayTests(unittest.TestCase):
                             demo.crop((0,0,145,29)).tobytes())
 
     def test_thinking_moves_out_and_back_without_teleporting(self):
-        # 92 frames at 30fps: left -> right -> left, no endpoint hold.
+        # 92 frames at 30fps: top -> bottom -> top, with subpixel travel.
         positions = [thinking_offset(frame/30) for frame in range(93)]
-        self.assertEqual((positions[0],positions[46],positions[92]), (0,46,0))
-        self.assertTrue(all(abs(b-a)==1 for a,b in zip(positions,positions[1:])))
+        self.assertEqual((positions[0],positions[46],positions[92]), (1,14,1))
+        self.assertTrue(all(0<abs(b-a)<1 for a,b in zip(positions,positions[1:])))
 
     def test_work_uses_native_animation_and_other_states_replace_it(self):
         work = make_payload(self.task(), 100, 1)
@@ -106,6 +118,7 @@ class DisplayTests(unittest.TestCase):
         animated = next(e for e in work["elements"] if e["id"]=="thinking")
         stopped = next(e for e in wait["elements"] if e["id"]=="thinking")
         self.assertEqual(animated["type"], "animation")
+        self.assertEqual((animated["x"],animated["y"]),(0,0))
         self.assertTrue(animated["loop"])
         self.assertTrue(animated["await_previous_end"])
         self.assertEqual(stopped["type"], "xpmbitmap")
