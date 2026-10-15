@@ -37,12 +37,12 @@ Design: `docs/superpowers/specs/2026-10-15-control-plane-ui-design.md`.
 
 **Files:** create `shared/src/busybar_shared/preview.py`, `shared/tests/test_preview.py`; modify `service/src/busybar_service/cloud_watch.py`, `service/src/busybar_service/cloud_adapter.py`; extend adapter/watch tests.
 
-- [ ] Write tests before implementation for zero captures without demand, cancellation on disconnect, private endpoint validation, local-device serial digest matching the publisher device, redirect refusal, auth failures stopping, strict frame decode/size checks, bounded concurrency, aggregate pacing, late-result discard and latest-frame backpressure.
-- [ ] Verify failures with `.venv/bin/python -m unittest discover -s shared/tests -p test_preview.py`.
-- [ ] Implement a supervised bridge outside collector/publisher/action/watchdog loops. Read LAN credentials from existing Keychain helper, use only a fixed read-only device endpoint, and reuse the scoped cloud publisher credential. Demand and allowPreview both gate capture. Validate local device identity via GET status before capture. WebSocket reconnect has bounded backoff and stops after authentication rejection. No credentials or private endpoint enter errors/logs/state.
-- [ ] Start/stop one bridge with cloud watch, preserving standalone behavior and current input bridge. Keep captures bounded and pace aggregate target 30Hz; do not accumulate catch-up work. Record safe diagnostics only.
-- [ ] Add `app` to agent/notifier content using actual source identifiers; preserve item identity, action keys and render behavior.
-- [ ] Run Python tests; perform specification and quality review; commit only Python-owned files.
+- [x] Write tests before implementation for zero captures without demand, cancellation on disconnect, private endpoint validation, local-device serial digest matching the publisher device, redirect refusal, auth failures stopping, strict frame decode/size checks, bounded concurrency, aggregate pacing, late-result discard and latest-frame backpressure.
+- [x] Verify failures with `.venv/bin/python -m unittest discover -s shared/tests -p test_preview.py`.
+- [x] Implement a supervised bridge outside collector/publisher/action/watchdog loops. Read LAN credentials from existing Keychain helper, use only a fixed read-only device endpoint, and reuse the scoped cloud publisher credential. Demand and allowPreview both gate capture. Validate local device identity via GET status before capture. WebSocket reconnect has bounded backoff and stops after authentication rejection. No credentials or private endpoint enter errors/logs/state.
+- [x] Start/stop one bridge with cloud watch, preserving standalone behavior and current input bridge. Keep captures bounded and pace aggregate target 30Hz; do not accumulate catch-up work. Record safe diagnostics only.
+- [x] Add `app` to agent/notifier content using actual source identifiers; preserve item identity, action keys and render behavior.
+- [x] Run Python tests; perform specification and quality review; commit only Python-owned files.
 
 ## Task 3: Native BUSY-style four-page UI
 
@@ -60,8 +60,8 @@ Design: `docs/superpowers/specs/2026-10-15-control-plane-ui-design.md`.
 
 **Files:** extend relevant integration tests; update English and Chinese control-plane/cloud-client guides; write evidence in `docs/plans/control-plane-ui-verification.md`.
 
-- [ ] Run `.venv/bin/python scripts/run-tests.py`, `npm test`, `npm run typecheck`, `npm run build`, and `npm run dry-run`. Resolve actual failures before broader retesting.
-- [ ] Start isolated local demo. Verify first-screen minimal content and no real-source connection to the public synthetic preview. Complete browser and visual acceptance; keep real device captures in ignored `.local` files.
+- [x] Run `.venv/bin/python scripts/run-tests.py`, `npm test`, `npm run typecheck`, `npm run build`, and `npm run dry-run`. Resolve actual failures before broader retesting.
+- [x] Start isolated local demo. Verify first-screen minimal content and no real-source connection to the public synthetic preview. Complete browser and visual acceptance; keep real device captures in ignored `.local` files.
 - [ ] Open and attach a PR. Review final behavior and security boundaries, then use passing CI and review evidence for merge/release.
 - [ ] Deploy the reviewed production Worker, update the stable Mac service with the reviewed bridge, and enable allowPreview only for the designated existing Mac agent service. Do not change the second Mac or revoke its old token.
 - [ ] Measure real native-animation capture -> cloud -> browser fresh frames, rate/jitter/latency and stalls. Verify independent framebuffer/canvas content. Tune acquisition to approximately 30fps on the healthy real network; do not label repeated draws as new captured frames.
