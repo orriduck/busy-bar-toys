@@ -36,7 +36,9 @@ type Publisher = {
   timer: ReturnType<typeof setTimeout>;
   tokens: number;
   tokenAt: number;
-  droppedAt: number[];
+  clockTimer?: ReturnType<typeof setTimeout>;
+  frameTimer?: ReturnType<typeof setTimeout>;
+  pendingFrame: PreviewFrame | null;
   lastActivity: number;
   ingressTokens: number;
   ingressAt: number;
@@ -67,6 +69,25 @@ export class PreviewRelay {
   private viewers = new Map<string, Viewer>();
   private latest: PreviewFrame | null = null;
   private arrivals: number[] = [];
+  private observedAt = 0;
+
+  private now() {
+    // Standard WebSocket callbacks can retain an older runtime clock context.
+    // Only trusted server I/O observations advance this monotonic floor.
+    this.observedAt = Math.max(this.observedAt, Date.now());
+    return this.observedAt;
+  }
+  private syncClock(p: Publisher) {
+    if (p.clockTimer !== undefined) return;
+    p.clockTimer = setTimeout(() => {
+      p.clockTimer = undefined;
+      if (this.publisher !== p) return;
+      // Validation failures disconnect and cancel this timer. A surviving
+      // publisher therefore had valid activity immediately before this I/O.
+      p.lastActivity = this.now();
+      this.revalidate();
+    }, 1);
+  }
 
   update(s: State) {
     this.authority = {
@@ -89,7 +110,7 @@ export class PreviewRelay {
   }
   private authorize(auth: PreviewAuth) {
     const s = this.authority,
-      now = Date.now();
+      now = this.now();
     requireThat(s, "UNAUTHORIZED", 401);
     if (auth.kind === "session") {
       requireThat(
@@ -113,7 +134,7 @@ export class PreviewRelay {
   }
   private publisherValid(p: Publisher) {
     this.authorize(p.auth);
-    requireThat(p.lastActivity + 15000 > Date.now(), "PREVIEW_PUBLISHER_IDLE");
+    requireThat(p.lastActivity + 15000 > this.now(), "PREVIEW_PUBLISHER_IDLE");
     requireThat(
       this.authority!.services[p.auth.serviceId].epoch === p.epoch,
       "EPOCH_EXPIRED",
@@ -125,7 +146,7 @@ export class PreviewRelay {
       try {
         this.authorize(v.auth);
         requireThat(
-          v.leaseExpiresAt > Date.now() && v.deadline > Date.now(),
+          v.leaseExpiresAt > this.now() && v.deadline > this.now(),
           "PREVIEW_VIEWER_EXPIRED",
         );
       } catch {
@@ -152,7 +173,7 @@ export class PreviewRelay {
     return this.currentStatus();
   }
   private currentStatus() {
-    const now = Date.now();
+    const now = this.now();
     this.arrivals = this.arrivals.filter((t) => now - t < 1000);
     const p = this.publisher;
     return {
@@ -192,12 +213,12 @@ export class PreviewRelay {
       demandViewers: -1,
       streamId: crypto.randomUUID(),
       sequence: 0,
-      droppedAt: [],
+      pendingFrame: null,
       tokens: 6,
-      tokenAt: Date.now(),
-      lastActivity: Date.now(),
-      ingressTokens: 16,
-      ingressAt: Date.now(),
+      tokenAt: this.now(),
+      lastActivity: this.now(),
+      ingressTokens: 60,
+      ingressAt: this.now(),
       timer: setTimeout(
         () => this.expirePublisher(),
         Math.max(
@@ -205,7 +226,7 @@ export class PreviewRelay {
           Math.min(
             15000,
             this.authority!.services[auth.serviceId].epochExpiresAt -
-              Date.now(),
+              this.now(),
           ),
         ),
       ),
@@ -214,6 +235,7 @@ export class PreviewRelay {
     this.clearFrame();
     socket.addEventListener("message", (event) => {
       if (this.publisher !== p) return;
+      this.syncClock(p);
       try {
         this.receive(p, event.data);
       } catch (error) {
@@ -255,7 +277,7 @@ export class PreviewRelay {
         Math.min(
           p.lastActivity + 15000,
           this.authority!.services[p.auth.serviceId].epochExpiresAt,
-        ) - Date.now(),
+        ) - this.now(),
       ),
     );
   }
@@ -269,10 +291,10 @@ export class PreviewRelay {
       "PREVIEW_FRAME_SIZE",
       413,
     );
-    const now = Date.now();
+    const now = this.now();
     p.ingressTokens = Math.min(
-      16,
-      p.ingressTokens + ((now - p.ingressAt) * 60) / 1000,
+      60,
+      p.ingressTokens + (Math.max(0, now - p.ingressAt) * 60) / 1000,
     );
     p.ingressAt = now;
     requireThat(p.ingressTokens >= 1, "PREVIEW_RATE_LIMIT", 429);
@@ -317,17 +339,9 @@ export class PreviewRelay {
     p.sequence = Number(f.sequence);
     p.lastActivity = now;
     requireThat(this.viewers.size > 0, "PREVIEW_NO_DEMAND");
-    // Thirty sustained arrivals/s with six-frame jitter allowance; no unbounded queue.
-    p.tokens = Math.min(6, p.tokens + ((now - p.tokenAt) * 30) / 1000);
-    p.tokenAt = now;
-    if (p.tokens < 1) {
-      p.droppedAt = p.droppedAt.filter((t) => now - t < 1000);
-      p.droppedAt.push(now);
-      requireThat(p.droppedAt.length <= 30, "PREVIEW_RATE_LIMIT", 429);
-      return;
-    }
-    p.tokens--;
-    this.latest = {
+    // The input budget permits one second of network coalescing. Forwarding
+    // remains thirty/s with six-frame jitter and exactly one pending latest frame.
+    p.pendingFrame = {
       deviceId: this.authority!.deviceId,
       streamId: p.streamId,
       sequence: p.sequence,
@@ -337,6 +351,38 @@ export class PreviewRelay {
       width: 72,
       height: 16,
     };
+    this.forward(p);
+  }
+  private forward(p: Publisher) {
+    if (this.publisher !== p) return;
+    this.revalidate();
+    if (this.publisher !== p || !this.viewers.size || !p.pendingFrame) return;
+    const now = this.now();
+    p.tokens = Math.min(
+      6,
+      p.tokens + (Math.max(0, now - p.tokenAt) * 30) / 1000,
+    );
+    p.tokenAt = now;
+    if (p.tokens < 1) {
+      if (p.frameTimer === undefined)
+        p.frameTimer = setTimeout(
+          () => {
+            p.frameTimer = undefined;
+            if (this.publisher !== p) return;
+            this.now();
+            this.forward(p);
+          },
+          Math.max(1, Math.ceil(((1 - p.tokens) * 1000) / 30)),
+        );
+      return;
+    }
+    if (p.frameTimer !== undefined) {
+      clearTimeout(p.frameTimer);
+      p.frameTimer = undefined;
+    }
+    p.tokens--;
+    this.latest = p.pendingFrame;
+    p.pendingFrame = null;
     this.arrivals.push(now);
     this.arrivals = this.arrivals.filter((t) => now - t < 1000);
     for (const [id, v] of this.viewers) {
@@ -360,7 +406,7 @@ export class PreviewRelay {
     const expiry = Math.min(
       auth.expiresAt,
       this.authority!.sessions[auth.id],
-      Date.now() + 55000,
+      this.now() + 55000,
     );
     const abort = () => this.removeViewer(id, true);
     const v: Viewer = {
@@ -368,13 +414,13 @@ export class PreviewRelay {
       writer,
       writing: false,
       deadline: expiry,
-      leaseExpiresAt: Date.now() + 6000,
+      leaseExpiresAt: this.now() + 6000,
       removeAbort: () => signal?.removeEventListener("abort", abort),
       statusPending: true,
       framePending: this.freshFrame(),
       timer: setTimeout(
         () => this.removeViewer(id, true),
-        Math.min(6000, expiry - Date.now()),
+        Math.min(6000, expiry - this.now()),
       ),
     };
     this.viewers.set(id, v);
@@ -406,10 +452,10 @@ export class PreviewRelay {
     if (operation === "close") this.removeViewer(id, true);
     else {
       clearTimeout(v.timer);
-      v.leaseExpiresAt = Date.now() + 6000;
+      v.leaseExpiresAt = this.now() + 6000;
       v.timer = setTimeout(
         () => this.removeViewer(id, true),
-        Math.min(6000, v.deadline - Date.now()),
+        Math.min(6000, v.deadline - this.now()),
       );
     }
     return { ok: true };
@@ -492,10 +538,17 @@ export class PreviewRelay {
     }
   }
   private freshFrame() {
-    return this.latest !== null && Date.now() - this.latest.receivedAt <= 2000;
+    return this.latest !== null && this.now() - this.latest.receivedAt <= 2000;
   }
   private clearFrame() {
     this.latest = null;
+    if (this.publisher) {
+      this.publisher.pendingFrame = null;
+      if (this.publisher.frameTimer !== undefined) {
+        clearTimeout(this.publisher.frameTimer);
+        this.publisher.frameTimer = undefined;
+      }
+    }
     this.arrivals = [];
     for (const v of this.viewers.values()) v.framePending = false;
   }
@@ -504,6 +557,9 @@ export class PreviewRelay {
     if (!p) return;
     this.publisher = null;
     clearTimeout(p.timer);
+    if (p.clockTimer !== undefined) clearTimeout(p.clockTimer);
+    if (p.frameTimer !== undefined) clearTimeout(p.frameTimer);
+    p.pendingFrame = null;
     this.clearFrame();
     // A backpressured writer owns an already encoded event, independently of
     // latest/framePending. Abort that transport before invalidation returns so
