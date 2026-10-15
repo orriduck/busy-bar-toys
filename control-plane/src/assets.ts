@@ -1,7 +1,11 @@
 import { State, Slot, requireThat, text } from "./model";
 import { digest, unbase64 } from "./security";
 export function referencedHashes(s: State) {
-  const hashes = new Set<string>();
+  const hashes = new Set<string>(
+    Object.values(s.nativeElements)
+      .filter((e) => (s.elementExpiries[e.id]?.expiresAt ?? 0) > Date.now())
+      .flatMap((e) => (e.assetHash ? [e.assetHash] : [])),
+  );
   for (const i of Object.values(s.items))
     for (const c of i.scene.commands)
       for (const e of c.elements) if (e.assetHash) hashes.add(e.assetHash);
@@ -12,7 +16,11 @@ export function referencedHashes(s: State) {
   return hashes;
 }
 export function pinnedSlots(s: State) {
-  const hashes = new Set<string>();
+  const hashes = new Set<string>(
+    Object.values(s.nativeElements)
+      .filter((e) => (s.elementExpiries[e.id]?.expiresAt ?? 0) > Date.now())
+      .flatMap((e) => (e.assetHash ? [e.assetHash] : [])),
+  );
   if (s.displaying && s.items[s.displaying.itemKey])
     for (const c of s.items[s.displaying.itemKey].scene.commands)
       for (const e of c.elements) if (e.assetHash) hashes.add(e.assetHash);

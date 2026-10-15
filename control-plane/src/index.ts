@@ -95,6 +95,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       s.visibleSince = null;
       s.entryAt = null;
       s.elementExpiries = {};
+      s.nativeElements = {};
       enqueue(s, {
         generation: s.generation,
         kind: "clear",
@@ -181,6 +182,15 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     try {
       // Perform cryptography before reading the mutable state; no external I/O is held under a storage gate.
       let newSecret: string | undefined, newHash: string | undefined;
+      const updateFingerprint =
+        path === "/api/update" && method === "POST"
+          ? await digest(
+              JSON.stringify({
+                elements: body.elements,
+                scene: body.scene ?? null,
+              }),
+            )
+          : undefined;
       if (
         method === "POST" &&
         (path === "/api/services" ||
@@ -338,10 +348,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           item.version > previousVersion &&
           s.selected === item.itemKey
         ) {
-          const oldElements = new Map<string, Element>();
+          const oldElements = this.projectedNativeElements(s);
           const newElements = new Map<string, Element>();
-          for (const c of old!.scene.commands)
-            for (const e of c.elements) oldElements.set(e.id, e);
           for (const c of item.scene.commands)
             for (const e of c.elements) newElements.set(e.id, e);
           const changed = [...newElements.values()].filter(
@@ -441,32 +449,39 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             Number.MAX_SAFE_INTEGER,
           ),
           elements = validateElements(body.elements);
-        const latest = new Map<string, Element>();
-        for (const c of item.scene.commands)
-          for (const e of c.elements) latest.set(e.id, e);
+        const recoveryScene =
+          body.scene === undefined ? undefined : validateScene(body.scene);
+        const latest = this.projectedNativeElements(s);
         const changed = elements.filter(
           (e) => JSON.stringify(e) !== JSON.stringify(latest.get(e.id)),
         );
         requireThat(
-          version !== item.version || changed.length === 0,
+          version !== item.version ||
+            (item.lastUpdateFingerprint
+              ? item.lastUpdateFingerprint === updateFingerprint
+              : changed.length === 0 &&
+                (!recoveryScene ||
+                  JSON.stringify(recoveryScene) ===
+                    JSON.stringify(item.scene))),
           "STALE_VERSION",
           409,
         );
         if (version === item.version)
           return json({ snapshot: snapshot(s, now, id) });
-        for (const e of elements)
+        for (const e of [
+          ...elements,
+          ...(recoveryScene?.commands.flatMap((command) => command.elements) ??
+            []),
+        ])
           if (e.assetHash)
             requireThat(
               s.assets[e.assetHash]?.owners.includes(id),
               "ASSET_NOT_AUTHORIZED",
               403,
             );
-        const transitioned: string[] = [];
-        for (const e of elements)
-          for (const c of item.scene.commands) {
-            const prior = c.elements.find((old) => old.id === e.id);
-            if (prior && prior.type !== e.type) transitioned.push(e.id);
-          }
+        const transitioned = elements
+          .filter((e) => latest.has(e.id) && latest.get(e.id)!.type !== e.type)
+          .map((e) => e.id);
         if (transitioned.length)
           enqueue(s, {
             generation: s.generation,
@@ -475,19 +490,22 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             elementIds: [...new Set(transitioned)],
             refresh: true,
           });
-        for (const e of elements) {
-          let replaced = false;
-          for (const c of item.scene.commands) {
-            const index = c.elements.findIndex((old) => old.id === e.id);
-            if (index >= 0) {
-              c.elements[index] = e;
-              replaced = true;
+        if (recoveryScene) item.scene = recoveryScene;
+        else {
+          for (const e of elements) {
+            let replaced = false;
+            for (const c of item.scene.commands) {
+              const index = c.elements.findIndex((old) => old.id === e.id);
+              if (index >= 0) {
+                c.elements[index] = e;
+                replaced = true;
+              }
             }
+            if (!replaced)
+              item.scene.commands[item.scene.commands.length - 1].elements.push(
+                e,
+              );
           }
-          if (!replaced)
-            item.scene.commands[item.scene.commands.length - 1].elements.push(
-              e,
-            );
         }
         requireThat(
           JSON.stringify(item.scene).length <= 32768,
@@ -496,13 +514,9 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         );
         item.scene = validateScene(item.scene);
         item.version = version;
+        item.lastUpdateFingerprint = updateFingerprint;
         if (changed.length)
-          enqueue(s, {
-            generation: s.generation,
-            kind: "draw",
-            dueAt: now,
-            elements: changed,
-            refresh: true,
+          this.queueRefresh(s, changed, now, {
             itemKey: item.itemKey,
             itemVersion: version,
           });
@@ -718,12 +732,36 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     await this.dispatch();
     await this.arm();
   }
+  private projectedNativeElements(s: State): Map<string, Element> {
+    const elements = new Map(Object.entries(s.nativeElements));
+    for (const command of s.commands) {
+      if (command.generation !== s.generation) continue;
+      if (command.kind === "clear") {
+        if (command.elementIds)
+          for (const id of command.elementIds) elements.delete(id);
+        else elements.clear();
+      } else if (command.kind === "draw")
+        for (const element of command.elements ?? [])
+          elements.set(element.id, element);
+    }
+    return elements;
+  }
   private queueRefresh(
     s: State,
     elements: Element[],
     now: number,
     metadata: Pick<Command, "itemKey" | "itemVersion" | "refreshBatch"> = {},
   ) {
+    const projected = this.projectedNativeElements(s);
+    for (const element of elements) projected.set(element.id, element);
+    requireThat(
+      projected.size <= 128 &&
+        new TextEncoder().encode(JSON.stringify([...projected.values()]))
+          .length <=
+          1024 * 1024,
+      "NATIVE_ELEMENT_CAPACITY",
+      413,
+    );
     const batch = metadata.refreshBatch ?? s.commandSeq + 1;
     for (let offset = 0; offset < elements.length; offset += 32)
       enqueue(s, {
@@ -840,6 +878,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         await this.arm();
         let failed: unknown = null;
         let drawExpiresAt: number | undefined;
+        let drawSentAt: number | undefined;
         try {
           const token = await decrypt(
             s.tokenCipher,
@@ -903,7 +942,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               native.timeout = e.type === "text" ? ttl : 60;
               return native;
             });
-            drawExpiresAt = Date.now() + ttl * 1000;
+            drawSentAt = Date.now();
+            drawExpiresAt = drawSentAt + ttl * 1000;
             await client.request("POST", "/display/draw", {
               application_name: NAMESPACE,
               priority: 50,
@@ -974,12 +1014,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               );
               if (admission) admission.version = cmd.itemVersion;
             }
-            if (drawExpiresAt !== undefined)
-              for (const element of cmd.elements ?? [])
+            if (drawExpiresAt !== undefined && drawSentAt !== undefined)
+              for (const element of cmd.elements ?? []) {
+                const expiresAt =
+                  element.type === "text" ? drawExpiresAt : drawSentAt + 60000;
                 live.elementExpiries[element.id] = {
                   type: element.type,
-                  expiresAt: drawExpiresAt,
+                  expiresAt,
                 };
+                live.nativeElements[element.id] = element;
+              }
             const futureEntrance = live.commands.some(
               (c) =>
                 c.generation === live.generation &&
@@ -1026,15 +1070,19 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                 live.revision++;
               }
             }
-            const activeIds = new Set(
-              this.latestElements(live.items[live.selected!]).map((e) => e.id),
-            );
-            for (const id of Object.keys(live.elementExpiries))
-              if (!activeIds.has(id)) delete live.elementExpiries[id];
             this.renewalDeadlines(live, acceptedAt);
           }
-          if (cmd.kind === "clear" && cmd.elementIds)
-            for (const id of cmd.elementIds) delete live.elementExpiries[id];
+          if (cmd.kind === "clear") {
+            if (cmd.elementIds)
+              for (const id of cmd.elementIds) {
+                delete live.elementExpiries[id];
+                delete live.nativeElements[id];
+              }
+            else {
+              live.elementExpiries = {};
+              live.nativeElements = {};
+            }
+          }
           if (cmd.kind === "clear" && !live.selected) {
             live.health = {
               status: "healthy",

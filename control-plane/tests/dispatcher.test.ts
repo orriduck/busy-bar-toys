@@ -118,7 +118,10 @@ const presentation = (epoch: string, id = "one") => ({
 async function displayed(admin: (path: string) => Promise<Response>) {
   for (let j = 0; j < 50; j++) {
     const response = await admin("/snapshot");
-    const s = (await response.json()) as { displaying: unknown };
+    const s = (await response.json()) as {
+      displaying: unknown;
+      generation: number;
+    };
     if (s.displaying) return s;
   }
   throw new Error("did not display");
@@ -573,4 +576,244 @@ it("applies all64 changed full-publish elements in bounded chunks before confirm
   expect(state.health.status).toBe("healthy");
   expect(state.admission[0].version).toBe(2);
   expect(state.commands).toHaveLength(0);
+});
+it("keeps transient fade deltas out of authoritative recovery and dedupes exact-version retries", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  await send("/publish", presentation(epoch));
+  const initial = (await displayed(admin)) as { generation: number };
+  const clearMask = {
+    id: "fade-mask",
+    type: "rectangle",
+    width: 72,
+    height: 16,
+    opacity: 0,
+  };
+  const recovery = {
+    entryDurationMs: 0,
+    commands: [
+      {
+        offsetMs: 0,
+        elements: [
+          { id: "text", type: "text", text: "Hello", font: "small" },
+          clearMask,
+        ],
+      },
+    ],
+  };
+  const body = {
+    epoch,
+    instanceId: "mac",
+    itemId: "one",
+    version: 2,
+    generation: initial.generation,
+    elements: [{ ...clearMask, opacity: 100 }],
+    scene: recovery,
+  };
+  expect((await send("/update", body)).status).toBe(200);
+  let saved: State | null = null;
+  for (let j = 0; j < 50; j++) {
+    await admin("/snapshot");
+    saved = await runInDurableObject(
+      env.DEVICES.getByName(deviceId),
+      (_instance, ctx) => new StateStore(ctx.storage).load(),
+    );
+    if (saved!.commands.length === 0) break;
+  }
+  const mask = saved!.items[saved!.selected!].scene.commands[0].elements.find(
+    (e) => e.id === "fade-mask",
+  );
+  expect(mask?.opacity).toBe(0);
+  const before = calls.length;
+  expect((await send("/update", body)).status).toBe(200);
+  expect(calls.length).toBe(before);
+  expect(
+    (
+      await send("/update", {
+        ...body,
+        scene: { ...recovery, entryDurationMs: 1 },
+      })
+    ).status,
+  ).toBe(409);
+  expect(
+    (
+      await send("/update", {
+        ...body,
+        version: 3,
+        scene: {
+          entryDurationMs: 0,
+          commands: [
+            {
+              offsetMs: 0,
+              elements: [
+                { id: "other", type: "image", assetHash: "0".repeat(64) },
+              ],
+            },
+          ],
+        },
+      })
+    ).status,
+  ).toBe(403);
+  const beforeClear = calls.filter((c) => c.body).length;
+  expect(
+    (await send("/update", { ...body, version: 3, elements: [clearMask] }))
+      .status,
+  ).toBe(200);
+  for (
+    let j = 0;
+    j < 50 && calls.filter((c) => c.body).length === beforeClear;
+    j++
+  )
+    await admin("/snapshot");
+  expect(calls.filter((c) => c.body).length).toBe(beforeClear + 1);
+  expect(
+    (
+      calls.filter((c) => c.body).at(-1)!.body!.elements as {
+        opacity: number;
+      }[]
+    )[0].opacity,
+  ).toBe(0);
+  await send("/publish", { ...presentation(epoch, "urgent"), level: "urgent" });
+  await send("/end", {
+    epoch,
+    instanceId: "mac",
+    itemId: "urgent",
+    version: 1,
+  });
+  for (let j = 0; j < 50; j++) {
+    await admin("/snapshot");
+    saved = await runInDurableObject(
+      env.DEVICES.getByName(deviceId),
+      (_instance, ctx) => new StateStore(ctx.storage).load(),
+    );
+    if (saved!.commands.length === 0) break;
+  }
+  const final = calls.filter((c) => c.body).at(-1)!.body!.elements as {
+    id: string;
+    opacity?: number;
+  }[];
+  expect(final.find((e) => e.id === "fade-mask")?.opacity).toBe(0);
+});
+it("pins uploaded transient delta assets through nativeTTL without adding them to recovery", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  const { digest } = await import("../src/security");
+  const { pinnedSlots } = await import("../src/assets");
+  const hash = await digest("transient-frame");
+  expect(
+    (
+      await send("/assets", {
+        hash,
+        type: "png",
+        data: btoa("transient-frame"),
+      })
+    ).status,
+  ).toBe(200);
+  await send("/publish", presentation(epoch));
+  const initial = (await displayed(admin)) as { generation: number };
+  const recovery = presentation(epoch).scene;
+  expect(
+    (
+      await send("/update", {
+        epoch,
+        instanceId: "mac",
+        itemId: "one",
+        version: 2,
+        generation: initial.generation,
+        elements: [{ id: "transient-frame", type: "image", assetHash: hash }],
+        scene: recovery,
+      })
+    ).status,
+  ).toBe(200);
+  let state: State | null = null;
+  for (let j = 0; j < 50; j++) {
+    await admin("/snapshot");
+    state = await runInDurableObject(
+      env.DEVICES.getByName(deviceId),
+      (_instance, ctx) => new StateStore(ctx.storage).load(),
+    );
+    if (state!.commands.length === 0) break;
+  }
+  expect(JSON.stringify(state!.items[state!.selected!].scene)).not.toContain(
+    hash,
+  );
+  const slot = state!.slots.find((slot) => slot.hash === hash)!.slot;
+  expect(pinnedSlots(state!).has(slot)).toBe(true);
+  expect(
+    state!.elementExpiries["transient-frame"].expiresAt - Date.now(),
+  ).toBeGreaterThan(55000);
+  state!.elementExpiries["transient-frame"].expiresAt = Date.now() - 1;
+  expect(pinnedSlots(state!).has(slot)).toBe(false);
+});
+it("full-publish recovery clears a pending transient mask without resending unchanged text", async () => {
+  const { send, admin, epoch } = await setup();
+  const mask = {
+    id: "mask",
+    type: "rectangle",
+    width: 72,
+    height: 16,
+    opacity: 0,
+  };
+  const scene = {
+    entryDurationMs: 0,
+    commands: [
+      {
+        offsetMs: 0,
+        elements: [...presentation(epoch).scene.commands[0].elements, mask],
+      },
+    ],
+  };
+  await send("/publish", { ...presentation(epoch), level: "urgent", scene });
+  const initial = (await displayed(admin)) as unknown as { generation: number };
+  let enter: () => void = () => {},
+    release: () => void = () => {};
+  const entered = new Promise<void>((r) => (enter = r)),
+    gate = new Promise<void>((r) => (release = r));
+  let first = true;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+    const request = input instanceof Request ? input : new Request(input),
+      body = (await request.json()) as Record<string, unknown>;
+    calls.push({
+      method: request.method,
+      path: new URL(request.url).pathname,
+      body,
+    });
+    if (first) {
+      first = false;
+      enter();
+      await gate;
+    }
+    return Response.json({ ok: true });
+  });
+  await send("/update", {
+    epoch,
+    instanceId: "mac",
+    itemId: "one",
+    version: 2,
+    generation: initial.generation,
+    elements: [{ ...mask, opacity: 100 }],
+    scene,
+  });
+  await entered;
+  expect(
+    (
+      await send("/publish", {
+        ...presentation(epoch),
+        version: 3,
+        level: "urgent",
+        scene,
+      })
+    ).status,
+  ).toBe(200);
+  release();
+  for (let j = 0; j < 50 && calls.filter((c) => c.body).length < 3; j++)
+    await admin("/snapshot");
+  const draws = calls.filter((c) => c.body);
+  expect(draws).toHaveLength(3);
+  expect(draws[2].body!.elements as { id: string; opacity?: number }[]).toEqual(
+    [expect.objectContaining({ id: "mask", opacity: 0 })],
+  );
+  expect(
+    draws
+      .flatMap((c) => c.body!.elements as { id: string }[])
+      .filter((e) => e.id === "text"),
+  ).toHaveLength(1);
 });

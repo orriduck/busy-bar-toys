@@ -70,6 +70,7 @@ export interface Item {
   scene: Scene;
   actionKeys: string[];
   businessId?: string;
+  lastUpdateFingerprint?: string;
 }
 export interface Action {
   id: string;
@@ -160,6 +161,7 @@ export interface State {
   tokenCipher?: string;
   sessions: Record<string, number>;
   elementExpiries: Record<string, { type: Element["type"]; expiresAt: number }>;
+  nativeElements: Record<string, Element>;
   nextTextAt: number | null;
   nextWidgetAt: number | null;
 }
@@ -188,6 +190,7 @@ export function createState(deviceId: string): State {
     slots: [],
     sessions: {},
     elementExpiries: {},
+    nativeElements: {},
     nextTextAt: null,
     nextWidgetAt: null,
   };
@@ -625,6 +628,7 @@ function switchTo(s: State, next: Item | null, now: number) {
   s.visibleSince = null;
   s.entryAt = null;
   s.elementExpiries = {};
+  s.nativeElements = {};
   s.nextTextAt = null;
   s.nextWidgetAt = null;
   s.admission = [];
@@ -710,7 +714,16 @@ export function tick(s: State, now: number) {
     if (s.items[current.itemKey]?.level === "urgent")
       end(s, current, "completed", current.version);
   }
-  const pinnedHashes = new Set<string>();
+  for (const id of Object.keys(s.nativeElements))
+    if ((s.elementExpiries[id]?.expiresAt ?? 0) <= now) {
+      delete s.nativeElements[id];
+      delete s.elementExpiries[id];
+    }
+  const pinnedHashes = new Set<string>(
+    Object.values(s.nativeElements).flatMap((e) =>
+      e.assetHash ? [e.assetHash] : [],
+    ),
+  );
   for (const item of Object.values(s.items))
     for (const command of item.scene.commands)
       for (const element of command.elements)
@@ -935,7 +948,8 @@ export function snapshot(s: State, now: number, serviceId?: string) {
   const items = Object.values(s.items)
     .filter((i) => !serviceId || i.serviceId === serviceId)
     .map((i) => {
-      const { scene, epoch, businessId, ...publicItem } = i;
+      const { scene, epoch, businessId, lastUpdateFingerprint, ...publicItem } =
+        i;
       const waiting = i.state !== "displaying" && i.state !== "applying";
       const queueProof =
         waiting &&

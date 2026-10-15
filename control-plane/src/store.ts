@@ -27,6 +27,7 @@ export class StateStore {
     if (!row) return null;
     const header = JSON.parse(row.value) as State & { schemaVersion?: number };
     header.elementExpiries ??= {};
+    header.nativeElements ??= {};
     for (const name of collections) {
       const rows = this.storage.sql
         .exec<{ key: string; value: string }>(
