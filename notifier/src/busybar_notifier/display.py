@@ -1,4 +1,4 @@
-"""Split-flap notification entrance and final view, generalized from the ADSBao alert."""
+"""Staggered character entrance and final view, generalized from the ADSBao alert."""
 from functools import lru_cache
 
 from PIL import Image, ImageDraw

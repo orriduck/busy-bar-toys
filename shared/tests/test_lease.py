@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from busybar_shared.api import APIError
+from busybar_shared.api import APIError, AuthError, ConnectionError
 from busybar_shared.lease import TTL, DisplayLease
 
 
@@ -13,7 +13,7 @@ class Storage:
     def read_file(self, path):
         self.reads += 1
         if path not in self.files:
-            raise APIError("BUSY request failed (HTTP 400).")
+            raise APIError("BUSY request failed (HTTP 400).", http_status=400)
         return self.files[path]
 
     def write_file(self, path, data):
@@ -41,6 +41,11 @@ class LeaseTest(unittest.TestCase):
         self.assertFalse(self.home.renew("info"))
         self.assertFalse(self.home.held)
 
+    def test_equal_urgent_hosts_do_not_keep_stealing_from_each_other(self):
+        self.assertTrue(self.home.acquire('urgent'))
+        self.assertFalse(self.work.acquire('urgent'))
+        self.assertTrue(self.home.renew('urgent'))
+
     def test_release_frees_the_display_only_for_the_holder(self):
         self.home.acquire("info")
         self.work.release()
@@ -60,6 +65,14 @@ class LeaseTest(unittest.TestCase):
         for _ in range(5):
             self.work.foreign()
         self.assertEqual(self.device.reads, reads + 1)
+
+    def test_unverifiable_ownership_is_not_treated_as_a_missing_file(self):
+        for error in (ConnectionError('offline'),AuthError('denied'),APIError('server error',http_status=503)):
+            with self.subTest(error=type(error).__name__):
+                class Unavailable:
+                    def read_file(self,path):raise error
+                lease=DisplayLease(Unavailable())
+                with self.assertRaises(type(error)):lease.foreign(fresh=True)
 
 
 if __name__ == "__main__":

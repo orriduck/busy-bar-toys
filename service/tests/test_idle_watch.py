@@ -7,7 +7,18 @@ from unittest.mock import patch, Mock
 from busybar_service.cli import watch
 
 
-class IdleWatchTests(unittest.TestCase):
+class LocalDisplayTest(unittest.TestCase):
+    def setUp(self):
+        # These fixtures advance wall time once per watch iteration. Lease I/O
+        # has independent clock reads and is covered by test_shared_display.
+        lease=Mock()
+        lease.foreign.return_value=None
+        patcher=patch('busybar_service.cli.DisplayLease',return_value=lease)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class IdleWatchTests(LocalDisplayTest):
     def test_observer_keeps_clock_and_speed_visible_with_no_active_task(self):
         with tempfile.TemporaryDirectory() as directory:
             api=Mock()
@@ -34,7 +45,7 @@ class IdleWatchTests(unittest.TestCase):
 
 if __name__=='__main__': unittest.main()
 
-class ButtonWatchTests(unittest.TestCase):
+class ButtonWatchTests(LocalDisplayTest):
     def test_start_blocks_stale_turn_heartbeat_until_a_new_turn(self):
         from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
         registry=TaskRegistry()
@@ -102,7 +113,7 @@ class ButtonWatchTests(unittest.TestCase):
             monitor.return_value.start.assert_called_once()
             monitor.return_value.stop.assert_called_once()
 
-class StandbyWatchTests(unittest.TestCase):
+class StandbyWatchTests(LocalDisplayTest):
     def test_ten_second_standby_returns_calendar_without_refresh_reset_and_next_turn_resumes(self):
         from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
         registry=TaskRegistry()
@@ -141,7 +152,7 @@ class StandbyWatchTests(unittest.TestCase):
             self.assertEqual(draws,[100,101,107,117])
             self.assertEqual(clears,[111,117])
 
-class MotionWatchTests(unittest.TestCase):
+class MotionWatchTests(LocalDisplayTest):
     def test_real_motion_controller_keeps_timer_and_next_turn_semantics(self):
         from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
         registry=TaskRegistry();current={'now':100}
