@@ -1,80 +1,118 @@
-# BUSY Bar Checkers
+# busy-bar-toys
 
-Show Codex task status and nearby aircraft on one BUSY Bar.
-One background service controls both checkers.
-The original device calendar remains the default view.
+English | [简体中文](README.zh-CN.md)
 
-| Directory | Contents |
+Show local Codex task status and nearby aircraft on a BUSY Bar.
+One background service controls both toys.
+The device calendar is the default view.
+
+![Aircraft animation with mock data](docs/images/staggered-flight-preview.gif)
+
+This rendered preview uses mock flight data.
+See the [actual device capture](docs/images/actual-staggered-intro.png) for comparison.
+
+## Toys
+
+| Toy | Display |
 |---|---|
-| [codex-checker](codex-checker/README.md) | Codex lifecycle, ChatGPT/Your dot icons, clock, and network rate. |
-| [adsbao-checker](adsbao-checker/README.md) | Mac location, ADSBao traffic, and nearby-aircraft alerts. |
-| [shared](shared/README.md) | BUSY API, Keychain, button input, pixel text, native encoding, and fades. |
+| [Codex checker](codex-checker/README.md) | Task status, ChatGPT or Your dot icon, clock, and network rate. |
+| [ADSBao checker](adsbao-checker/README.md) | An alert for an aircraft within three statute miles. |
 
-## Screen behavior
+### Codex status
 
-Send a new local Codex task to show its status.
-A completed task shows standby for ten seconds, then restores the calendar.
-Start/Pause also restores the calendar until the next task turn.
+Start a local Codex task to show its status.
+The clock uses New York time in 24-hour format.
+Colored arrows show upload and download activity.
+The number shows their combined rate on the Mac's default network interface.
 
-An aircraft within three statute miles can show a temporary alert.
-The aircraft flies in beside its identity, distance, and type.
-The alert remains visible for ten seconds, then fades out.
-The service then restores the latest Codex view or the original calendar.
-Start/Pause can dismiss the alert early.
+| Light | State |
+|---|---|
+| Moving blue | The task is in progress. |
+| Yellow | The task needs input or approval. |
+| Thin white | The task is complete or stopped. |
+| Red | The task reported an error. |
+| Gray | The last task update is more than 30 minutes old. |
 
-![Actual device samples from a synthetic aircraft demo](docs/images/actual-adsbao-frames.png)
+After ten seconds in standby, the service restores the calendar.
+Press Start/Pause to restore the calendar immediately.
+The next task turn restores the Codex display.
 
-These actual device frames use mock flight data.
-They are not evidence of a real nearby flight.
+### Nearby aircraft
+
+The Mac supplies its system location.
+The service receives nearby traffic from [ADSBao](https://adsbao.dev) through Server-Sent Events (SSE).
+The trigger distance is three statute miles, or 4,828 metres, measured horizontally.
+
+The aircraft enters beside `ADSBAO`.
+After half a second, characters roll upward to the flight identity from left to right.
+Adjacent characters start about 67 milliseconds apart.
+The lower line shows only the aircraft type, such as `A320`.
+
+The full introduction takes about 1.77 seconds.
+The flight identity then stays visible for ten seconds.
+The service restores the current Codex display or the calendar.
+Each aircraft alerts once per encounter.
+
+## Requirements
+
+- macOS with Python 3.10 or later.
+- Apple command-line tools with `swiftc` and `xcrun`.
+- A BUSY Bar with internet access and a BUSY cloud API token.
+- A local Wi-Fi or USB connection for Start/Pause input.
+
+Keep the Mac awake and connected to the internet.
+Wi-Fi button input requires local access between the Mac and the Bar.
+The devices can use different Wi-Fi bands if the network permits this access.
 
 ## Install
 
-Requirements: macOS, Python 3.10 or later, the Swift compiler, and a connected BUSY Bar.
-Run all commands from the repository root.
+Keep this checkout after installation.
+The service runs from its Python environment.
+The command name remains `busy-bar`.
 
-1. Create the environment.
+1. Clone the repository.
+
+   ```sh
+   git clone https://github.com/orriduck/busy-bar-toys.git
+   ```
+
+2. Open the repository directory.
+
+   ```sh
+   cd busy-bar-toys
+   ```
+
+3. Create the Python environment.
 
    ```sh
    python3 -m venv .venv
    ```
 
-2. Install the package.
+4. Install the package in editable mode.
 
    ```sh
    .venv/bin/python -m pip install -e .
    ```
 
-3. Compile the cloud credential helper.
+5. Compile the cloud credential helper.
 
    ```sh
    swiftc scripts/store-token.swift -o .venv/bin/busy-token-store
    ```
 
-4. Compile the local input helper.
+6. Compile the button credential helper.
 
    ```sh
    swiftc scripts/input-keychain.swift -o .venv/bin/busy-input-keychain
    ```
 
-5. Store the cloud token in Keychain.
+7. Create a token on the [BUSY cloud token page](https://cloud.busy.app/api-tokens).
+
+8. Store the token in macOS Keychain.
 
    ```sh
    .venv/bin/busy-bar token-set
    ```
-
-6. Configure Wi-Fi button input.
-
-   ```sh
-   .venv/bin/busy-bar input-wifi
-   ```
-
-7. Enable the aircraft checker with system location.
-
-   ```sh
-   .venv/bin/busy-bar adsbao-location
-   ```
-
-8. Allow Busy Bar Location in the native macOS dialog.
 
 9. Install the background service.
 
@@ -82,43 +120,138 @@ Run all commands from the repository root.
    .venv/bin/busy-bar install
    ```
 
-The service starts now and at login.
-The Codex checker works without aircraft location setup.
-Use `install --reduced-motion` for static lights and aircraft.
+The service starts immediately and at login.
+Run the remaining commands from the repository directory.
+After a directory move, repeat the editable installation and service installation.
 
-Keep the Mac awake and connected to the internet.
-The Bar also needs an internet connection.
-Local button input needs a working local connection to the Bar.
+## Enable Wi-Fi button input
 
-## Check status
+1. Configure the Bar's local connection.
+
+   ```sh
+   .venv/bin/busy-bar input-wifi
+   ```
+
+2. Allow Keychain access if macOS requests it.
+
+3. Restart the background service.
+
+   ```sh
+   .venv/bin/busy-bar install
+   ```
+
+The setup command reads the device address and stores the local token in Keychain.
+Press Start/Pause to dismiss either toy and show the calendar.
+
+## Enable aircraft alerts
+
+1. Start system location setup.
+
+   ```sh
+   .venv/bin/busy-bar adsbao-location
+   ```
+
+2. Allow location access for **Busy Bar Location** in the macOS dialog.
+
+3. Restart the background service.
+
+   ```sh
+   .venv/bin/busy-bar install
+   ```
+
+An ADSBao API key is not required.
+The checker rejects old locations, inaccurate locations, stale aircraft positions, and aircraft on the ground.
+See [aircraft setup and encounter rules](adsbao-checker/README.md) for details.
+
+## Check or stop the service
+
+| Action | Command |
+|---|---|
+| Check all components | `.venv/bin/busy-bar status` |
+| Check aircraft diagnostics | `.venv/bin/busy-bar adsbao-status` |
+| Use static displays | `.venv/bin/busy-bar install --reduced-motion` |
+| Restore animation | `.venv/bin/busy-bar install` |
+| Stop the service | `.venv/bin/busy-bar uninstall` |
+
+Check `service_running`, `traffic.connected`, and `button_input.connected` as applicable.
+Status output shows connection health and location accuracy.
+The log is at `~/Library/Logs/BusyBarAI/service.log`.
+Uninstalling the service retains the Keychain credentials.
+
+## Show a mock aircraft
+
+1. Stop the background service.
+
+   ```sh
+   .venv/bin/busy-bar uninstall
+   ```
+
+2. Play the finite aircraft demonstration.
+
+   ```sh
+   .venv/bin/busy-bar adsbao-demo
+   ```
+
+3. Start the background service again.
+
+   ```sh
+   .venv/bin/busy-bar install
+   ```
+
+The rear display labels the demonstration `DEMO`.
+To create a preview without device access, run this command:
 
 ```sh
-.venv/bin/busy-bar status
-.venv/bin/busy-bar adsbao-status
+.venv/bin/busy-bar adsbao-preview --output .local/aircraft-preview
 ```
 
-Status reports location quality and connection health without printing coordinates.
-See each checker's README for detailed setup and diagnostics.
+## Data and credentials
 
-## Run tests
+The service reads local Codex event metadata.
+BUSY cloud requests carry display images, animations, and device commands.
+The aircraft connection sends rounded coordinates to ADSBao.
+The exact location stays in a private local file.
+
+| Data | Storage |
+|---|---|
+| Cloud token | Keychain service `app.busybar.ai-status`. |
+| Local button token | Keychain service `app.busybar.local-input`. |
+| Location, configuration, and events | `~/Library/Application Support/BusyBarAI`. |
+| Service registration | `~/Library/LaunchAgents/app.busybar.ai-status.plist`. |
+
+Runtime directories use mode `0700`.
+Private state files use mode `0600`.
+Keep tokens and runtime files outside Git.
+The service clears only its `ai-status` display namespace.
+Device focus modes retain their higher priority.
+
+## Development
+
+| Directory | Purpose |
+|---|---|
+| `codex-checker` | Codex events, display state, clock, and network rate. |
+| `adsbao-checker` | Location, traffic, encounters, and aircraft display. |
+| `shared` | Device API, Keychain, button input, text, and animation components. |
+| `scripts` | Native helper builds, tests, and previews. |
+| `docs` | Design records and device captures. |
+
+Run all tests:
 
 ```sh
 .venv/bin/python scripts/run-tests.py
 ```
 
-This command runs the shared and both checker suites.
-CI runs on Python 3.10 and 3.14.
+CI runs the suite on Python 3.10 and 3.14.
+Add focused tests for code changes and run this suite before a pull request.
+Keep mock data clearly identified in previews and demonstrations.
 
-## Credentials and location
+See [Codex events and hooks](codex-checker/README.md), [shared components](shared/README.md), and [motion verification](docs/weighted-motion.md).
 
-Cloud and local BUSY tokens stay in macOS Keychain.
-The precise location and configuration stay in the private runtime directory:
-`~/Library/Application Support/BusyBarAI`.
-Runtime directories use mode 0700; state files use mode 0600.
-Rounded location coordinates are sent to adsbao.dev to select a nearby stream.
-Do not commit that directory or add a token to a command argument.
+## Sources
 
-The service clears only its own `ai-status` display namespace.
-Device focus modes keep their higher priority.
+- [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api).
+- [Native font source and license](shared/src/busybar_shared/assets/font-source.txt).
+- [Icon notices](codex-checker/src/busybar_status/assets/NOTICE.md).
+- Writing principles: [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/).
 
-Writing style: [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/).
+This project is independent of BUSY, OpenAI, and ADSBao.
