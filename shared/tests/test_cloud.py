@@ -314,6 +314,12 @@ class CloudThreadTest(unittest.TestCase):
                 self.assertTrue(notice.wait(1), 'network I/O must not block urgent fallback')
             finally:
                 release.set(); producer.stop()
+                # stop() intentionally uses bounded joins in production. The
+                # fixture owns this directory and must await every writer before
+                # TemporaryDirectory removes it, including a delayed watchdog.
+                for thread in producer._threads:
+                    thread.join(timeout=3)
+                    self.assertFalse(thread.is_alive(), 'fixture worker did not stop')
 
     def test_keychain_secret_is_only_in_stdin_and_errors_are_sanitized(self):
         from types import SimpleNamespace
