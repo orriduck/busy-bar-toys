@@ -1,7 +1,7 @@
 # Shared BUSY Bar Components
 
-This directory contains device and rendering code used by both checkers.
-It does not contain Codex lifecycle rules or aircraft proximity rules.
+This directory contains device and rendering code used by the agent checker, the notifier, and the apps.
+It does not contain agent lifecycle rules or notification rules.
 
 | Module | Purpose |
 |---|---|
@@ -12,8 +12,10 @@ It does not contain Codex lifecycle rules or aircraft proximity rules.
 | `frames` | Actual device framebuffer decoding. |
 | `graphics` | Pixel text, native clock font, and XPM encoding. |
 | `native` | Native bicycle0 sections, alpha fades, damped rolls, and staggered character rolls. |
+| `lease` | A display lease in device storage, so several Macs can share one Bar. |
+| `command` | Local command-line tools with a timeout and a short error message. |
 
-Both checkers use the same fade generator and native file encoder.
+All components use the same fade generator and native file encoder.
 The device plays the stored frames.
 The Mac does not send one request for each animation frame.
 

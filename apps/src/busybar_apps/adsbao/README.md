@@ -1,16 +1,17 @@
-# ADSBao Checker
+# ADSBao notifier app
 
 Show an aircraft alert when a fresh airborne position is within three statute
 miles of this Mac. Three miles equals 4,828.032 metres.
 The distance is horizontal ground distance. It is not a nautical-mile limit.
 
-The checker uses the public [ADSBao nearby stream](https://adsbao.dev).
+ADSBao is an app on the [notifier](../../../../notifier/README.md).
+It uses the public [ADSBao nearby stream](https://adsbao.dev).
 It does not contact upstream aircraft providers directly.
 It does not need an ADSBao API key.
 
 ## Alert behavior
 
-The nearest new aircraft flies into view.
+The nearest new aircraft flies into view from the left edge.
 The front display shows its callsign and aircraft type when available.
 The flight identity uses the clock's native Bold7 font.
 The aircraft enters in 300 ms. The title holds `ADSBAO` for 500 ms.
@@ -18,13 +19,13 @@ Characters roll upward to the flight identity from left to right.
 Each character uses the clock digit's 500 ms damped roll.
 Adjacent characters start two native frames (about 67 ms) apart.
 The full introduction takes about 1.77 seconds, including space for eight characters.
-The lower line shows only the aircraft type. It stays blank if the type is unknown.
+The lower line shows only the aircraft type in native small text after the entrance. It stays blank if the type is unknown.
 Reduced-motion mode shows the flight identity immediately.
 A missing callsign uses the registration or ICAO hex identifier.
 The back display shows aircraft details.
 
 The alert stays visible for ten seconds after its entrance.
-It then fades out and restores the current Codex view or the device calendar.
+It then fades out. The notifier shows the next item, or restores the agent view or the device calendar.
 Start/Pause dismisses it early and selects the calendar.
 
 An aircraft alerts once per encounter.
@@ -64,7 +65,7 @@ Run commands from the repository root.
 
 Setup builds the native helper if it is missing.
 An installed observer uses the helper without requesting authorization again.
-Denied access leaves the calendar and Codex checker available.
+Denied access leaves the calendar and the agent checker available.
 After changing the system permission, run setup and reinstall the service.
 
 The checker rejects location fixes older than five minutes.
@@ -116,7 +117,7 @@ The demo refuses to run while the observer holds the display lock.
 Verified on 2026-10-14 with firmware 1.2.4 and API 27.5.0:
 
 - Actual-device mock capture: 77 framebuffer samples.
-- Aircraft entrance, stable details, fade, Codex restoration, and calendar restoration.
+- Aircraft entrance, stable details, fade, agent view restoration, and calendar restoration.
 - Live ADSBao envelope parsing and cancellable stream shutdown.
 - User-authorized native location with a valid 40-metre accuracy fix.
 - A 135-second stationary check received four distinct native fix timestamps.
