@@ -6,113 +6,113 @@
       "name": "codex-cycle",
       "frames": 570,
       "seconds": 19.0,
-      "gif_bytes": 692646,
-      "mp4_bytes": 88022
+      "gif_bytes": 698828,
+      "mp4_bytes": 86980
     },
     {
       "name": "your-dot",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 430826,
-      "mp4_bytes": 40030
+      "gif_bytes": 431815,
+      "mp4_bytes": 40197
     },
     {
       "name": "claude",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 457301,
-      "mp4_bytes": 43677
+      "gif_bytes": 460810,
+      "mp4_bytes": 43372
     },
     {
       "name": "state-colors",
       "frames": 300,
       "seconds": 10.0,
-      "gif_bytes": 407537,
-      "mp4_bytes": 55630
+      "gif_bytes": 411272,
+      "mp4_bytes": 54921
     },
     {
       "name": "clock-network",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 579599,
-      "mp4_bytes": 43503
+      "gif_bytes": 584083,
+      "mp4_bytes": 43345
     },
     {
       "name": "start-pause",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 371434,
-      "mp4_bytes": 42176
+      "gif_bytes": 374242,
+      "mp4_bytes": 42139
     },
     {
       "name": "reduced-motion",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 24402,
-      "mp4_bytes": 18595
+      "gif_bytes": 24628,
+      "mp4_bytes": 17869
     },
     {
       "name": "adsbao",
       "frames": 421,
       "seconds": 14.033333333333333,
-      "gif_bytes": 356518,
-      "mp4_bytes": 65001
+      "gif_bytes": 358945,
+      "mp4_bytes": 64760
     },
     {
       "name": "github",
       "frames": 1484,
       "seconds": 49.46666666666667,
-      "gif_bytes": 1720509,
-      "mp4_bytes": 297601
+      "gif_bytes": 1731671,
+      "mp4_bytes": 287666
     },
     {
       "name": "datadog",
       "frames": 423,
       "seconds": 14.1,
-      "gif_bytes": 466901,
-      "mp4_bytes": 103025
+      "gif_bytes": 470262,
+      "mp4_bytes": 100225
     },
     {
       "name": "jira",
       "frames": 214,
       "seconds": 7.133333333333334,
-      "gif_bytes": 274393,
-      "mp4_bytes": 48755
+      "gif_bytes": 275792,
+      "mp4_bytes": 48084
     },
     {
       "name": "metaflow",
       "frames": 214,
       "seconds": 7.133333333333334,
-      "gif_bytes": 215269,
-      "mp4_bytes": 48123
+      "gif_bytes": 216700,
+      "mp4_bytes": 47103
     },
     {
       "name": "terminal",
       "frames": 423,
       "seconds": 14.1,
-      "gif_bytes": 346934,
-      "mp4_bytes": 82338
+      "gif_bytes": 349584,
+      "mp4_bytes": 79723
     },
     {
       "name": "credentials",
       "frames": 214,
       "seconds": 7.133333333333334,
-      "gif_bytes": 194104,
-      "mp4_bytes": 45537
+      "gif_bytes": 195553,
+      "mp4_bytes": 44941
     },
     {
       "name": "calendar",
       "frames": 212,
       "seconds": 7.066666666666666,
-      "gif_bytes": 171687,
-      "mp4_bytes": 44402
+      "gif_bytes": 173109,
+      "mp4_bytes": 42891
     },
     {
       "name": "shared-display",
       "frames": 212,
       "seconds": 7.066666666666666,
-      "gif_bytes": 234183,
-      "mp4_bytes": 53069
+      "gif_bytes": 235554,
+      "mp4_bytes": 51487
     }
   ]
 }
