@@ -62,7 +62,7 @@ Design: `docs/superpowers/specs/2026-10-15-control-plane-ui-design.md`.
 
 - [x] Run `.venv/bin/python scripts/run-tests.py`, `npm test`, `npm run typecheck`, `npm run build`, and `npm run dry-run`. Resolve actual failures before broader retesting.
 - [x] Start isolated local demo. Verify first-screen minimal content and no real-source connection to the public synthetic preview. Complete browser and visual acceptance; keep real device captures in ignored `.local` files.
-- [ ] Open and attach a PR. Review final behavior and security boundaries, then use passing CI and review evidence for merge/release.
+- [x] Open and attach a PR. Review final behavior and security boundaries, then use passing CI and review evidence for merge/release.
 - [ ] Deploy the reviewed production Worker, update the stable Mac service with the reviewed bridge, and enable allowPreview only for the designated existing Mac agent service. Do not change the second Mac or revoke its old token.
 - [ ] Measure real native-animation capture -> cloud -> browser fresh frames, rate/jitter/latency and stalls. Verify independent framebuffer/canvas content. Tune acquisition to approximately 30fps on the healthy real network; do not label repeated draws as new captured frames.
 - [ ] Verify leaving all Display viewers stops LAN reads, session expiry hides old pixels, and cloud scheduling remains functional after the browser closes.
