@@ -6,6 +6,7 @@ from PIL import Image, ImageChops
 from busybar_agents.profiles import AgentProfile, register
 
 ASSETS = Path(__file__).parent / "assets"
+ORANGE = (217, 119, 87)
 WAITING_NOTIFICATIONS = frozenset({"permission_prompt", "elicitation_dialog"})
 
 
@@ -33,9 +34,9 @@ def claude_icon(size=16):
             mask = mask.crop((round(cx-side/2), round(cy-side/2),
                               round(cx+side/2), round(cy+side/2)))
         mask = mask.resize((size, size), Image.Resampling.LANCZOS)
-        return Image.merge("RGB", (mask, mask, mask))
+        return Image.merge("RGB", tuple(mask.point(lambda value, c=c: value * c // 255) for c in ORANGE))
 
 
 PROFILE = AgentProfile("claude", "Claude", claude_icon, HOOK_STATES,
-                       new_turn_events=frozenset({"UserPromptSubmit"}))
+                       new_turn_events=frozenset({"UserPromptSubmit"}), accent=ORANGE)
 register(PROFILE)

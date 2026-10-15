@@ -79,6 +79,15 @@ UI_PALETTE = [(v,v,v) for v in (0,24,48,64,80,96,112,128,144,160,176,192,224,255
     (255,190,69), (69,215,255)]
 
 
+def front_palette(source):
+    accent = profiles.profile(source).accent
+    if not accent:
+        return UI_PALETTE
+    grays = [(v,v,v) for v in (0,24,48,80,128,176,224,255)]
+    shades = [tuple(round(c * level / 6) for c in accent) for level in range(1, 7)]
+    return grays + UI_PALETTE[-2:] + shades
+
+
 def make_payload(task, now, count=1, rates=None):
     images = render(task, now, count, rates)
     background = images[0].copy()
@@ -87,7 +96,7 @@ def make_payload(task, now, count=1, rates=None):
     ImageDraw.Draw(background).rectangle((0,0,WIDTH-1,HEIGHT-1), fill="black")
     elements = [
         {"id": name, "type": "xpmbitmap", "display": name, "x": 0, "y": 0,
-         "timeout": 15, "z_index": 0, "data": to_xpm(image, UI_PALETTE if name == "front" else None)}
+         "timeout": 15, "z_index": 0, "data": to_xpm(image, front_palette(getattr(task, "source", None)) if name == "front" else None)}
         for name, image in zip(("front", "back"), (background,images[1]))]
     strip = {"id": "thinking", "display": "front", "x": 0, "y": 0,
              "timeout": 15, "z_index": 1}
