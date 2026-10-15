@@ -971,7 +971,13 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             }
             continue;
           }
-          const client = new BusyClient(token, this.env.BUSY_UPSTREAM);
+          const client = new BusyClient(token, this.env.BUSY_UPSTREAM, () => {
+            requireThat(
+              this.load()?.generation === cmd.generation,
+              "STALE_TARGET",
+              409,
+            );
+          });
           if (cmd.kind === "clear")
             await client.request(
               "DELETE",

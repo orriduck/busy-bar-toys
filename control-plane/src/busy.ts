@@ -53,19 +53,27 @@ export class BusyClient {
   constructor(
     private token: string,
     private upstream?: Pick<Fetcher, "fetch">,
+    private beforeWrite?: () => void,
   ) {}
   async request(
     method: string,
     path: string,
     payload?: object | Uint8Array,
   ): Promise<unknown> {
-    return this.attempt(method, path, payload, true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      return await this.attempt(method, path, payload, true, controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   private async attempt(
     method: string,
     path: string,
     payload: object | Uint8Array | undefined,
     bootstrapFullClear: boolean,
+    signal: AbortSignal,
   ): Promise<unknown> {
     allowRequest(method, path);
     if (method === "POST" && path === "/display/draw") {
@@ -157,8 +165,6 @@ export class BusyClient {
       this.token.length > 0 && !/\s/.test(this.token),
       "INVALID_DEVICE_TOKEN",
     );
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
     try {
       const isBytes = payload instanceof Uint8Array;
       const headers: Record<string, string> = {
@@ -173,13 +179,15 @@ export class BusyClient {
         method,
         headers,
         redirect: "manual",
-        signal: controller.signal,
+        signal,
         body: payload
           ? isBytes
             ? Uint8Array.from(payload)
             : JSON.stringify(payload)
           : undefined,
       });
+      signal.throwIfAborted();
+      if (method !== "GET") this.beforeWrite?.();
       const response = await (this.upstream
         ? this.upstream.fetch(request)
         : fetch(request));
@@ -222,8 +230,9 @@ export class BusyClient {
               ],
             },
             false,
+            signal,
           );
-          return await this.attempt(method, path, payload, false);
+          return await this.attempt(method, path, payload, false, signal);
         }
         throw new ProtocolError(
           response.status === 409
@@ -235,6 +244,7 @@ export class BusyClient {
         );
       }
       const bytes = await boundedBody(response, 65536);
+      signal.throwIfAborted();
       try {
         return JSON.parse(new TextDecoder().decode(bytes));
       } catch {
@@ -243,8 +253,6 @@ export class BusyClient {
     } catch (error) {
       if (error instanceof ProtocolError) throw error;
       throw new ProtocolError("UPSTREAM_UNAVAILABLE", 502);
-    } finally {
-      clearTimeout(timer);
     }
   }
 }

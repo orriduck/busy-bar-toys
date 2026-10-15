@@ -8,7 +8,7 @@ import {
   verifySession,
 } from "../src/security";
 import { cacheAsset, reserveSlots } from "../src/assets";
-import { createState } from "../src/model";
+import { createState, ProtocolError } from "../src/model";
 it("rejects arbitrary paths, methods, encodings, parameters and namespace escapes", () => {
   for (const [method, path] of [
     ["GET", "/wifi/status"],
@@ -271,3 +271,115 @@ it("fixes native cloud priority at51 and rejects legacy or arbitrary priorities"
     ).rejects.toThrow("DEVICE_DRAW_PARAMS");
   expect(calls).toHaveLength(1);
 });
+
+it("uses one abort controller for all three namespace recovery calls", async () => {
+  const OriginalController = globalThis.AbortController;
+  const controllers: AbortController[] = [];
+  vi.stubGlobal(
+    "AbortController",
+    class extends OriginalController {
+      constructor() {
+        super();
+        controllers.push(this);
+      }
+    },
+  );
+  const signals: AbortSignal[] = [];
+  const client = new BusyClient("fake", {
+    fetch: async (request: Request) => {
+      signals.push(request.signal);
+      return signals.length === 1
+        ? new Response("private error", { status: 400 })
+        : Response.json({ result: "OK" });
+    },
+  } as Pick<Fetcher, "fetch">);
+  try {
+    await client.request(
+      "DELETE",
+      "/display/draw?application_name=busy-control",
+    );
+    expect(signals).toHaveLength(3);
+    expect(controllers).toHaveLength(1);
+    controllers[0].abort();
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each(["bootstrap", "retry"] as const)(
+  "ends the entire recovery at8 seconds before the next %s write",
+  async (boundary) => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    let release: (response: Response) => void = () => {};
+    const heldResponse = new Promise<Response>((r) => (release = r));
+    let entered: () => void = () => {};
+    const heldCallEntered = new Promise<void>((r) => (entered = r));
+    const client = new BusyClient("fake", {
+      fetch: async (request: Request) => {
+        signals.push(request.signal);
+        if (
+          (boundary === "bootstrap" && signals.length === 1) ||
+          (boundary === "retry" && signals.length === 2)
+        ) {
+          entered();
+          return heldResponse;
+        }
+        return signals.length === 1
+          ? new Response("private error", { status: 400 })
+          : Response.json({ result: "OK" });
+      },
+    } as Pick<Fetcher, "fetch">);
+    const pending = client.request(
+      "DELETE",
+      "/display/draw?application_name=busy-control",
+    );
+    const failed = expect(pending).rejects.toThrow("UPSTREAM_UNAVAILABLE");
+    try {
+      await heldCallEntered;
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      release(
+        boundary === "bootstrap"
+          ? new Response("private error", { status: 400 })
+          : Response.json({ result: "OK" }),
+      );
+      await failed;
+      expect(signals).toHaveLength(boundary === "bootstrap" ? 1 : 2);
+    } finally {
+      release(Response.json({ result: "OK" }));
+      await pending.catch(() => {});
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([1, 2])(
+  "checks generation before the write following response%d",
+  async (switchAfter) => {
+    let current = true;
+    const methods: string[] = [];
+    const client = new BusyClient(
+      "fake",
+      {
+        fetch: async (request: Request) => {
+          methods.push(request.method);
+          if (methods.length === switchAfter) current = false;
+          return methods.length === 1
+            ? new Response("private error", { status: 400 })
+            : Response.json({ result: "OK" });
+        },
+      } as Pick<Fetcher, "fetch">,
+      () => {
+        if (!current) throw new ProtocolError("STALE_TARGET", 409);
+      },
+    );
+    await expect(
+      client.request("DELETE", "/display/draw?application_name=busy-control"),
+    ).rejects.toThrow("STALE_TARGET");
+    expect(methods).toEqual(
+      switchAfter === 1 ? ["DELETE"] : ["DELETE", "POST"],
+    );
+  },
+);
