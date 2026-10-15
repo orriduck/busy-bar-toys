@@ -257,7 +257,7 @@ class PreviewBridge:
                 snap=client.snapshot
                 svc=next((s for s in snap.get('services',[]) if s.get('id')==client.config['serviceId']),{})
                 expires=svc.get('epochExpiresAt')
-                return (snap.get('protocol')==1 and svc.get('enabled') is True
+                return (snap.get('protocol')==1 and svc.get('config',{}).get('enabled') is True
                         and svc.get('epoch')==client.config['epoch']
                         and type(expires) in (int,float) and expires>time.time()*1000
                         and svc.get('config',{}).get('allowPreview') is True)

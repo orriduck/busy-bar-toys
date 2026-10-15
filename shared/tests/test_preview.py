@@ -136,8 +136,8 @@ class LocalHTTPTest(unittest.TestCase):
 def client_for(url):
     from types import SimpleNamespace
     config={'role':'agent','serviceId':'service','instanceId':'mac','epoch':'epoch'}
-    snapshot={'protocol':1,'deviceId':DEVICE,'services':[{'id':'service','enabled':True,
-              'epoch':'epoch','epochExpiresAt':9999999999999,'config':{'allowPreview':True}}]}
+    snapshot={'protocol':1,'deviceId':DEVICE,'services':[{'id':'service',
+              'epoch':'epoch','epochExpiresAt':9999999999999,'config':{'enabled':True,'allowPreview':True}}]}
     return SimpleNamespace(config=config,snapshot=snapshot,_snapshot_lock=threading.Lock(),
                            http=Transport(url,DEVICE+'.service.publisher-secret'))
 
@@ -214,6 +214,21 @@ class PreviewLifecycleTest(unittest.TestCase):
         bridge.stop()
         self.assertFalse(bridge.is_alive())
         self.assertFalse(bridge.diagnostics()['connected'])
+
+    def test_service_eligibility_uses_nested_snapshot_config_enabled_only(self):
+        client=client_for('http://localhost:1234')
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        service=client.snapshot['services'][0]
+        self.assertNotIn('enabled',service)
+        self.assertTrue(bridge._eligible(client))
+        service['config']['enabled']=False
+        self.assertFalse(bridge._eligible(client))
+        service['enabled']=True
+        self.assertFalse(bridge._eligible(client))
+        service['config']['enabled']=True
+        self.assertTrue(bridge._eligible(client))
+        service['enabled']=False
+        self.assertTrue(bridge._eligible(client))
 
     def test_first_eligible_role_agent_preferred_capability_rearms_only_after_false(self):
         agent=client_for('http://localhost:1234'); notifier=client_for('http://localhost:1234')
