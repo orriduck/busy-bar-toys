@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from queue import Empty, SimpleQueue
 import plistlib
 import signal
 import subprocess
@@ -112,8 +113,10 @@ def _primary(item):
     try:
         item.primary()
         LOG.info("Handled %s", item.id)
+        return True
     except Exception as error:  # The action reports through the log only.
         LOG.warning("Action on %s failed: %s", item.id, (str(error).splitlines() or [type(error).__name__])[-1][:120])
+        return False
 
 
 def watch(args):
@@ -165,7 +168,9 @@ def watch(args):
         sources.append(aircraft_source(aircraft))
     poller = Poller(sources, queue, **({"spawn": SPAWN} if SPAWN else {}))
     notice = NotificationPresenter(client, reduced=reduced) if sources else None
-    lease = DisplayLease(client) if sources else None
+    lease = DisplayLease(client)
+    action_results = SimpleQueue()
+    pending_actions = set()
     lease_renew_at = 0
     shared_paused = False
     alert_retry = 0
@@ -189,6 +194,14 @@ def watch(args):
                     if key in watcher.dot_thread_ids: event["source"] = "dots"
                     registry.ingest(event, now)
                     last_spool[key] = stamp
+            while True:
+                try:
+                    item_id, succeeded = action_results.get_nowait()
+                except Empty:
+                    break
+                pending_actions.discard(item_id)
+                if succeeded:
+                    queue.dismiss(item_id)
             task = registry.select(now)
             turns = registry.active_turns(now)
             known_turns = registry.known_turns()
@@ -197,15 +210,31 @@ def watch(args):
                 poller.run_due()
             shown = notice.current if notice and notice.active else None
             if monitor.pop_start_pressed():
-                if shown and shown.level == "urgent" and shown.primary:
-                    _spawn(lambda item=shown: _primary(item))
-                    queue.dismiss(shown.id)
-                    dismiss_notice = True
+                # The visible notice may be stale after another host takes over.
+                try:
+                    other = lease.foreign(fresh=True)
+                except AuthError:
+                    LOG.error("Cannot verify display ownership; check Keychain before resuming.")
+                    return 0
+                except APIError:
+                    LOG.warning("Cannot verify display ownership; ignored Start/Pause.")
+                    device_retry_at = time.monotonic() + backoff
                 else:
-                    view.dismiss(known_turns)
-                    queue.dismiss_all_except_urgent()
-                    dismiss_notice = bool(shown and shown.level != "urgent")
-                    LOG.info("View: calendar")
+                    if other:
+                        if notice and notice.active:
+                            notice.abandon()
+                        motion.invalidate()
+                        owned = False
+                        shared_paused = True
+                    elif shown and shown.level == "urgent" and shown.primary:
+                        if shown.id not in pending_actions:
+                            pending_actions.add(shown.id)
+                            _spawn(lambda item=shown: action_results.put((item.id, _primary(item))))
+                    else:
+                        view.dismiss(known_turns)
+                        queue.dismiss_all_except_urgent()
+                        dismiss_notice = bool(shown and shown.level != "urgent")
+                        LOG.info("View: calendar")
                 next_draw = min(next_draw, now)
             allowed = view.allows(turns, known_turns=known_turns)
             standby = task is None or task.state in {"done", "stopped"}
@@ -275,10 +304,11 @@ def watch(args):
                             queue.mark_shown(current.id)
                     dismiss_notice = False
                     foreign = lease.foreign() if lease and not (notice and notice.active) else None
-                    if foreign and not shared_paused:
-                        LOG.info("Another host shows a notification; agent view waits.")
-                        motion.cancel()
-                        motion.invalidate()
+                    if foreign:
+                        owned = False
+                        if not shared_paused:
+                            LOG.info("Another host shows a notification; agent view waits.")
+                            motion.invalidate()
                     elif shared_paused and not foreign:
                         next_draw = now
                     shared_paused = bool(foreign)
@@ -312,13 +342,16 @@ def watch(args):
             time.sleep(0.05 if motion.pending or (notice and notice.active) else 0.25)
     finally:
         poller.stop()
-        if lease:
-            lease.release()
         monitor.stop()
         monitor.write_status(RUNTIME / "input-status.json")
         if owned:
-            try: client.clear()
-            except APIError: pass
+            try:
+                if not lease.foreign(fresh=True):
+                    client.clear()
+            except APIError:
+                pass  # Unknown ownership cannot authorize a namespace clear.
+        # Keep our lease until cleanup ends so a new holder cannot race a clear.
+        lease.release()
         lock.close()
     return 0
 

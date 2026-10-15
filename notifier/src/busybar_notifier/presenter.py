@@ -19,6 +19,11 @@ def _unmask():
             "timeout": 1, "path": "notice-transparent.anim", "loop": False, "await_previous_end": False}
 
 
+def _hide_text():
+    return [{"id": name, "type": "text", "display": "front", "text": " ", "font": "small",
+             "x": 0, "y": 0, "z_index": 35, "timeout": 1} for name in ("notice-title", "notice-detail")]
+
+
 class NotificationPresenter:
     def __init__(self, client, *, reduced=False, clock=None):
         self.client = client
@@ -88,6 +93,7 @@ class NotificationPresenter:
         if self.phase not in ("intro", "hold"):
             return
         if self.reduced:
+            self.client.draw({"application_name": APP_NAME, "priority": self._priority, "elements": _hide_text()})
             self.phase = "finished"
             return
         sent_at = self.clock()
@@ -111,10 +117,8 @@ class NotificationPresenter:
             transparent = {"id": "notice-view", "type": "animation", "display": "front", "x": 0, "y": 0,
                            "z_index": 30, "timeout": 1, "path": "notice-transparent.anim", "loop": False,
                            "await_previous_end": False}
-            hidden = [{"id": name, "type": "text", "display": "front", "text": " ", "font": "small",
-                       "x": 0, "y": 0, "z_index": 35, "timeout": 1} for name in ("notice-title", "notice-detail")]
             self.client.draw({"application_name": APP_NAME, "priority": self._priority,
-                              "elements": [transparent, *hidden, _unmask()]})
+                              "elements": [transparent, *_hide_text(), _unmask()]})
             self.phase = "finished"
         if self.phase == "finished":
             if self._priority > 50:

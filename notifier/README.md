@@ -1,6 +1,6 @@
 # Notifier
 
-Show short alerts on a BUSY Bar with the split-flap entrance from ADSBao.
+Show short alerts on a BUSY Bar with the staggered character entrance from ADSBao.
 The icon flies in, the brand holds for half a second, and the characters roll to the title.
 The detail line always appears as native small text after the entrance and scrolls when it does not fit. A title that does not fit continues as native scrolling text. Native text shows printable ASCII only; other characters become `?`.
 
@@ -13,6 +13,9 @@ The detail line always appears as native small text after the entrance and scrol
 | info | The app color | Ten seconds | Dismisses all notifications and shows the calendar. |
 
 Urgent items show first, then new events, then standing conditions.
+An urgent action dismisses its item only after success.
+A failed action leaves the item visible for another attempt.
+Repeated presses do not start duplicate actions while one is running.
 A standing condition, such as an expired login, hides after ten visible seconds.
 It returns after 30 minutes if it is still true.
 No button press is necessary: the display returns to the agent view or the calendar.
@@ -31,10 +34,13 @@ The holder renews the lease every five seconds.
 | Situation | Behavior |
 |---|---|
 | Another Mac holds the lease | Non-urgent items wait in the queue. The agent view does not draw. |
-| An urgent item arrives | The Mac takes the lease, clears the display, and shows the item. |
+| An urgent item arrives | It takes the lease from a lower-level item. Another urgent item keeps its lease until release. |
 | A holder stops or loses its connection | The lease expires after 20 seconds. |
 
 Every Mac must run this version for the lease to work.
+Agent-only hosts also check the lease before drawing.
+Start/Pause checks current ownership before an action.
+An ownership read failure prevents the action and skips display cleanup.
 
 ## Configure
 

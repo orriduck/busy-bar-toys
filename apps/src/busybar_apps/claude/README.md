@@ -1,7 +1,7 @@
 # Claude Code agent app
 
 Show the status of local Claude Code sessions on the agent checker.
-The source icon is the official Claude mark as a white mask; see [NOTICE](../NOTICE.md). The source identifier is `claude`.
+The source icon is the official Claude mark in its brand orange; see [NOTICE](../NOTICE.md). The source identifier is `claude`.
 
 ## Requirements
 

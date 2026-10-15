@@ -26,6 +26,17 @@ def ids(draw):
 
 
 class PresenterTest(unittest.TestCase):
+    def test_reduced_motion_exit_hides_native_text_before_restoration(self):
+        self.presenter = NotificationPresenter(self.api, reduced=True, clock=lambda: self.clock[0])
+        self.presenter.start(self.long)
+        widgets=ids(self.api.draws[-1])
+        self.assertEqual(widgets['notice-detail']['text'], self.long.detail)
+        self.presenter.dismiss()
+        self.assertTrue(self.presenter.advance())
+        for draw in self.api.draws[1:]: widgets.update(ids(draw))
+        self.assertFalse(widgets['notice-title']['text'].strip())
+        self.assertFalse(widgets['notice-detail']['text'].strip())
+
     def setUp(self):
         self.clock = [100.0]
         self.api = Device()
