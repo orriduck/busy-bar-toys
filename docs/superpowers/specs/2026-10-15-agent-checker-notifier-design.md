@@ -54,7 +54,7 @@ line, an accent color, an icon, an optional group, and an optional primary actio
 | attention | Amber | Ten seconds. |
 | info | The app accent | Ten seconds. |
 
-The icon background always uses the app color. The user selected this on 2026-10-15.
+The icon background uses the app color, or red for urgent items. The user selected this on 2026-10-15.
 
 The queue shows urgent items first, then new events, then standing conditions.
 A standing condition hides after ten visible seconds and returns after 30

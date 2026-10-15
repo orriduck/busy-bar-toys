@@ -12,7 +12,7 @@ The detail line always appears as native small text after the entrance and scrol
 | attention | Amber | Ten seconds | Dismisses all notifications and shows the calendar. |
 | info | The app accent | Ten seconds | Dismisses all notifications and shows the calendar. |
 
-The icon background always uses the app color.
+The icon background uses the app color. Urgent items use a red background.
 
 Urgent items show first, then new events, then standing conditions.
 An urgent action dismisses its item only after success.

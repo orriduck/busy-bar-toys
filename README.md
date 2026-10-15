@@ -92,7 +92,7 @@ Each aircraft alerts once per encounter.
 ### Notifications
 
 Every notification uses the aircraft entrance with an app icon.
-The icon background uses the app color. The detail text and LED show the level: red is urgent, amber needs attention, and the app accent is information.
+The icon background uses the app color, or red for urgent items. The detail text and LED show the level: red is urgent, amber needs attention, and the app accent is information.
 Other items return to the agent view or the calendar after ten seconds.
 Urgent items stay until their condition clears or their action succeeds.
 Start/Pause runs the action of an urgent item, for example a Datadog page acknowledgement.
