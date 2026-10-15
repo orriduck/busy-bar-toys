@@ -48,11 +48,13 @@ This keeps the rule that only a new turn restores a dismissed display.
 A notification has an identifier, a level, an app, a brand, a title, a detail
 line, an accent color, an icon, an optional group, and an optional primary action.
 
-| Level | Icon background | Event hold |
+| Level | Detail and LED color | Event hold |
 |---|---|---|
 | urgent | Red | Until the condition clears or the primary action runs. |
 | attention | Amber | Ten seconds. |
-| info | The app color | Ten seconds. |
+| info | The app accent | Ten seconds. |
+
+The icon background always uses the app color. The user selected this on 2026-10-15.
 
 The queue shows urgent items first, then new events, then standing conditions.
 A standing condition hides after ten visible seconds and returns after 30

@@ -7,7 +7,7 @@ from busybar_notifier.seen import SeenStore
 from busybar_notifier.source import Source
 from busybar_shared.command import run_json
 
-COLOR = (20, 163, 163)
+COLOR = (120, 120, 120)
 GLYPH = "##......##/###....###/####..####/##.####.##/##..##..##/##......##/##......##/##......##/##......##/##......##"
 SCRIPT = Path(__file__).with_name("failures.py")
 
@@ -24,7 +24,7 @@ def sources(config, state_dir, **_):
         failures = run_json([str(Path(python).expanduser()), str(SCRIPT), hours, *flows], timeout=240)
         return [Notification(f"flow:{f['flow']}/{f['run']}", "attention", "metaflow", "METAFLOW", "OB RUN FAIL",
                              f"{f['flow']}/{f['run']} {f['namespace']}", accent=(229, 165, 10),
-                             icon=badge(GLYPH, "attention", COLOR))
+                             icon=badge(GLYPH, COLOR))
                 for f in seen.fresh(failures, lambda f: f"{f['flow']}/{f['run']}")]
 
     return [Source("metaflow-failures", "metaflow", 300, "event", poll)]

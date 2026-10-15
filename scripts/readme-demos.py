@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from types import SimpleNamespace
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from busybar_agents.motion import MotionDirector
 from busybar_agents.network import NetworkRates
@@ -25,7 +25,7 @@ from busybar_shared.graphics import clock_font, clock_text, draw_clock, tiny_tex
 ROOT = Path(__file__).resolve().parents[1]
 FPS = 30
 WALL = datetime(2026, 10, 15, 15, 59, 58, tzinfo=timezone.utc).timestamp()
-SIZE = (600, 214)
+SIZE = (600, 252)
 
 # Reuse the native .anim decoder used by the existing motion preview.
 spec = importlib.util.spec_from_file_location("motion_preview", ROOT / "scripts/motion-preview.py")
@@ -94,10 +94,10 @@ class Device(preview.PreviewDevice):
 def card(screen, title, phase, note):
     image = Image.new("RGB", SIZE, "#11151D")
     draw = ImageDraw.Draw(image)
-    draw.text((12, 8), "DEMO / OFFLINE RENDER / " + title, fill="#F3F5F8")
-    image.paste(screen.resize((576, 128), Image.Resampling.NEAREST), (12, 30))
-    draw.text((12, 166), phase, fill="#D6DFED")
-    draw.text((12, 194), note, fill="#8795AB")
+    draw.text((12, 8), "DEMO / OFFLINE RENDER / " + title, fill="#F3F5F8", font=ImageFont.load_default(size=16))
+    image.paste(screen.resize((576, 128), Image.Resampling.NEAREST), (12, 36))
+    draw.text((12, 176), phase, fill="#D6DFED", font=ImageFont.load_default(size=20))
+    draw.text((12, 216), note, fill="#8795AB", font=ImageFont.load_default(size=16))
     return image
 
 
@@ -245,7 +245,7 @@ def main():
     from busybar_apps import terminal
     done = next(n for n in notifications if n.id == "sample:done")
     notifications.append(replace(done, id="sample:failed", level="attention", title="FAILED",
-                                 detail="demo build: exit 1", icon=badge(terminal.GLYPH, "attention", terminal.COLOR)))
+                                 detail="demo build: exit 1", icon=badge(terminal.GLYPH, terminal.COLOR)))
     names = ["codex-cycle", "your-dot", "claude", "state-colors", "clock-network", "start-pause", "reduced-motion"]
     names += ["adsbao", "github", "datadog", "jira", "metaflow", "terminal", "credentials", "calendar", "shared-display"]
     if args.only and set(args.only) - set(names):

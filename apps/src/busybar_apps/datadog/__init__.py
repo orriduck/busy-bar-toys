@@ -26,11 +26,11 @@ def pages_source(config, refresh):
         pages = _pup(["on-call", "pages", "list", "--team", team, "--read-only", "--page-size", "20"])
         return [Notification(f"page:{p['id']}", "urgent", "datadog", "DATADOG", "PAGED!",
                              f"#{p['attributes'].get('key', '')} {p['attributes'].get('title', '')}".strip(),
-                             accent=(255, 90, 101), icon=badge(GLYPH, "urgent", COLOR),
+                             accent=(255, 90, 101), icon=badge(GLYPH, COLOR),
                              primary=lambda page_id=p["id"]: acknowledge(page_id))
                 for p in pages if p.get("attributes", {}).get("status") == "triggered"]
 
-    return Source("datadog-pages", "datadog", 30, "state", poll, icon=badge(GLYPH, "attention", COLOR))
+    return Source("datadog-pages", "datadog", 30, "state", poll, icon=badge(GLYPH, COLOR))
 
 
 def monitors_source(config):
@@ -44,10 +44,10 @@ def monitors_source(config):
             match = re.match(r"^\[[^\]]+\]\[([^\]]+)\]\s*(.*)$", monitor["name"])
             detail = f"{match[1]}: {match[2]}" if match else monitor["name"]
             items.append(Notification(f"monitor:{monitor['id']}", "attention", "datadog", "DATADOG", "MONITOR",
-                                      detail, accent=(229, 165, 10), icon=badge(GLYPH, "attention", COLOR)))
+                                      detail, accent=(229, 165, 10), icon=badge(GLYPH, COLOR)))
         return items
 
-    return Source("datadog-monitors", "datadog", 60, "state", poll, icon=badge(GLYPH, "attention", COLOR))
+    return Source("datadog-monitors", "datadog", 60, "state", poll, icon=badge(GLYPH, COLOR))
 
 
 def sources(config, state_dir, *, refresh, **_):
