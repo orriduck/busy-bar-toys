@@ -151,6 +151,7 @@ class LocalDevice:
             if 300<=response.status<400: raise PreviewError('redirect_refused')
             if response.status!=200: raise PreviewError('not_found' if response.status==404 else 'unavailable')
             length=response.getheader('Content-Length')
+            if length is not None: length=length.strip(' \t')
             if length is not None and (not length.isdigit() or int(length)>limit): raise PreviewError('body')
             chunks=[]; size=0
             while True:

@@ -83,11 +83,16 @@ class LocalHTTPTest(unittest.TestCase):
                         self.connection.sendall(bytes((byte,))); time.sleep(.02)
                     self.connection.sendall(WIRE); return
                 body=(json.dumps({'device':{'serial_number':SERIAL}}).encode() if self.path.startswith('/api/status') else WIRE)
+                if getattr(owner,'padded_headers',False) and self.path.startswith('/api/status'):
+                    body=body.ljust(665,b' ')
                 status=getattr(owner,'response_status',200)
                 self.send_response(status)
                 if status==302: self.send_header('Location','http://127.0.0.1:1/private-secret')
                 if getattr(owner,'close_response',False): self.send_header('Connection','close')
-                self.send_header('Content-Length',str(len(body))); self.end_headers()
+                length=str(len(body))
+                if getattr(owner,'padded_headers',False): length=' \t'+length+'        \t'
+                length=getattr(owner,'content_length_value',length)
+                self.send_header('Content-Length',length); self.end_headers()
                 if getattr(owner,'close_response',False): time.sleep(.03)
                 self.wfile.write(body)
         self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
@@ -105,6 +110,18 @@ class LocalHTTPTest(unittest.TestCase):
         self.assertTrue(all(x[1]=='local-secret' for x in self.calls))
         self.assertEqual(self.calls[0][2],self.calls[1][2])
         with self.assertRaisesRegex(preview.PreviewError,'device_mismatch'): self.device.verify('0'*64)
+
+    def test_native_padded_content_length_status_and_screen_are_valid(self):
+        self.padded_headers=True
+        self.device.verify(DEVICE)
+        self.assertEqual(base64.b64decode(self.device.frame(0)),bytes((1,2,3))*1152)
+        self.assertEqual([call[0] for call in self.calls],['/api/status','/api/screen?display=0'])
+
+    def test_content_length_ows_does_not_relax_invalid_or_oversize_values(self):
+        for value in ('',' \t','+4608','-1','46 08','4608\v','4611',' \t4611 \t'):
+            with self.subTest(value=value):
+                self.content_length_value=value
+                with self.assertRaises(preview.PreviewError): self.device.frame(0)
 
     def test_http_connection_close_body_still_decodes_with_deadline(self):
         self.close_response=True
