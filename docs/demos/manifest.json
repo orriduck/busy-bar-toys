@@ -55,64 +55,64 @@
       "name": "adsbao",
       "frames": 421,
       "seconds": 14.033333333333333,
-      "gif_bytes": 471186,
-      "mp4_bytes": 61468
+      "gif_bytes": 468579,
+      "mp4_bytes": 59233
     },
     {
       "name": "github",
       "frames": 1484,
       "seconds": 49.46666666666667,
-      "gif_bytes": 2064020,
-      "mp4_bytes": 289884
+      "gif_bytes": 2295692,
+      "mp4_bytes": 293324
     },
     {
       "name": "datadog",
       "frames": 423,
       "seconds": 14.1,
-      "gif_bytes": 651803,
-      "mp4_bytes": 96864
+      "gif_bytes": 728941,
+      "mp4_bytes": 94660
     },
     {
       "name": "jira",
       "frames": 214,
       "seconds": 7.133333333333334,
-      "gif_bytes": 330808,
-      "mp4_bytes": 48870
+      "gif_bytes": 376188,
+      "mp4_bytes": 51916
     },
     {
       "name": "metaflow",
       "frames": 214,
       "seconds": 7.133333333333334,
-      "gif_bytes": 280146,
-      "mp4_bytes": 47017
+      "gif_bytes": 291742,
+      "mp4_bytes": 46906
     },
     {
       "name": "terminal",
       "frames": 423,
       "seconds": 14.1,
-      "gif_bytes": 443335,
-      "mp4_bytes": 79362
+      "gif_bytes": 439357,
+      "mp4_bytes": 79560
     },
     {
       "name": "credentials",
       "frames": 214,
       "seconds": 7.133333333333334,
-      "gif_bytes": 264287,
-      "mp4_bytes": 46352
+      "gif_bytes": 264003,
+      "mp4_bytes": 44652
     },
     {
       "name": "calendar",
       "frames": 212,
       "seconds": 7.066666666666666,
-      "gif_bytes": 232189,
-      "mp4_bytes": 42417
+      "gif_bytes": 238299,
+      "mp4_bytes": 43789
     },
     {
       "name": "shared-display",
       "frames": 212,
       "seconds": 7.066666666666666,
-      "gif_bytes": 358733,
-      "mp4_bytes": 48403
+      "gif_bytes": 394294,
+      "mp4_bytes": 48144
     }
   ]
 }

@@ -17,6 +17,7 @@ CHARACTER_ROLL_FRAMES = 15
 CHARACTER_DELAY_FRAMES = 2
 MIN_ROLL_CHARACTERS = 8
 SCROLL = {"scroll_rate": 1500, "scroll_start_delay": 1000, "scroll_repeat_delay": 2000}
+TEXT_TIMEOUT = 60
 
 
 def _natural_width(text):
@@ -120,21 +121,27 @@ def _hex(rgb):
     return "#{:02X}{:02X}{:02X}FF".format(*rgb)
 
 
-def text_elements(notification):
+def detail_elements(notification):
+    if not ascii_text(notification.detail):
+        return []
+    return [{"id": "notice-detail", "type": "text", "display": "front", "text": ascii_text(notification.detail),
+             "font": "small", "color": _hex(notification.accent), "align": "top_left", "x": TEXT_X, "y": 8,
+             "width": TEXT_WIDTH, "z_index": 35, "timeout": TEXT_TIMEOUT, **SCROLL}]
+
+
+def text_elements(notification, *, detail=True):
     elements = []
     if not title_fits(notification.title) and ascii_text(notification.title):
         elements.append({"id": "notice-title", "type": "text", "display": "front", "text": ascii_text(notification.title),
                          "font": "bold", "color": "#FFFFFFFF", "align": "top_left", "x": TEXT_X, "y": -1,
-                         "width": TEXT_WIDTH, "z_index": 35, "timeout": 15, **SCROLL})
-    if ascii_text(notification.detail):
-        elements.append({"id": "notice-detail", "type": "text", "display": "front", "text": ascii_text(notification.detail),
-                         "font": "small", "color": _hex(notification.accent), "align": "top_left", "x": TEXT_X, "y": 8,
-                         "width": TEXT_WIDTH, "z_index": 35, "timeout": 15, **SCROLL})
-    return elements
+                         "width": TEXT_WIDTH, "z_index": 35, "timeout": TEXT_TIMEOUT, **SCROLL})
+    return elements + (detail_elements(notification) if detail else [])
 
 
-def payload(notification, *, demo=False, reduced=False, path=None, settled=False):
-    """Draw the final view. Unsettled animated views also start the entrance on top."""
+def payload(notification, *, demo=False, reduced=False, path=None, settled=False, text=True, detail=True):
+    """Draw the final view. Unsettled animated views also start the entrance on top.
+
+    Redrawing a native text element restarts its scroll, so refreshes pass text=False."""
     native_text = reduced or settled
     front, back = render(notification, demo=demo, settled=native_text)
     if not native_text:
@@ -155,7 +162,7 @@ def payload(notification, *, demo=False, reduced=False, path=None, settled=False
                 "timeout": 15, "loop": False, "await_previous_end": False}
         view.update(path="notice-transparent.anim" if settled else path, **({} if settled else {"section": "enter"}))
         elements.append(view)
-    if native_text:
-        elements += text_elements(notification)
+    if native_text and text:
+        elements += text_elements(notification, detail=detail)
     return {"application_name": APP_NAME, "priority": 100 if notification.level == "urgent" else 50,
             "elements": elements}

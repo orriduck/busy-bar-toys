@@ -2,7 +2,7 @@
 
 Show short alerts on a BUSY Bar with the staggered character entrance from ADSBao.
 The icon flies in, the brand holds for half a second, and the characters roll to the title.
-The detail line always appears as native small text after the entrance and scrolls when it does not fit. A title that does not fit continues as native scrolling text. Native text shows printable ASCII only; other characters become `?`.
+The detail line appears as native small text once the icon has entered, while the title still rolls. It scrolls when it does not fit; refreshes do not restart the scroll. A title that does not fit continues as native scrolling text. Native text shows printable ASCII only; other characters become `?`.
 
 ## Levels
 

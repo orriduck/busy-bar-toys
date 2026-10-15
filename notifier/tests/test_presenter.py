@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from busybar_notifier import display
+from busybar_shared.native import FPS
 from busybar_notifier.model import Notification
 from busybar_notifier.presenter import NotificationPresenter
 from busybar_shared.graphics import to_xpm
@@ -65,7 +66,7 @@ class PresenterTest(unittest.TestCase):
         settle_at = 100 + display.entrance_seconds(self.short)
         self.clock[0] = settle_at - .01
         self.presenter.advance()
-        self.assertEqual(len(self.api.draws), 1)
+        self.assertEqual([set(ids(d)) for d in self.api.draws[1:]], [{"notice-detail"}])
         self.clock[0] = settle_at + .01
         self.assertFalse(self.presenter.advance())
         settled = self.api.draws[-1]
@@ -86,7 +87,8 @@ class PresenterTest(unittest.TestCase):
         self.presenter.advance()
         self.clock[0] += 5
         self.presenter.advance()
-        self.assertTrue(all("enter" not in str(ids(d)["notice-view"].get("section")) for d in self.api.draws[1:]))
+        self.assertTrue(all("enter" not in str(ids(d)["notice-view"].get("section"))
+                            for d in self.api.draws[1:] if "notice-view" in ids(d)))
 
     def test_long_text_becomes_native_scrolling_text_after_the_entrance(self):
         self.presenter.start(self.long)
@@ -95,18 +97,27 @@ class PresenterTest(unittest.TestCase):
         self.presenter.advance()
         settled = ids(self.api.draws[-1])
         self.assertEqual((settled["notice-title"]["text"], settled["notice-title"]["font"]), ("TICKET ASSIGNED", "bold"))
-        self.assertEqual(settled["notice-detail"]["font"], "small")
+        self.assertNotIn("notice-detail", settled)
         self.assertGreater(settled["notice-title"]["scroll_rate"], 0)
 
-    def test_short_title_stays_pixel_and_detail_is_always_native(self):
+    def test_detail_appears_once_the_icon_enters_and_is_not_redrawn(self):
         self.presenter.start(self.short)
         self.assertNotIn("notice-detail", ids(self.api.draws[-1]))
-        self.clock[0] += display.entrance_seconds(self.short) + .01
+        self.clock[0] += display.ICON_ENTER_FRAMES / FPS + .01
         self.presenter.advance()
-        settled = ids(self.api.draws[-1])
-        self.assertNotIn("notice-title", settled)
-        self.assertEqual(settled["notice-detail"]["font"], "small")
-        self.assertGreater(settled["notice-detail"]["scroll_rate"], 0)
+        detail = ids(self.api.draws[-1])
+        self.assertEqual(set(detail), {"notice-detail"})
+        self.assertEqual(detail["notice-detail"]["font"], "small")
+        self.assertGreater(detail["notice-detail"]["scroll_rate"], 0)
+        self.clock[0] = 100 + display.entrance_seconds(self.short) + .01
+        self.presenter.advance()
+        self.assertFalse({"notice-title", "notice-detail"} & set(ids(self.api.draws[-1])))
+        count = len(self.api.draws)
+        for _ in range(10):
+            self.clock[0] += 5
+            self.presenter.advance()
+        text = [i for i, d in enumerate(self.api.draws[count:]) if "notice-detail" in ids(d)]
+        self.assertEqual(len(text), 1, "Native text renews only before its timeout")
 
     def test_native_text_is_printable_ascii(self):
         self.assertEqual(display.ascii_text("修复 bug ✓"), "?? bug ?")
