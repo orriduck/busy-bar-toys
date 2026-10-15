@@ -76,12 +76,16 @@ class Poller:
             elif items:
                 self.queue.push(items)
                 LOG.info("%s: %s", source.name, ", ".join(item.id for item in items))
+            if hasattr(self.queue, "source_ok"):
+                self.queue.source_ok(source.name, source.every)
         except Exception as error:  # A source failure must not stop the service.
             message = (str(error).strip().splitlines() or [type(error).__name__])[-1][:120]
             if self._errors.get(source.name) != message:
                 LOG.warning("%s failed: %s", source.name, message)
             self._errors[source.name] = message
-            if source.kind == "state":
+            if hasattr(self.queue, "source_error"):
+                self.queue.source_error(source.name, error)
+            elif source.kind == "state":
                 self.queue.set_state(source.name, [Notification(
                     f"failing:{source.name}", "attention", source.app, source.app.upper(), "ERROR",
                     f"{source.name}: {message}", icon=source.icon)])

@@ -1,0 +1,6 @@
+{
+  "name": "busy-bar-control-demo",
+  "main": "index.ts",
+  "compatibility_date": "2026-10-15",
+  "dev": { "port": 8790 },
+}

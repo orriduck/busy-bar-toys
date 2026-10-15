@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "busy-bar-control-plane",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "DEVICES", "class_name": "DeviceControl" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DeviceControl"] }],
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "vars": { "PUBLIC_ORIGIN": "https://busy-bar-control-plane.orriduck.workers.dev" },
+  "secrets": { "required": ["TOKEN_ENCRYPTION_KEY", "SESSION_SIGNING_KEY"] },
+}

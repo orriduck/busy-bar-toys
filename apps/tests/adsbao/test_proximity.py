@@ -51,6 +51,27 @@ class ProximityTests(unittest.TestCase):
         self.tracker.candidate(parse_envelope(envelope(now=1160,lon=.06),now=1160),self.fix,now=1160)
         self.assertIsNotNone(self.tracker.candidate(parse_envelope(envelope(now=1161),now=1161),self.fix,now=1161))
 
+    def test_encounter_identity_survives_pending_restart_then_changes_after_rearm(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'encounters.json'
+            first=EncounterTracker(path).candidate(parse_envelope(envelope(),now=1000),self.fix,now=1000)
+            restarted=EncounterTracker(path)
+            same=restarted.candidate(parse_envelope(envelope(now=1001),now=1001),self.fix,now=1001)
+            self.assertTrue(first.encounter_id)
+            self.assertEqual(first.encounter_id,same.encounter_id)
+            restarted.mark_alerted(same,now=1001)
+            restarted.candidate(parse_envelope(envelope(now=1031,lon=.06),now=1031),self.fix,now=1031)
+            restarted.candidate(parse_envelope(envelope(now=1091,lon=.06),now=1091),self.fix,now=1091)
+            next_encounter=EncounterTracker(path).candidate(parse_envelope(envelope(now=1092),now=1092),self.fix,now=1092)
+            self.assertNotEqual(next_encounter.encounter_id,first.encounter_id)
+
+    def test_encounter_identity_changes_after_daily_rearm(self):
+        first=self.tracker.candidate(parse_envelope(envelope(),now=1000),self.fix,now=1000)
+        self.tracker.mark_alerted(first,now=1000)
+        later=self.tracker.candidate(parse_envelope(envelope(now=87401),now=87401),self.fix,now=87401)
+        self.assertIsNotNone(later)
+        self.assertNotEqual(first.encounter_id,later.encounter_id)
+
     def test_nearest_candidate_and_global_cooldown(self):
         payload=envelope(lon=.02)
         payload['data']['aircraft']['ac'].append({'hex':'def456','lat':0,'lon':.01,'fixAt':1000})

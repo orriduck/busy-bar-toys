@@ -6,6 +6,18 @@
 一个后台服务运行所有 app。
 设备原生日历是默认界面。
 
+## 云端 control plane
+
+可选的 Cloudflare 后端统一协调多台 Mac 的显示服务。
+浏览器管理优先级、退出规则、开关和逐条事件队列。
+本地采集器使用独立服务凭证发布画面，管理页通过 SSE 同步。
+
+打开[正式管理页](https://busy-bar-control-plane.orriduck.workers.dev)，用 BUSY 设备 API token 登录。每台 Mac 使用独立的发布凭据注册。
+
+可以用 `demo-token` 进入[云端预览](https://busy-bar-control-plane-preview.orriduck.workers.dev)。共享演示仅使用模拟数据，请勿接入真实采集器。仓库也提供本地演示。
+参见[管理页指南](control-plane/README.zh-CN.md)、[本地客户端接入](docs/cloud-mode.zh-CN.md)和[协议](control-plane/PROTOCOL.md)。
+原有独立安装仍是默认模式。
+
 ## 看演示
 
 这些循环短片使用模拟事件与项目现有的绘制代码。

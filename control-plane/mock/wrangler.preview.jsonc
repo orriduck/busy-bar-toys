@@ -1,0 +1,9 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "busy-bar-control-mock-preview",
+  "main": "index.ts",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+}

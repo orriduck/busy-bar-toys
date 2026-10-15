@@ -1,0 +1,30 @@
+{
+  "name": "busy-bar-control-plane",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types",
+    "check": "npm test && npm run typecheck && wrangler deploy --dry-run",
+    "build": "vite build",
+    "dev:demo": "npm run build && wrangler dev --local -c wrangler.demo.jsonc -c mock/wrangler.jsonc",
+    "dry-run": "npm run build && wrangler deploy --dry-run",
+    "format": "prettier --write src tests mock *.jsonc *.json PROTOCOL.md"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "prettier": "^3.9.10",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.151.0"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}
