@@ -81,5 +81,6 @@ def payload(nearby,*,demo=False,reduced=False,path=None):
     elements.append(strip)
     if not reduced:
         elements.append({'id':'plane-view','type':'animation','display':'front','x':0,'y':0,
-                         'z_index':30,'timeout':15,'path':path,'loop':False,'await_previous_end':True})
+                         'z_index':30,'timeout':15,'path':path,'section':'enter',
+                         'loop':False,'await_previous_end':False})
     return {'application_name':'ai-status','priority':50,'elements':elements}

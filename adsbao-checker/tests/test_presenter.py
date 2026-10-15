@@ -39,6 +39,13 @@ class PresenterTests(unittest.TestCase):
         self.assertFalse(self.presenter.start(self.plane))
         self.assertFalse(self.presenter.active)
 
+    def test_new_intro_replaces_the_default_loop_without_waiting_for_a_cycle(self):
+        self.presenter.start(self.plane)
+        intro=next(e for e in self.api.draws[-1]['elements'] if e['id']=='plane-view')
+        self.assertFalse(intro['await_previous_end'])
+        self.assertFalse(intro['loop'])
+        self.assertEqual(intro['section'],'enter')
+
     def test_button_dismisses_without_waiting_ten_seconds(self):
         self.presenter.start(self.plane)
         self.presenter.dismiss()

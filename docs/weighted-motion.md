@@ -37,12 +37,17 @@ They show the 30 fps frame sequence without cloud delays.
 - [Codex transitions and blue light](images/weighted-motion-preview.gif).
 - [ADSBAO split-flap entrance](images/split-flap-flight-preview.gif).
 
-The actual-device mock capture contains 53 framebuffer samples.
-Visual inspection confirmed the bold identity, glyph changes, light states,
-Codex restoration, and native calendar restoration.
+The latest actual-device mock capture contains 60 framebuffer samples.
+Visual inspection confirmed the brand, both flip phases, bold identity, glyph
+changes, light states, Codex restoration, and native calendar restoration.
+Captured introduction frames match the generated native frames exactly.
+After the final title appears, all matching hold samples remain on that final
+frame, including after the five-second display refresh.
 The demo uses synthetic flight, clock, and rate values; its back display says DEMO.
 
-![Actual device mock samples](images/actual-weighted-motion.gif)
+![Actual device mock samples](images/actual-split-flap-motion.gif)
+
+![Actual brand, flip, and stable flight identity](images/actual-split-flap-intro.png)
 
 Cloud sampling is about two frames per second.
 It does not measure native playback frame rate or resolve every easing frame.
@@ -51,7 +56,7 @@ Cloud transport can add a pause between fade-out and the next display update.
 
 ## Validation
 
-All 163 local tests passed.
+All 164 local tests passed.
 New checks cover damping, monotonic progress, exact glyph endpoints,
 fractional coverage, endpoint speed, smooth reversal, native bold letters,
 and the widest eight-character identity.
@@ -62,3 +67,8 @@ Changed assets use `motion-v3`, `thinking-v5`, and `adsbao-entry-v3` names.
 This prevents a running native player from keeping the old asset source.
 The clock atlas is 205,437 bytes. The aircraft introduction is 124,636 bytes.
 Both fit the 255 KiB file limit.
+
+Firmware initially selects a looping default range when it loads a new file.
+The introduction explicitly selects `enter` with `await_previous_end: false`.
+Waiting for that default range would play the introduction twice before holding.
+The actual capture checks this handoff as well as the final title.
