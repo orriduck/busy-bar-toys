@@ -14,6 +14,7 @@ class AgentProfile:
     waiting_tools: frozenset = frozenset()
     new_turn_events: frozenset = frozenset()
     aliases: frozenset = frozenset()
+    accent: tuple | None = None
 
 
 _PROFILES: dict[str, AgentProfile] = {}
