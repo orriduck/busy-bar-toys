@@ -106,6 +106,7 @@ export interface Command {
   attempts: number;
   startedAt?: number;
   refresh?: boolean;
+  refreshBatch?: number;
   itemKey?: string;
   itemVersion?: number;
   elementIds?: string[];
@@ -158,6 +159,7 @@ export interface State {
   slots: Slot[];
   tokenCipher?: string;
   sessions: Record<string, number>;
+  elementExpiries: Record<string, { type: Element["type"]; expiresAt: number }>;
   nextTextAt: number | null;
   nextWidgetAt: number | null;
 }
@@ -185,6 +187,7 @@ export function createState(deviceId: string): State {
     assets: {},
     slots: [],
     sessions: {},
+    elementExpiries: {},
     nextTextAt: null,
     nextWidgetAt: null,
   };
@@ -621,6 +624,7 @@ function switchTo(s: State, next: Item | null, now: number) {
   s.displaying = null;
   s.visibleSince = null;
   s.entryAt = null;
+  s.elementExpiries = {};
   s.nextTextAt = null;
   s.nextWidgetAt = null;
   s.admission = [];

@@ -94,6 +94,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       s.applying = s.selected;
       s.visibleSince = null;
       s.entryAt = null;
+      s.elementExpiries = {};
       enqueue(s, {
         generation: s.generation,
         kind: "clear",
@@ -700,6 +701,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     const s = this.load();
     if (!s) return;
     const now = Date.now();
+    if (
+      s.displaying &&
+      s.displaying.confirmedValidUntil <= now &&
+      s.visibleSince !== null
+    ) {
+      tick(s, Math.max(s.visibleSince, s.displaying.confirmedValidUntil));
+      s.visibleSince = null;
+    }
     tick(s, now);
     if (
       s.displaying &&
@@ -714,49 +723,70 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     await this.dispatch();
     await this.arm();
   }
+  private latestElements(item: Item): Element[] {
+    const latest = new Map<string, Element>();
+    for (const command of item.scene.commands)
+      for (const element of command.elements) latest.set(element.id, element);
+    return [...latest.values()];
+  }
+  private renewalDeadlines(s: State, now: number) {
+    const item = s.selected ? s.items[s.selected] : null;
+    if (!item) {
+      s.nextTextAt = null;
+      s.nextWidgetAt = null;
+      return;
+    }
+    const intendedEnd =
+      item.remainingMs === null
+        ? Infinity
+        : Math.max(
+            now,
+            s.visibleSince ?? s.entryAt ?? now + item.scene.entryDurationMs,
+          ) + item.remainingMs;
+    const deadline = (type: "text" | "widgets") => {
+      const values = this.latestElements(item)
+        .filter((e) =>
+          type === "text" ? e.type === "text" : e.type !== "text",
+        )
+        .flatMap((e) => {
+          const expiry = s.elementExpiries[e.id]?.expiresAt;
+          if (expiry === undefined) return [now];
+          return expiry < intendedEnd + 1000 ? [expiry - 15000] : [];
+        });
+      return values.length ? Math.min(...values) : null;
+    };
+    s.nextTextAt = deadline("text");
+    s.nextWidgetAt = deadline("widgets");
+  }
   private refresh(s: State, now: number) {
     if (!s.selected || s.applying) return;
     const item = s.items[s.selected];
     if (!item) return;
-    const latest = new Map<string, Element>();
-    for (const command of item.scene.commands)
-      for (const element of command.elements) latest.set(element.id, element);
-    const texts = [...latest.values()].filter((e) => e.type === "text"),
-      widgets = [...latest.values()].filter((e) => e.type !== "text");
-    const long = item.remainingMs === null || item.remainingMs > 12000;
-    if (s.nextTextAt !== null && s.nextTextAt <= now) {
+    this.renewalDeadlines(s, now);
+    const latest = this.latestElements(item);
+    const batch = s.commandSeq + 1;
+    const renew = (type: "text" | "widgets", due: number | null) => {
+      const matches = (e: Element) =>
+        type === "text" ? e.type === "text" : e.type !== "text";
       if (
-        long &&
-        texts.length &&
-        !s.commands.some(
-          (c) => c.refresh && c.elements?.some((e) => e.type === "text"),
-        )
+        due === null ||
+        due > now ||
+        s.commands.some((c) => c.refresh && c.elements?.some(matches))
       )
+        return;
+      const elements = latest.filter(matches);
+      for (let offset = 0; offset < elements.length; offset += 32)
         enqueue(s, {
           generation: s.generation,
           kind: "draw",
           dueAt: now,
-          elements: texts,
+          elements: elements.slice(offset, offset + 32),
           refresh: true,
+          refreshBatch: batch,
         });
-      s.nextTextAt = long ? now + 45000 : null;
-    }
-    if (s.nextWidgetAt !== null && s.nextWidgetAt <= now) {
-      if (
-        widgets.length &&
-        !s.commands.some(
-          (c) => c.refresh && c.elements?.some((e) => e.type !== "text"),
-        )
-      )
-        enqueue(s, {
-          generation: s.generation,
-          kind: "draw",
-          dueAt: now,
-          elements: widgets,
-          refresh: true,
-        });
-      s.nextWidgetAt = now + 45000;
-    }
+    };
+    renew("text", s.nextTextAt);
+    renew("widgets", s.nextWidgetAt);
   }
   private async dispatch() {
     if (this.dispatching) return;
@@ -804,6 +834,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         this.save(s);
         await this.arm();
         let failed: unknown = null;
+        let drawExpiresAt: number | undefined;
         try {
           const token = await decrypt(
             s.tokenCipher,
@@ -867,6 +898,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               native.timeout = e.type === "text" ? ttl : 60;
               return native;
             });
+            drawExpiresAt = Date.now() + ttl * 1000;
             await client.request("POST", "/display/draw", {
               application_name: NAMESPACE,
               priority: 50,
@@ -937,29 +969,67 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               );
               if (admission) admission.version = cmd.itemVersion;
             }
+            if (drawExpiresAt !== undefined)
+              for (const element of cmd.elements ?? [])
+                live.elementExpiries[element.id] = {
+                  type: element.type,
+                  expiresAt: drawExpiresAt,
+                };
             const futureEntrance = live.commands.some(
               (c) =>
                 c.generation === live.generation &&
                 !c.refresh &&
                 c.kind === "draw",
             );
-            if (!futureEntrance && live.applying)
-              acceptDisplay(live, live.generation, acceptedAt);
-            else if (cmd.refresh && live.selected) {
-              live.health = {
-                status: "healthy",
-                confirmedValidUntil: acceptedAt + 60000,
-                lastSuccessAt: acceptedAt,
-              };
-              live.displaying = {
-                itemKey: live.selected,
-                generation: live.generation,
-                confirmedAt: acceptedAt,
-                confirmedValidUntil: acceptedAt + 60000,
-              };
-              live.revision++;
+            const batchComplete =
+              cmd.refreshBatch === undefined ||
+              !live.commands.some(
+                (c) =>
+                  c.generation === live.generation &&
+                  c.refreshBatch === cmd.refreshBatch,
+              );
+            if (!futureEntrance && batchComplete && live.selected) {
+              const item = live.items[live.selected];
+              const validUntil = Math.min(
+                ...this.latestElements(item).map(
+                  (e) => live.elementExpiries[e.id]?.expiresAt ?? 0,
+                ),
+              );
+              if (validUntil > acceptedAt) {
+                if (live.applying || live.visibleSince === null)
+                  acceptDisplay(live, live.generation, acceptedAt);
+                else if (cmd.refresh) live.revision++;
+                live.health = {
+                  status: "healthy",
+                  confirmedValidUntil: validUntil,
+                  lastSuccessAt: acceptedAt,
+                };
+                live.displaying = {
+                  itemKey: live.selected,
+                  generation: live.generation,
+                  confirmedAt: acceptedAt,
+                  confirmedValidUntil: validUntil,
+                };
+              } else {
+                // A slow or failed suffix can outlive a successful prefix. Only
+                // a new complete renewal can establish another finite proof.
+                live.health.status = "offline";
+                live.health.confirmedValidUntil = 0;
+                live.displaying = null;
+                live.applying = null;
+                live.visibleSince = null;
+                live.revision++;
+              }
             }
+            const activeIds = new Set(
+              this.latestElements(live.items[live.selected!]).map((e) => e.id),
+            );
+            for (const id of Object.keys(live.elementExpiries))
+              if (!activeIds.has(id)) delete live.elementExpiries[id];
+            this.renewalDeadlines(live, acceptedAt);
           }
+          if (cmd.kind === "clear" && cmd.elementIds)
+            for (const id of cmd.elementIds) delete live.elementExpiries[id];
           if (cmd.kind === "clear" && !live.selected) {
             live.health = {
               status: "healthy",

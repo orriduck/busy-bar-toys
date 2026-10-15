@@ -26,6 +26,7 @@ export class StateStore {
       .toArray()[0];
     if (!row) return null;
     const header = JSON.parse(row.value) as State & { schemaVersion?: number };
+    header.elementExpiries ??= {};
     for (const name of collections) {
       const rows = this.storage.sql
         .exec<{ key: string; value: string }>(

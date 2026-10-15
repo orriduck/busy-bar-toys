@@ -33,7 +33,10 @@ beforeEach(() => {
     return Response.json({ ok: true }, { status: blocked ? 409 : 200 });
   });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 async function drain(promise: Promise<Response>) {
   const response = await promise;
   const bytes = await response.arrayBuffer();
@@ -313,4 +316,203 @@ it("generation-bound update is retry-idempotent and unchanged text never resends
   expect((await send("/update", b)).status).toBe(200);
   for (let j = 0; j < 5; j++) await admin("/snapshot");
   expect(calls.filter((c) => c.body).length).toBe(before);
+});
+
+describe("renewal bounds", () => {
+  it("renews all64 widgets in bounded serialized chunks and confirms only the complete batch", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.now();
+    const { send, admin, epoch, deviceId } = await setup();
+    const elements = Array.from({ length: 64 }, (_, n) => ({
+      id: "widget-" + n,
+      type: "rectangle",
+      width: 1,
+      height: 1,
+    }));
+    await send("/publish", {
+      ...presentation(epoch),
+      level: "urgent",
+      validUntil: start + 120000,
+      scene: {
+        entryDurationMs: 0,
+        commands: [
+          { offsetMs: 0, elements: elements.slice(0, 32) },
+          { offsetMs: 0, elements: elements.slice(32) },
+        ],
+      },
+    });
+    const initial = (await displayed(admin)) as {
+      displaying: { confirmedAt: number; confirmedValidUntil: number };
+    };
+    let enter: () => void = () => {},
+      release: () => void = () => {};
+    const entered = new Promise<void>((r) => (enter = r)),
+      gate = new Promise<void>((r) => (release = r));
+    let renewals = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const body = (await request.json()) as { elements: unknown[] };
+      calls.push({
+        method: request.method,
+        path: new URL(request.url).pathname,
+        body,
+      });
+      expect(body.elements.length).toBeLessThanOrEqual(32);
+      if (++renewals === 2) {
+        enter();
+        await gate;
+      }
+      return Response.json({ ok: true });
+    });
+    vi.setSystemTime(start + 45000);
+    const alarm = runDurableObjectAlarm(env.DEVICES.getByName(deviceId));
+    const reached = await Promise.race([
+      entered.then(() => true),
+      alarm.then(() => false),
+    ]);
+    if (!reached) {
+      release();
+      expect(reached).toBe(true);
+    }
+    const middle = (await (await admin("/snapshot")).json()) as {
+      displaying: { confirmedAt: number; confirmedValidUntil: number };
+    };
+    release();
+    await alarm;
+    expect(middle.displaying.confirmedAt).toBe(initial.displaying.confirmedAt);
+    const final = (await (await admin("/snapshot")).json()) as {
+      health: { status: string };
+      displaying: { confirmedValidUntil: number };
+    };
+    expect(renewals).toBe(2);
+    expect(final.health.status).toBe("healthy");
+    expect(final.displaying.confirmedValidUntil).toBe(start + 105000);
+  });
+  it("renews finite text before its real expiry when entrance consumed part of cappedTTL", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.now();
+    const { send, admin, epoch, deviceId } = await setup();
+    const stub = env.DEVICES.getByName(deviceId);
+    await runInDurableObject(stub, (_instance, ctx) => {
+      const store = new StateStore(ctx.storage),
+        s = store.load()!;
+      s.services.test.config.visibleMs = 55000;
+      store.save(s);
+    });
+    await send("/publish", {
+      ...presentation(epoch),
+      validUntil: start + 120000,
+      scene: {
+        entryDurationMs: 10000,
+        commands: [
+          {
+            offsetMs: 0,
+            elements: [
+              { id: "text", type: "text", text: "Long entry", font: "small" },
+            ],
+          },
+          {
+            offsetMs: 10000,
+            elements: [
+              { id: "widget", type: "rectangle", width: 1, height: 1 },
+            ],
+          },
+        ],
+      },
+    });
+    for (let j = 0; j < 50; j++) {
+      await admin("/snapshot");
+      const entryAt = await runInDurableObject(
+        stub,
+        (_instance, ctx) => new StateStore(ctx.storage).load()!.entryAt,
+      );
+      if (entryAt !== null) {
+        expect(entryAt).toBe(start + 10000);
+        break;
+      }
+    }
+    vi.setSystemTime(start + 10000);
+    await runDurableObjectAlarm(stub);
+    await displayed(admin);
+    const textCount = () =>
+      calls.filter((c) =>
+        (c.body?.elements as { type: string }[] | undefined)?.some(
+          (e) => e.type === "text",
+        ),
+      ).length;
+    expect(textCount()).toBe(1);
+    vi.setSystemTime(start + 45000);
+    await runDurableObjectAlarm(stub);
+    expect(textCount()).toBe(2);
+    const state = await runInDurableObject(stub, (_instance, ctx) =>
+      new StateStore(ctx.storage).load()!,
+    );
+    expect(state.items[state.selected!].remainingMs).toBe(20000);
+  });
+});
+it("does not confirm an expired renewal prefix after a late suffix retry and reconstructs a complete fresh renewal", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const start = Date.now();
+  const { send, admin, epoch, deviceId } = await setup();
+  const stub = env.DEVICES.getByName(deviceId);
+  await runInDurableObject(stub, (_instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    s.services.test.config.heartbeatMs = 300000;
+    store.save(s);
+  });
+  const elements = Array.from({ length: 64 }, (_, n) => ({
+    id: "widget-" + n,
+    type: "rectangle",
+    width: 1,
+    height: 1,
+  }));
+  await send("/publish", {
+    ...presentation(epoch),
+    level: "urgent",
+    validUntil: start + 300000,
+    scene: {
+      entryDurationMs: 0,
+      commands: [
+        { offsetMs: 0, elements: elements.slice(0, 32) },
+        { offsetMs: 0, elements: elements.slice(32) },
+      ],
+    },
+  });
+  await displayed(admin);
+  let count = 0;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+    const r = input instanceof Request ? input : new Request(input);
+    calls.push({
+      method: r.method,
+      path: new URL(r.url).pathname,
+      body: (await r.json()) as Record<string, unknown>,
+    });
+    return Response.json({ ok: true }, { status: ++count === 2 ? 409 : 200 });
+  });
+  vi.setSystemTime(start + 45000);
+  await runDurableObjectAlarm(stub);
+  expect(
+    (
+      (await (await admin("/snapshot")).json()) as {
+        health: { status: string };
+      }
+    ).health.status,
+  ).toBe("blocked");
+  vi.setSystemTime(start + 107000);
+  await runDurableObjectAlarm(stub);
+  const stale = (await (await admin("/snapshot")).json()) as {
+    displaying: unknown;
+    health: { status: string };
+  };
+  expect(stale.displaying).toBeNull();
+  expect(stale.health.status).toBe("offline");
+  await runDurableObjectAlarm(stub);
+  const fresh = (await (await admin("/snapshot")).json()) as {
+    displaying: { confirmedValidUntil: number };
+    health: { status: string };
+  };
+  expect(fresh.health.status).toBe("healthy");
+  expect(fresh.displaying.confirmedValidUntil).toBe(start + 167000);
+  expect(count).toBe(5);
 });
