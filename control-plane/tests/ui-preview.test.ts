@@ -42,6 +42,18 @@ describe("actual preview frame isolation", () => {
     expect(pacer.allow(67)).toBe(false);
     expect(pacer.allow(84)).toBe(true);
   });
+  it("keeps 30 Hz on a 60 Hz animation clock with timestamp jitter", () => {
+    const pacer = new browser.FramePacer();
+    let draws = 0;
+    for (let i = 0; i < 600; i++)
+      if (pacer.allow((i * 1000) / 60 + (i % 3) * 0.15)) draws++;
+    expect(draws).toBeGreaterThanOrEqual(298);
+    expect(draws).toBeLessThanOrEqual(301);
+    const delayed = new browser.FramePacer();
+    expect(delayed.allow(0)).toBe(true);
+    expect(delayed.allow(49)).toBe(true);
+    expect(delayed.allow(67)).toBe(false);
+  });
   it("rechecks freshness when a pending frame is drawn", () => {
     expect(browser.frameIsFresh(frame, now)).toBe(true);
     expect(browser.frameIsFresh(frame, now + 2001)).toBe(false);

@@ -24,7 +24,7 @@ Build this helper once. Rebuild it only when its Swift source changes. This step
 
 ## 2. Create the services
 
-Open the control-plane page. Add one **agent** service and one **notifier** service. Keep the notifier priority above the agent priority. The page defaults are agent 10 and notifier 50. Keep the default exit policy unless you need different behavior.
+Open **Services** on the control-plane page. Register one **agent** service and one **notifier** service. Open **Configuration** to set their policies. Keep the notifier priority above the agent priority. The page defaults are agent 10 and notifier 50. Keep the default exit policy unless you need different behavior.
 
 Copy the publisher credential shown for each service. Each credential belongs to one service. The page shows it once. Do not put it in a shell command, environment variable, repository file, or chat.
 
@@ -101,9 +101,26 @@ To restore standalone mode later, stop cloud watch and run:
 
 Standalone mode requires its existing BUSY device token.
 
+## Management pages and live display
+
+- **Display:** the current front display and the queue. Each row shows App, Sender, and Received. Open the app to read details and use queue controls.
+- **Services:** register collectors and replace or revoke publisher credentials.
+- **Configuration:** enable services and set priority, exit, hold, later, and heartbeat rules.
+- **Device:** inspect connection, current controller, API confirmation, and preview diagnostics. Sign out here.
+
+Sender means the registered service name. An instance name distinguishes Macs that share a registration. It is not the author of the source notification. Received is the server receipt time for that occurrence. Updates retain it. Hover over the time for the full date and time.
+
+For live display preview, update the designated Mac to this version and restart cloud watch. In **Configuration**, enable **Live display preview bridge** for one service on that Mac. Prefer its agent service. The Mac must have the existing local Wi-Fi input configuration and Keychain helper. The bridge verifies the Bar identity before it reads pixels. It does not draw on the Bar or forward local credentials to the browser or cloud.
+
+The preview targets 30 fresh captures per second. It reads the actual 72 by 16 front framebuffer. It does not replay a scene or invent animation. Actual rates depend on local Wi-Fi, internet, and browser scheduling. **Device** shows the recent received rate and the last browser sample. These values are measured, not a fixed 30 fps label. Browser latency uses the Mac and browser clocks.
+
+Capture starts only while an authenticated **Display** page is visible. Leaving the page, hiding the tab, or closing the browser stops demand. A lost close signal expires within six seconds. Closing the browser does not stop cloud scheduling. Without an available Mac bridge, the page says that preview is unavailable; the cloud can still control the Bar.
+
+The bridge keeps private counters in `~/Library/Application Support/BusyBarAI/preview-status.json`. Capture and send rates in that file are runtime averages. The file contains no pixels, local address, or credentials. Frames stay in memory and do not enter durable cloud storage. Disable the preview bridge to stop capture without disabling that service's notifications or device-button input.
+
 ## Input and local actions
 
-Cloud watch can read the existing Wi-Fi input configuration. Configure that input in standalone mode first if needed. Cloud watch does not configure it or use the default USB endpoint. In the control-plane service settings, enable **Allow input** for exactly one local listener. Its service and instance can differ from the current display owner. Start/Pause then sends a stable event ID and current generation to `/api/input`. The backend decides whether to run the urgent primary action or clear existing nonurgent items.
+Cloud watch can read the existing Wi-Fi input configuration. Configure that input in standalone mode first if needed. Cloud watch does not configure it or use the default USB endpoint. In the control-plane service settings, enable **Trusted device button bridge** for exactly one local listener. Its service and instance can differ from the current display owner. Start/Pause then sends a stable event ID and current generation to `/api/input`. The backend decides whether to run the urgent primary action or clear existing nonurgent items.
 
 Primary callbacks run on the Mac that advertised them. For example, a Datadog callback uses the local `pup` command. The executor checks the service, instance, item, generation, and advertised key. It saves an action ID before the side effect. An interrupted action becomes **unknown** after restart and is never retried automatically. Running and terminal results stay in the durable outbox until delivery. An unavailable callback reports failure and cannot claim success.
 

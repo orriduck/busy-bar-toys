@@ -22,10 +22,22 @@ export interface PreviewStatus {
 }
 export class FramePacer {
   private next: number | null = null;
+  private last: number | null = null;
   allow(now: number) {
-    if (this.next !== null && now < this.next) return false;
     const step = 1000 / 30;
-    this.next = now + step;
+    // RAF timestamps jitter around the nominal 60 Hz boundary. Retain phase,
+    // with 1 ms tolerance, but never repay missed work with adjacent RAF draws.
+    const tolerance = 1;
+    if (
+      (this.next !== null && now + tolerance < this.next) ||
+      (this.last !== null && now - this.last < step - tolerance)
+    )
+      return false;
+    this.next =
+      this.next === null || now - this.next > step / 2 - tolerance
+        ? now + step
+        : this.next + step;
+    this.last = now;
     return true;
   }
 }

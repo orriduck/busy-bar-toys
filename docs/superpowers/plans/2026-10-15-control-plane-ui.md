@@ -26,12 +26,12 @@ Design: `docs/superpowers/specs/2026-10-15-control-plane-ui-design.md`.
 
 **Files:** modify `control-plane/src/model.ts`, `control-plane/src/index.ts`; create `control-plane/src/preview.ts`, `control-plane/tests/preview.test.ts`; extend model/runtime tests and `control-plane/PROTOCOL.md`.
 
-- [ ] Add failing model tests: old publish omits app, explicit app survives snapshot, invalid/oversized app fails; allowPreview is false by default and only accepts a boolean.
-- [ ] Add failing runtime tests using real Worker/DO: no auth 401; publisher cannot view; ordinary publisher cannot ingest; mismatched device denied; two eligible publishers cannot hold the same lease.
-- [ ] Add failing frame lifecycle tests: demand begins only with viewer; validates 72x16 payload; monotonically increasing sequence; no-demand frame rejected; stale/oversized/flooded messages rejected; viewer cancel stops demand; rotation/disable closes publisher; logout/expiry closes viewer; slow consumer memory remains bounded.
-- [ ] Run `npm test -- tests/model.test.ts tests/preview.test.ts` and record expected missing-feature failures.
-- [ ] Implement the contract in a focused relay class. Public routing authenticates before dispatch, forwards a sanitized internal request to the per-device DO, and never forwards arbitrary URLs or credentials to viewers. Update relay authorization metadata whenever state is saved; avoid loading full item/asset state for each frame.
-- [ ] Run Worker tests, typecheck and Vite build. Review specification, then quality. Commit only the backend-owned files.
+- [x] Add failing model tests: old publish omits app, explicit app survives snapshot, invalid/oversized app fails; allowPreview is false by default and only accepts a boolean.
+- [x] Add failing runtime tests using real Worker/DO: no auth 401; publisher cannot view; ordinary publisher cannot ingest; mismatched device denied; two eligible publishers cannot hold the same lease.
+- [x] Add failing frame lifecycle tests: demand begins only with viewer; validates 72x16 payload; monotonically increasing sequence; no-demand frame rejected; stale/oversized/flooded messages rejected; viewer cancel stops demand; rotation/disable closes publisher; logout/expiry closes viewer; slow consumer memory remains bounded.
+- [x] Run `npm test -- tests/model.test.ts tests/preview.test.ts` and record expected missing-feature failures.
+- [x] Implement the contract in a focused relay class. Public routing authenticates before dispatch, forwards a sanitized internal request to the per-device DO, and never forwards arbitrary URLs or credentials to viewers. Update relay authorization metadata whenever state is saved; avoid loading full item/asset state for each frame.
+- [x] Run Worker tests, typecheck and Vite build. Review specification, then quality. Commit only the backend-owned files.
 
 ## Task 2: Read-only Mac bridge and source metadata
 
@@ -48,13 +48,13 @@ Design: `docs/superpowers/specs/2026-10-15-control-plane-ui-design.md`.
 
 **Files:** modify `control-plane/ui/main.tsx`, `common.tsx`, `services.tsx`, `queue.tsx`, `style.css`; create focused `preview.tsx`, `pages.tsx`, `queue-metadata.ts`; add UI tests; add a device-shell asset without private pixels.
 
-- [ ] Write behavior tests for explicit app/legacy fallback, sender naming, received time retention, page navigation and session-fenced preview frame acceptance. Validate with `npm test` before implementation.
-- [ ] Build the extracted neutral dark tokens, red BUSY brand treatment, quiet sidebar and large rounded workspace from the approved concept. Generate a separate faithful blank device-shell asset; actual screen pixels remain code-rendered.
-- [ ] Display page contains only actual screen and three-column queue. Queue details/actions are disclosed on interaction; preserve groups and all existing operations. Do not turn synthetic fixture content into production seed data.
-- [ ] Services page provides register and access controls. Configuration page provides revision-checked policy edits and allowPreview control. Device page contains connection, owner, confirmation, preview diagnostics, refresh and sign out.
-- [ ] Preview subscribes only on visible Display page, verifies device/session/stream/sequence, draws new frames with a 30Hz ceiling, and clears stale or revoked pixels. It does not extrapolate animation.
-- [ ] Verify 1536x1024 and mobile 360px through the browser, all four pages, keyboard, row actions, registration and credential window, config edits/conflicts, two-tab SSE and session replacement. Inspect screenshots with view_image against the concept, and fix mismatches.
-- [ ] Run tests, typecheck/build. Specification review first, then quality review. Commit UI-owned files.
+- [x] Write behavior tests for explicit app/legacy fallback, sender naming, received time retention, page navigation and session-fenced preview frame acceptance. Validate with `npm test` before implementation.
+- [x] Build the extracted neutral dark tokens, red BUSY brand treatment, quiet sidebar and large rounded workspace from the approved concept. Generate a separate faithful blank device-shell asset; actual screen pixels remain code-rendered.
+- [x] Display page contains only actual screen and three-column queue. Queue details/actions are disclosed on interaction; preserve groups and all existing operations. Do not turn synthetic fixture content into production seed data.
+- [x] Services page provides register and access controls. Configuration page provides revision-checked policy edits and allowPreview control. Device page contains connection, owner, confirmation, preview diagnostics, refresh and sign out.
+- [x] Preview subscribes only on visible Display page, verifies device/session/stream/sequence, draws new frames at a 30Hz target with at most one millisecond of RAF timestamp tolerance, and clears stale or revoked pixels. It does not extrapolate animation.
+- [x] Verify 1536x1024 and mobile 360px through the browser, all four pages, keyboard, row actions, registration and credential window, config edits/conflicts, two-tab SSE and session replacement. Inspect screenshots with view_image against the concept, and fix mismatches.
+- [x] Run tests, typecheck/build. Specification review first, then quality review. Commit UI-owned files.
 
 ## Task 4: Integration, performance and release
 

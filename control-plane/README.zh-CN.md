@@ -10,7 +10,7 @@ Cloudflare 后端负责调度和写屏。Mac 负责采集 Codex、Your dot 与�
 
 本地演示和共享云端预览使用模拟 BUSY API，不能控制真实设备。`demo-token` 仅用于预览。
 
-![管理演示：分组队列与服务设置](../docs/images/control-plane-management.jpg)
+![Display 页面：模拟设备像素与紧凑队列](../docs/images/control-plane-display.png)
 
 ## 打开云端预览
 
@@ -30,7 +30,7 @@ npm run dev:demo
 
 1. 打开 `http://localhost:8787`。
 2. 在设备 token 栏输入 `demo-token`。
-3. 选择 **Register**。
+3. 打开 **Services**，选择 **Register**。
 4. 选择 Agent checker、Notifier 或 Custom publisher。
 5. 保存发布凭证。页面只显示一次。
 6. 在本地运行凭证窗口中的接入命令。
@@ -52,12 +52,16 @@ Setup 只保存连接信息，不替换正在运行的独立观察服务。准�
 
 ## 使用管理页
 
-- **Services：** 修改开关、优先级、退出方式、可见时长、常驻条件延后时间和心跳超时。选择 Save changes。旧版本修改会被拒绝；重新加载表单后再保存。
-- **Display queue：** 查看逐条事件。展开同组项，查看所有成员。暂停、恢复或结束一条通知。
-- **当前控制者：** 区分已选中、正在下发、API 已确认、被阻挡和离线。API 成功不等于实体像素回读成功。
-- **Actions：** 只执行来源声明的动作。动作由原 Mac 执行。失败或未知结果不会结束通知。
-- **Trusted device button bridge：** 只授权给受信任的本地按键监听器。它允许设备级 Start/Pause 操作。普通发布服务不能清除其它服务。
-- **Access：** 替换或撤销发布凭证。替换会结束该服务旧凭证下的项目；本地更新凭证后才能继续发布。
+- **Display：**查看当前正面像素和队列，每行只显示 App、Sender、Received。点击 app 展开详情和分组成员，并暂停、恢复、结束通知或执行已声明的动作。
+- **Services：**注册采集器，替换或撤销 publisher credential。替换会结束该服务的旧项目；本地更新凭据后才能继续发布。
+- **Configuration：**修改开关、优先级、退出方式、可见时长、常驻条件延后时间和心跳超时。选择 **Save changes**。旧版本修改会被拒绝；重新加载表单后再保存。
+- **Device：**查看连接、当前控制者、API 确认和预览诊断，并退出登录。API 成功不等于实体像素验收。
+
+Sender 是注册服务名，必要时附上 instance，不代表来源通知的作者。Received 是首次收到该 occurrence 的服务端时间，更新后保留。展开行可查看每位成员的来源和完整时间。
+
+在 Configuration 中，仅为指定 Mac 的一个服务打开 **Live display preview bridge**。更新该 Mac，并保留现有本地 Wi-Fi 输入配置。预览桥先核对设备身份，再读取真实正面 framebuffer；仅在登录后的 Display 页可见时发送像素。采集以 30 fps 为目标，Device 显示实际速率。预览桥不可用不影响云端调度。参见[预览接入与限制](../docs/cloud-mode.zh-CN.md#管理页面和实时画面)。
+
+**Trusted device button bridge** 是独立能力，只授权给本地按键监听器。它允许设备级 Start/Pause 操作；普通发布服务不能清除其它服务。Primary 动作由原 Mac 执行，失败或未知结果不会结束通知。
 
 紧急组按首次识别时间排队，不互相抢占。正常等待另一紧急组解除时，不弹系统通知。若显示证明过期或设备故障，Mac 的独立 watchdog 仍可兜底提醒。
 

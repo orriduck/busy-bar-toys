@@ -21,3 +21,32 @@ Final range check saved valid `visibleMs=1001` and `heartbeatMs=5001` through th
 Cloud acceptance: the isolated Workers preview verified HTTPS sign-in and a Live SSE connection. Synthetic notifications survived Worker redeployment. Two pages synchronized priority10→11→10. A synthetic primary action progressed through pending and succeeded, handing display to the next urgent item. Group expansion and flight pause worked. Both management pages were then closed; a later API check found the timed group ended, Codex restored and the paused flight retained, with a healthy backend. The synthetic source continued throughout. The public-demo credential dialog was tested: it shows the synthetic-only instruction and zero collector setup commands. Chrome again failed to attach; cloud UI acceptance used IAB and left Chrome untouched for the parallel task.
 
 Final mode handling uses a three-state value. An unavailable mode endpoint cannot expose a collector command. Verified session responses also supply the server mode. The deployment-wide mode response still updates the signed-out demo hint after an initial session401. Two regression tests cover unknown, hosted demo, production and loopback setup policies; final quality review passed.
+
+
+## Four-page refresh: local verification, 2026-10-15
+
+This section supersedes the old two-column layout above. Work is on `feat/control-plane-ui`; production rollout and actual end-to-end frame-rate acceptance are still pending.
+
+The isolated local Worker used the simulated BUSY upstream. The synthetic fixture used loopback-only demo credentials and the existing native renderer. It did not read local device credentials or connect to real hardware. Its pixels verify the transport and rendering path only.
+
+Browser checks used IAB after Chrome detached. At 1536 x 1024, Display contains only the centered device and App / Sender / Received queue. At 360 x 800, the body width is 360 with no horizontal overflow. Time uses compact 24-hour hours and minutes, with a full timestamp on hover and in member details. Local screenshots remain under ignored `.local/ui`; `docs/images/control-plane-display.png` contains synthetic data only.
+
+Verified registration on mobile, one-time credential modal, Tab wrap, and return focus to Services when the original submit button has unmounted. Verified configuration draft survives navigation, save succeeds, and a two-page conflict preserves the old draft: priority57 -> first page58; second page59 returned CONFIG_CONFLICT, retained59, and Reload showed58. Verified queue disclosure with actual member sender/instance/receipt time, then pause and resume of the mock aircraft.
+
+The accepted concept and actual desktop/mobile images were inspected. Fidelity ledger:
+
+| Point | Result |
+| --- | --- |
+| Palette | Native flat black / charcoal workspace, muted neutral labels and red brand retained; illustrative gradients omitted. |
+| Navigation | Four entries in approved order; selected rounded pill and compact mobile strip. Outline symbols keep a consistent control style. |
+| Workspace | Large rounded panel and quiet border; device and queue share a center axis. |
+| Display | Separate blank device illustration surrounds code-rendered 72 by16 pixels. Native time/aggregate-speed content replaces the concept's illustrative rates. |
+| Queue | Approximately684px wide, compact59px rows, only three columns while collapsed. Full content/actions are disclosed. |
+| Marks | Original ChatGPT/Claude/Dots assets; ADSBao uses an aircraft, correcting the generated concept's unrelated Ads mark. |
+| Typography | Sans-serif UI, restrained14–16px labels, compact24-hour receipt time. |
+| Responsive |360px viewport tested; sender icon hidden and labels shortened as needed, without changing underlying provenance. |
+
+Independent UI specification and quality reviews passed after fixes for stalled-frame freshness, stream rollover clearing, pacing catch-up, member provenance and modal focus. Nine preview helper tests cover replay/device/stream/size/freshness, pacing and metadata; existing session tests remain. Component lifecycle and actual device throughput still need final integration acceptance. The browser reports measured receive/draw rates and does not repeat frames to claim30fps.
+
+
+Pacing follow-up: the original strict delay drifted to201 draws over a synthetic10s,60Hz clock with fractional timestamp jitter. Phase-preserving deadlines, a1ms tolerance and a minimum inter-draw guard now produce300. Both0/49/67ms and0/50/67ms stall cases reject the third draw. Independent quality re-review passed10/10 preview tests. A local browser sample over28.679s measured835 fresh received frames (29.12fps) and798 draws (27.82fps); this is synthetic transport evidence, not real-device throughput. Two-page logout eventually cleared the other page on stream revalidation; reauthentication restored the queue and preview.
