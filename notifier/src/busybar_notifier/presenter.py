@@ -4,9 +4,12 @@ import time
 from PIL import Image
 
 from busybar_shared.native import encode_sections, fade_asset
-from .display import APP_NAME, entrance_asset, entrance_seconds, payload
+from busybar_shared.native import FPS
+from .display import (APP_NAME, ICON_ENTER_FRAMES, TEXT_TIMEOUT, detail_elements, entrance_asset,
+                      entrance_seconds, payload)
 
 REFRESH_SECONDS = 5
+TEXT_REFRESH_SECONDS = TEXT_TIMEOUT - 15
 
 
 def _priority(notification):
@@ -36,6 +39,8 @@ class NotificationPresenter:
         self._sequence = 0
         self._settles_at = 0
         self._refresh_at = 0
+        self._detail_at = None
+        self._text_at = 0
         self._deadline = 0
         self._prepared = set()
         self._priority = 50
@@ -76,12 +81,22 @@ class NotificationPresenter:
         self._priority = _priority(notification)
         self.phase = "hold" if self.reduced else "intro"
         self._settles_at = self.clock() + (0 if self.reduced else entrance_seconds(notification))
+        self._detail_at = None if self.reduced else self.clock() + ICON_ENTER_FRAMES / FPS
         self._refresh_at = self.clock() + REFRESH_SECONDS
+        self._text_at = self.clock()
         return True
 
-    def _draw_settled(self):
-        self.client.draw(payload(self.current, demo=self._demo, reduced=self.reduced, path=self._path, settled=True))
+    def _draw_settled(self, *, text=False, detail=True):
+        self.client.draw(payload(self.current, demo=self._demo, reduced=self.reduced, path=self._path,
+                                 settled=True, text=text, detail=detail))
         self._refresh_at = self.clock() + REFRESH_SECONDS
+        if text:
+            self._text_at = self.clock()
+
+    def _draw_detail(self):
+        self._detail_at = None
+        if elements := detail_elements(self.current):
+            self.client.draw({"application_name": APP_NAME, "priority": self._priority, "elements": elements})
 
     def abandon(self):
         """Stop at once without drawing, because another host owns the display."""
@@ -108,11 +123,15 @@ class NotificationPresenter:
 
     def advance(self):
         """Return True once the coordinator must restore its latest base view."""
+        if self.phase == "intro" and self._detail_at is not None and self.clock() >= self._detail_at:
+            self._draw_detail()
         if self.phase == "intro" and self.clock() >= self._settles_at:
-            self._draw_settled()
+            if self._detail_at is not None:
+                self._draw_detail()
+            self._draw_settled(text=True, detail=False)
             self.phase = "hold"
         elif self.phase == "hold" and self.clock() >= self._refresh_at:
-            self._draw_settled()
+            self._draw_settled(text=self.clock() - self._text_at >= TEXT_REFRESH_SECONDS)
         if self.phase == "exit" and self.clock() >= self._deadline:
             transparent = {"id": "notice-view", "type": "animation", "display": "front", "x": 0, "y": 0,
                            "z_index": 30, "timeout": 1, "path": "notice-transparent.anim", "loop": False,

@@ -74,13 +74,14 @@ class Device(preview.PreviewDevice):
         text = e["text"]
         bold = e.get("font") == "bold"
         width = round(clock_font().getlength(text)) if bold else max(1, len(text) * 4 - 1)
-        height = 9 if bold else 5
+        height = 9 if bold else 7
         image = Image.new("RGBA", (max(1, width), height))
         draw = ImageDraw.Draw(image)
         if bold:
             draw_clock(draw, (0, 2), text)
         else:
-            tiny_text(draw, (0, 0), text, e.get("color", "#FFFFFFFF"))
+            # Firmware small glyphs start two rows below the element's y.
+            tiny_text(draw, (0, 2), text, e.get("color", "#FFFFFFFF"))
         viewport = e.get("width", width)
         travel = max(0, width - viewport)
         # Approximate firmware text scrolling. This is not a timing reference.

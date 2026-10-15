@@ -19,7 +19,7 @@ Characters roll upward to the flight identity from left to right.
 Each character uses the clock digit's 500 ms damped roll.
 Adjacent characters start two native frames (about 67 ms) apart.
 The full introduction takes about 1.77 seconds, including space for eight characters.
-The lower line shows only the aircraft type in native small text after the entrance. It stays blank if the type is unknown.
+The lower line shows only the aircraft type in native small text once the aircraft has entered. It stays blank if the type is unknown.
 Reduced-motion mode shows the flight identity immediately.
 A missing callsign uses the registration or ICAO hex identifier.
 The back display shows aircraft details.
