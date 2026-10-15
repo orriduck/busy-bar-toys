@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Service, Mutate } from "./api";
 export function ServiceEditor({
@@ -21,6 +21,7 @@ export function ServiceEditor({
 }) {
   const [config, setConfig] = useState(service.config);
   const [dirty, setDirty] = useState(false);
+  const edits = useRef(0);
   const [baseRevision, setBaseRevision] = useState(configRevision);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   useEffect(() => {
@@ -30,17 +31,27 @@ export function ServiceEditor({
     }
   }, [service.config, configRevision, dirty]);
   const edit = (key: string, value: unknown) => {
+    edits.current++;
     setConfig((previous) => ({ ...previous, [key]: value }));
     setDirty(true);
   };
   const save = async (event: FormEvent) => {
     event.preventDefault();
+    const submittedEdit = edits.current;
     const result = await mutate(
       `/services/${encodeURIComponent(service.id)}`,
       { expectedRevision: baseRevision, config },
       "PATCH",
     );
-    if (result) setDirty(false);
+    if (result) {
+      if (edits.current === submittedEdit) setDirty(false);
+      else {
+        const state = result.snapshot as
+          { configRevision?: number } | undefined;
+        if (typeof state?.configRevision === "number")
+          setBaseRevision(state.configRevision);
+      }
+    }
   };
   const rotate = async () => {
     const result = await mutate(

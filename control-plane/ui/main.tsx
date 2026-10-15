@@ -6,6 +6,7 @@ import { Brand, Icon, Meta, serviceName } from "./common";
 import { SignIn, Credential } from "./auth";
 import { Queue } from "./queue";
 import { ServiceEditor, Register } from "./services";
+import { SessionFence } from "./session";
 import "./style.css";
 function App() {
   const [session, setSession] = useState<boolean | null>(null);
@@ -22,84 +23,180 @@ function App() {
     epochExpiresAt: number;
     id: string;
   } | null>(null);
-  const revision = useRef(-1);
-  const apply = useCallback((value: Snapshot) => {
-    if (
-      !value ||
-      value.protocol !== 1 ||
-      !Array.isArray(value.items) ||
-      !Array.isArray(value.services)
-    )
-      return;
-    if (value.revision < revision.current) return;
-    revision.current = value.revision;
-    setSnapshot(value);
-    setLastSync(Date.now());
+  const fence = useRef(new SessionFence());
+  const [sessionGeneration, setSessionGeneration] = useState(0);
+  const eventSource = useRef<EventSource | null>(null);
+  const clearSession = useCallback((deviceId: string | null) => {
+    const generation = fence.current.reset(deviceId);
+    setSessionGeneration(generation);
+    eventSource.current?.close();
+    eventSource.current = null;
+    setSnapshot(null);
+    setSecret(null);
+    setRegister(false);
+    setPending(false);
+    setLastSync(undefined);
+    setStream("Connecting");
+    return generation;
   }, []);
+  const beginSession = useCallback(
+    (deviceId: string) => {
+      if (!/^[a-f0-9]{64}$/.test(deviceId)) {
+        clearSession(null);
+        setSession(false);
+        setError("The device identity could not be verified.");
+        return;
+      }
+      clearSession(deviceId);
+      setError("");
+      setSession(true);
+    },
+    [clearSession],
+  );
+  const invalidate = useCallback(() => {
+    clearSession(null);
+    setSession(false);
+  }, [clearSession]);
+  const apply = useCallback(
+    (value: Snapshot, generation: number) => {
+      if (!fence.current.current(generation)) return false;
+      if (
+        !value ||
+        value.protocol !== 1 ||
+        !Array.isArray(value.items) ||
+        !Array.isArray(value.services)
+      )
+        return false;
+      if (value.deviceId !== fence.current.deviceId) {
+        invalidate();
+        setError("The device session changed in another page. Sign in again.");
+        return false;
+      }
+      if (!fence.current.accept(value.deviceId, value.revision, generation))
+        return false;
+      setSnapshot(value);
+      setLastSync(Date.now());
+      return true;
+    },
+    [invalidate],
+  );
   const refresh = useCallback(async () => {
+    const generation = fence.current.generation;
     try {
-      apply(await api<Snapshot>("/snapshot"));
+      apply(await api<Snapshot>("/snapshot"), generation);
     } catch (e) {
+      if (!fence.current.current(generation)) return;
+      if (e instanceof APIError && e.status === 401) invalidate();
       setError(message(e));
-      if (e instanceof APIError && e.status === 401) setSession(false);
     }
-  }, [apply]);
+  }, [apply, invalidate]);
   useEffect(() => {
+    const generation = fence.current.generation;
     void api<{ demo: boolean }>("/mode")
       .then((v) => setDemo(v.demo === true))
       .catch(() => {});
-    void api("/session")
-      .then(() => setSession(true))
-      .catch(() => setSession(false));
-  }, []);
+    void api<{ deviceId: string }>("/session")
+      .then((v) => {
+        if (fence.current.current(generation)) beginSession(v.deviceId);
+      })
+      .catch(() => {
+        if (fence.current.current(generation)) invalidate();
+      });
+  }, [beginSession, invalidate]);
   useEffect(() => {
     if (!session) return;
+    const generation = fence.current.generation;
     void refresh();
     const events = new EventSource("/api/events");
-    events.onopen = () => setStream("Live");
+    eventSource.current = events;
+    events.onopen = () => {
+      if (fence.current.current(generation)) setStream("Live");
+    };
     events.addEventListener("snapshot", (event) => {
+      if (!fence.current.current(generation)) return;
       try {
-        apply(JSON.parse((event as MessageEvent<string>).data));
-        setStream("Live");
+        apply(JSON.parse((event as MessageEvent<string>).data), generation);
+        if (fence.current.current(generation)) setStream("Live");
       } catch {
         setError("An update could not be read. Reload the latest state.");
       }
     });
     events.onerror = () => {
+      if (!fence.current.current(generation)) return;
       setStream("Reconnecting");
-      void api("/session").catch((e) => {
-        if (e instanceof APIError && e.status === 401) setSession(false);
-      });
+      void api<{ deviceId: string }>("/session")
+        .then((value) => {
+          if (
+            fence.current.current(generation) &&
+            value.deviceId !== fence.current.deviceId
+          ) {
+            invalidate();
+            setError(
+              "The device session changed in another page. Sign in again.",
+            );
+          }
+        })
+        .catch((e) => {
+          if (
+            fence.current.current(generation) &&
+            e instanceof APIError &&
+            e.status === 401
+          )
+            invalidate();
+        });
     };
-    return () => events.close();
-  }, [session, refresh, apply]);
+    return () => {
+      events.close();
+      if (eventSource.current === events) eventSource.current = null;
+    };
+  }, [session, sessionGeneration, refresh, apply, invalidate]);
   const mutate: Mutate = async (path, body, method) => {
+    const generation = fence.current.generation;
+    const expectedDeviceId = fence.current.deviceId;
+    if (!expectedDeviceId) return null;
     setPending(true);
     setError("");
     try {
-      const result = await api<Record<string, unknown>>(path, body, method);
-      if (result.snapshot) apply(result.snapshot as Snapshot);
+      const result = await api<Record<string, unknown>>(
+        path,
+        body,
+        method,
+        expectedDeviceId,
+      );
+      if (!fence.current.current(generation)) return null;
+      if (result.snapshot) apply(result.snapshot as Snapshot, generation);
       else await refresh();
-      return result;
+      return fence.current.current(generation) ? result : null;
     } catch (e) {
+      if (!fence.current.current(generation)) return null;
+      if (
+        e instanceof APIError &&
+        (e.status === 401 || e.code === "DEVICE_SESSION_CHANGED")
+      )
+        invalidate();
       setError(message(e));
-      if (e instanceof APIError && e.status === 409) await refresh();
-      if (e instanceof APIError && e.status === 401) setSession(false);
+      if (
+        e instanceof APIError &&
+        e.status === 409 &&
+        fence.current.current(generation)
+      )
+        await refresh();
       return null;
     } finally {
-      setPending(false);
+      if (fence.current.current(generation)) setPending(false);
     }
   };
   const logout = async () => {
+    const expectedDeviceId = fence.current.deviceId || undefined;
+    const generation = clearSession(null);
+    setSession(null);
+    setError("");
     try {
-      await api("/session", undefined, "DELETE");
-      setSession(false);
-      setSnapshot(null);
-      setSecret(null);
-      revision.current = -1;
-      setError("");
+      await api("/session", undefined, "DELETE", expectedDeviceId);
     } catch (e) {
-      setError(message(e));
+      if (fence.current.current(generation)) setError(message(e));
+    } finally {
+      if (fence.current.current(generation)) setSession(false);
     }
   };
   const owner = snapshot?.items.find(
@@ -163,15 +260,7 @@ function App() {
           <h1>Connecting…</h1>
         </main>
       ) : !session ? (
-        <SignIn
-          demo={demo}
-          onSignIn={() => {
-            revision.current = -1;
-            setSession(true);
-            setError("");
-          }}
-          onError={setError}
-        />
+        <SignIn demo={demo} onSignIn={beginSession} onError={setError} />
       ) : !snapshot ? (
         <main className="signin">
           <h1>Loading your device…</h1>

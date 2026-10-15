@@ -7,7 +7,7 @@ export function SignIn({
   onError,
 }: {
   demo: boolean;
-  onSignIn: () => void;
+  onSignIn: (deviceId: string) => void;
   onError: (error: string) => void;
 }) {
   const [token, setToken] = useState("");
@@ -17,9 +17,9 @@ export function SignIn({
     setBusy(true);
     onError("");
     try {
-      await api("/session", { token });
+      const result = await api<{ deviceId: string }>("/session", { token });
       setToken("");
-      onSignIn();
+      onSignIn(result.deviceId);
     } catch (e) {
       onError(message(e));
     } finally {

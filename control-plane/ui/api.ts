@@ -8,17 +8,21 @@ export class APIError extends Error {
     public code: string,
   ) {
     super(
-      status === 409
-        ? "This view changed. Your changes were not saved. Review the latest state and try again."
-        : status === 401
-          ? "Your session expired. Sign in again."
-          : status === 413
-            ? "The device queue or asset cache is full. End unused items and try again."
-            : status === 403
-              ? "This action is not allowed for this session."
-              : status === 502 || status === 503
-                ? "The device service is unavailable. Try again when it is connected."
-                : "The request could not be completed. Check the values and try again.",
+      code === "DEVICE_SESSION_CHANGED"
+        ? "The device session changed in another page. Sign in again."
+        : code === "DEVICE_AUTH_REJECTED"
+          ? "The device token was rejected. Check its device scope and expiry."
+          : status === 409
+            ? "This view changed. Your changes were not saved. Review the latest state and try again."
+            : status === 401
+              ? "Your session expired. Sign in again."
+              : status === 413
+                ? "The device queue or asset cache is full. End unused items and try again."
+                : status === 403
+                  ? "This action is not allowed for this session."
+                  : status === 502 || status === 503
+                    ? "The device service is unavailable. Try again when it is connected."
+                    : "The request could not be completed. Check the values and try again.",
     );
   }
 }
@@ -26,13 +30,16 @@ export async function api<T>(
   path: string,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
+  expectedDeviceId?: string,
 ): Promise<T> {
   const response = await fetch("/api" + path, {
     method,
     credentials: "same-origin",
     cache: "no-store",
-    headers:
-      body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(expectedDeviceId ? { "X-Busy-Device": expectedDeviceId } : {}),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const parsed: unknown = await response.json().catch(() => ({}));

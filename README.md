@@ -6,6 +6,17 @@ Show local AI agent status and short notifications on a BUSY Bar.
 One background service controls every app.
 The device calendar is the default view.
 
+## Cloud control plane
+
+An optional Cloudflare backend coordinates display services across Macs.
+The browser manages priorities, exit rules, switches and an event queue.
+Local collectors publish scenes with separate service credentials.
+SSE keeps management pages in sync.
+
+The current branch includes an isolated local demo. Production deployment and real-device migration remain pending.
+See the [control plane guide](control-plane/README.md), [local client setup](docs/cloud-mode.md), and [protocol](control-plane/PROTOCOL.md).
+The existing standalone installation remains the default.
+
 ## Watch the use cases
 
 These looping clips use synthetic events and the production renderers.

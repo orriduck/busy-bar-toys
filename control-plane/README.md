@@ -1,46 +1,122 @@
-# BUSY Bar control plane (local MVP)
+# BUSY Bar control plane
 
-This Worker and per-device SQLite Durable Object implement the approved [v5 design](../docs/plans/control-plane-v5.md). The browser manages service policy and the current full queue; scoped local producers provide complete scenes, hashed assets, heartbeats, actions and optional physical input. The backend is the only cloud display writer. See [PROTOCOL.md](PROTOCOL.md) for the exact wire contract.
+[中文](README.zh-CN.md) · [Protocol](PROTOCOL.md) · [Approved design](../docs/plans/control-plane-v5.md)
 
-## Run the isolated local demo
+Manage one BUSY Bar from a browser. Register display services. Set their priority, exit rule and enabled state. See the current owner and every queued notification. The page receives full state snapshots through SSE.
 
-Requires Node26/npm. In this directory:
+The Cloudflare backend schedules the queue and writes the display. A local Mac collects Codex, Your dot and notification data. It sends complete scenes to the backend. Closing the browser does not stop cloud scheduling.
+
+**This branch is under local development. It has not been deployed. The real Bar and its existing service have not been migrated.** The local demo uses a simulated BUSY API. It cannot control a real device.
+
+![Local management demo with a grouped queue and service settings](../docs/images/control-plane-management.jpg)
+
+## Run the local demo
+
+Use Node 26 and npm. From the repository root:
 
 ```sh
+cd control-plane
 npm ci
 npm run dev:demo
 ```
 
-Open `http://localhost:8787`; sign in with **demo-token**. Only this explicit demo configuration binds the mock BUSY service; `/api/mode` and snapshots report `demo:true`. The mock never forwards a request to BUSY. `demo-blocked` and `demo-offline` verify the same fake device identity but simulate display conflict/offline. The mock counters are at `http://localhost:8790/__demo/state`. Local state is retained under ignored `.wrangler/`; stopping the process pauses the local simulation. No deploy, real device writes or credential rotation are performed by these commands.
+1. Open `http://localhost:8787`.
+2. Enter `demo-token` in the device token field.
+3. Select **Register**.
+4. Choose **Agent checker**, **Notifier** or **Custom publisher**.
+5. Save the publisher credential. The page shows it once.
+6. Connect a publisher with the command in the credential dialog.
+7. Open a second browser page to check SSE updates.
 
-The production config has no `BUSY_UPSTREAM` binding and always addresses `https://api.busy.app/busybar`. A real BUSY token entered into the demo is rejected. Demo encryption/signing strings are public fixtures and must never be copied to production.
+The page shows **LOCAL DEMO**. `/api/mode` reports `demo:true`. The mock API listens on port 8790. Its diagnostic state is at `http://localhost:8790/__demo/state`.
 
-## Checks
+Use `demo-blocked` or `demo-offline` to test device rejection or loss of connection. These tokens select the same fake device. A real device token is rejected by the mock. The mock never forwards a request to BUSY.
+
+Stop the terminal process to stop the local server. State remains in the ignored `.wrangler/` folder. Local scheduling stops with this process. Cloud scheduling after deployment uses Durable Object alarms.
+
+## Connect local collectors
+
+See the [local client guide](../docs/cloud-mode.md). Each role needs its own registered service and publisher credential. Keep the agent service below the notifier service in priority. The page starts new agent services at 10 and notifier services at 50.
+
+Setup stores a connection. It does not change the installed standalone observer. Use explicit cloud mode only when you are ready to switch. This Mac does not need Claude hooks.
+
+A custom publisher follows [PROTOCOL.md](PROTOCOL.md). Registering a service does not upload code for Cloudflare to execute.
+
+## Use the management page
+
+- **Services:** change enabled state, priority, exit rule, visible time, condition delay and heartbeat timeout. Select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
+- **Display queue:** inspect every event. Expand a group to see all its members. Pause, resume or end one item.
+- **Current owner:** distinguish selected, applying, API-confirmed, blocked and offline states. An API acknowledgment does not prove physical pixels.
+- **Actions:** run only an action advertised by the source. The original Mac executes it. Failed or unknown results keep the notification.
+- **Trusted device button bridge:** grant this only to the local input listener. This separate capability permits device-wide Start/Pause handling. An ordinary publisher cannot clear other services.
+- **Access:** replace or revoke a publisher credential. Replacement ends that service's old items. Update the local client before it can publish again.
+
+Urgent groups use first-recognized order. They do not interrupt another urgent group. A normal wait behind a healthy urgent group does not trigger a system notification. The Mac watchdog still warns if display proof expires or the device fails.
+
+Finite items count visible time after entry. An interruption pauses that time. Nonurgent standing conditions return after a delay if the source still confirms them. Defaults are 10 seconds visible and 30 minutes delayed. Manual clearing prevents the same occurrence from returning.
+
+Start/Pause runs the current urgent primary action, when one exists. Otherwise it clears nonurgent items and requests calendar fallback. Urgent items survive that clear.
+
+## Run checks
 
 ```sh
 npm test
 npm run typecheck
 npm run build
 npm run dry-run
-npm run types
 ```
 
-Tests run in Cloudflare's Workers Vitest runtime, with fake HTTP only. They cover stable scheduling, pause/resume, urgent FIFO, grouping/admission, actions, input grants, projection privacy, allowlists, bounded assets, SQLite storage beyond2MiB aggregate, alarms, successful-command actual eviction, uncertain-command constructor reconstruction, blocked upstream and serialized generation correction. They do not establish physical pixels, animation timing, production availability, dual-Mac migration or token revocation acceptance. Wrangler may warn that production required secrets are absent during tests; the test configuration explicitly supplies public fixture values to Miniflare.
+Tests use the Workers runtime, SQLite Durable Objects and fake upstream HTTP. They cover scheduling, permissions, state recovery and dispatcher behavior. Type checking includes the browser code. A dry run packages the production Worker; it does not deploy it.
 
-## Operator setup after local review
+Run the Python suite from the repository root:
 
-Deployment and device migration remain separate authorized steps. Before a real deployment set `PUBLIC_ORIGIN` in `wrangler.jsonc` to the exact HTTPS management origin, provision a fresh64hex AES256 secret as `TOKEN_ENCRYPTION_KEY`, and a separate random signing secret as `SESSION_SIGNING_KEY` using Wrangler secret bindings (`wrangler secret put NAME` reads stdin). Never pass a real secret in argv, commit it, or log it. Regenerate binding types with `npm run types` after config changes. Production logs/traces are enabled; application code logs no notification bodies or upstream responses.
+```sh
+.venv/bin/python scripts/run-tests.py
+```
 
-The device token is verified via `/status.device.serial_number`, encrypted with random-IV authenticated AES-GCM, and stored only in its derived device DO. Browser sessions are12h Secure/HttpOnly/SameSite=Strict cookies; mutations enforce Origin. Register agent/notifier/custom services using the current config revision. Save each returned publisher credential and stable epoch once in the local client's credential store; never paste it into a command line. Epoch/credential survive process restart and expire after30days. Reissue invalidates the former credential/epoch and ends its items. Ordinary publishers cannot modify service policy or receive other services' bodies. Grant `config.allowInput` only to the designated trusted physical input listener; that grant allows device-wide Start/Pause handling, without broad content access.
+Local tests do not verify real firmware visuals, animation timing, production availability or two-Mac migration. Acknowledged-command eviction is tested directly. Uncertain-command recovery is tested by reconstructing the object over saved SQLite intent. A full abrupt-process failure remains a separate acceptance check.
 
-Policy defaults: enabled, priority50 (range0..1000), visible10s (1s..24h), condition snooze30min (1s..24h), heartbeat timeout90s (5s..5min), `exit:default`. Default urgent and agent items remain until source end; other events are finite. Explicit `exit:finite` also limits urgent items, `exit:source` is indefinite. Native firmware priority is fixed50 and independent of service ranking.
+## Prepare a future deployment
 
-## Recovery and resource bounds
+The production configuration has no mock upstream binding. It uses the fixed BUSY cloud API origin. Do not deploy the demo configuration or copy its public fixture secrets.
 
-State and command intent are committed before external HTTP; one dispatcher checks generation immediately before every request and waits for that bounded8s request before correcting an obsolete result. SQLite stores items/assets/actions/tombstones/commands in independent bounded rows. Alarms drive expiry, entry offsets, snooze, renewal, action uncertainty, cleanup and exponential retry. Successful commands are not replayed after eviction. An uncertain persisted in-flight command starts a new generation, clears only the platform namespace, then restores the latest full scene with prior elapsed visible time deducted. External side effects remain local and must use durable action-ID dedupe; unknown results are not a license to repeat them.
+1. Set `PUBLIC_ORIGIN` to the management site's exact HTTPS origin.
+2. Set a fresh 64-character hex `TOKEN_ENCRYPTION_KEY` with Wrangler secret bindings.
+3. Set a separate random `SESSION_SIGNING_KEY`.
+4. Run `npm run types`, then the checks above.
+5. Deploy the reviewed production configuration to the intended account.
+6. Verify authentication and cloud scheduling before device migration.
 
-Limits per device:32services,256liveitems/2MiB presentation JSON,4096 live-item plus tombstone reservations,512actions,2048button IDs,64sessions and16SSE connections. Tombstones retain identity/version through epoch expiry, preventing replay after body deletion. Cloud asset cache64files/4MiB,256KiB per asset; unused assets are removed after1h or LRU pressure. Device pool16filenames/2MiB; occupied slot extensions are immutable, playing/pending slots are pinned. If every slot was initialized with one type, introducing a different type can return capacity until a new namespace/device-pool migration; files are never silently multiplied or overwritten while playing. Full replay reloads from bounded cloud cache. Native text TTL never exceeds60s; short finite text is sent once, longer text renews near45s separately from ordinary widgets. Same-content versions/heartbeats do not restart scrolling.
+`wrangler secret put NAME` reads its value from stdin. It creates a deployed version. Keep secret values out of arguments, Git and logs.
 
-The first release sends current full SSE snapshots on connect/change/reconnect, including pending actions and finite display/queue/coverage proofs. Slow consumers close and reconnect; no historical replay or screen capture is implemented. A successful BUSY draw response is API acknowledgment, not pixel readback. Cloud failure has no local direct-write fallback; existing limited native TTLs eventually return the Bar to its own calendar. The producer's independent urgent watchdog and OS notification fallback must be enabled and verified during the later two-Mac migration.
+For a device migration, first prepare both Macs. Create a new device-scoped cloud token for the backend. Replace local direct writers with scoped publishers. Then revoke old direct-writer cloud tokens and verify they fail. Deleting a Keychain item alone does not revoke a token. Cloud token revocation does not disable USB or local Wi-Fi access.
 
-Official API/runtime references checked2026-10-15: [Workers test integration](https://developers.cloudflare.com/workers/testing/vitest-integration/write-your-first-test/), [SQLite storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), [SQLite row/resource limits](https://developers.cloudflare.com/durable-objects/platform/limits/), [alarms](https://developers.cloudflare.com/durable-objects/api/alarms/). The BUSY request/element shapes were checked against the locally saved API27.5.0 OpenAPI document and existing Python client; physical firmware acceptance remains pending.
+This iteration performs none of those deployment or migration actions.
+
+## Storage and failure rules
+
+The backend encrypts the BUSY token with AES-GCM. It verifies device identity from BUSY status. Browser sessions use Secure, HttpOnly and SameSite cookies. Publisher credentials are hashed, scoped to one service and returned once. The initial publisher epoch lasts 30 days. Replace it before it expires.
+
+SQLite saves queue state and command intent before HTTP. One dispatcher writes each device. It checks the display generation before each write. Alarms handle expiry, retries and renewal. A restart must not replay an acknowledged short text update.
+
+Current and queued text is stored while needed. Ended, cleared and expired content is removed after its bounded lifecycle. Audit entries contain IDs, times and status, not notification bodies. Source credentials remain on the Mac.
+
+The backend has fixed API methods, paths, parameters and asset names. It is not an arbitrary proxy. A stolen upstream BUSY token can still bypass the backend; its upstream permissions do not become narrower.
+
+Per device limits:
+
+| Resource | Limit |
+| --- | --- |
+| Registered services | 32 |
+| Live items / presentation JSON | 256 / 2 MiB |
+| Live-item and replay-protection reservations | 4096 |
+| Retained actions / button IDs / sessions / SSE clients | 512 / 2048 / 64 / 16 |
+| Cloud assets | 64 files / 4 MiB; 256 KiB each |
+| Device assets | 16 fixed filenames / 2 MiB |
+| Native text TTL | At most 60 seconds |
+
+An initialized device slot keeps its file extension. Active and pending device commands pin slots. Capacity errors are explicit. The backend does not overwrite a playing asset to make room.
+
+A cloud outage does not make Macs write directly to the Bar. Native elements expire to the device calendar. The original Mac's independent watchdog provides urgent system notifications where the OS permits them. A sleeping Mac or denied notification permission cannot guarantee a warning.
+
+[Protocol details](PROTOCOL.md) · [Local verification record](../docs/plans/control-plane-ui-verification.md)
