@@ -58,10 +58,14 @@ def _service(action, *, check=False):
     return subprocess.run(args, capture_output=True, text=True, check=check)
 
 
-def install(*, reduced_motion=False):
-    read_token()  # Fail before changing any service files if credentials aren't ready.
+def install(*, reduced_motion=False, mode="standalone"):
+    if mode == "cloud":
+        from .cloud_watch import configurations
+        configurations(RUNTIME)
+    else:
+        read_token()  # Fail before changing any service files if credentials aren't ready.
     from busybar_apps.adsbao.checker import read_config as read_aircraft_config
-    if sys.platform == 'darwin' and read_aircraft_config(RUNTIME):
+    if mode == 'standalone' and sys.platform == 'darwin' and read_aircraft_config(RUNTIME):
         subprocess.run([sys.executable, str(REPO / 'scripts/build-location-helper.py')], check=True)
     RUNTIME.mkdir(mode=0o700, parents=True, exist_ok=True)
     RUNTIME.chmod(0o700)
@@ -80,6 +84,8 @@ def install(*, reduced_motion=False):
         "StandardOutPath": str(logs / "service.log"),
         "StandardErrorPath": str(logs / "service.log"),
     }
+    if mode == 'cloud':
+        config['ProgramArguments'] += ['--mode', 'cloud']
     if reduced_motion:
         config['ProgramArguments'].append('--reduced-motion')
     _service("bootout")
@@ -120,6 +126,9 @@ def _primary(item):
 
 
 def watch(args):
+    if getattr(args, "mode", "standalone") == "cloud":
+        from .cloud_watch import watch as cloud_watch
+        return cloud_watch(args, RUNTIME, REPO)
     RUNTIME.mkdir(mode=0o700, parents=True, exist_ok=True)
     RUNTIME.chmod(0o700)
     lock = (RUNTIME / "watch.lock").open("w")
@@ -469,11 +478,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     observe = sub.add_parser("watch", help="Watch local Codex lifecycle events")
+    observe.add_argument("--mode", choices=("standalone", "cloud"), default="standalone")
     observe.add_argument("--dot-thread", action="append", default=[], help="Explicit dots identity override; never fabricates status")
     observe.add_argument("--reduced-motion", action="store_true", help="Use static lights and direct display changes")
     setup = sub.add_parser('install')
+    setup.add_argument('--mode', choices=('standalone', 'cloud'), default='standalone')
     setup.add_argument('--reduced-motion', action='store_true', help='Install the service without motion effects')
-    for name in ("status", "uninstall", "clear", "token-set", "input-wifi"):
+    status_parser = sub.add_parser("status")
+    status_parser.add_argument("--mode", choices=("standalone", "cloud"), default="standalone")
+    cloud_parser = sub.add_parser("cloud-setup", help="Validate a scoped publisher credential and store it in Keychain")
+    cloud_parser.add_argument("--url", required=True)
+    cloud_parser.add_argument("--role", required=True, choices=("agent", "notifier"))
+    cloud_parser.add_argument("--instance")
+    for name in ("uninstall", "clear", "token-set", "input-wifi"):
         sub.add_parser(name)
     for name in ("preview", "capture"):
         command = sub.add_parser(name)
@@ -510,8 +527,15 @@ def main(argv=None):
         if args.command.startswith('adsbao-'):
             from busybar_apps.adsbao.commands import run as run_aircraft_command
             return run_aircraft_command(args, RUNTIME, REPO)
+        if args.command == "cloud-setup":
+            from busybar_shared.cloud import setup as configure_cloud, HELPER
+            if not HELPER.exists():
+                raise RuntimeError("Build scripts/cloud-keychain.swift first; see docs/cloud-mode.md.")
+            configure_cloud(RUNTIME, args.url, args.role, instance=args.instance, secret=getpass.getpass("Publisher credential: "))
+            print("Cloud role configured. Run watch --mode cloud when ready.")
+            return 0
         if args.command == "watch": return watch(args)
-        if args.command == "install": return install(reduced_motion=args.reduced_motion)
+        if args.command == "install": return install(reduced_motion=args.reduced_motion, mode=args.mode)
         if args.command == "uninstall": return uninstall()
         if args.command == "preview": return preview(args)
         if args.command == "capture": return capture(args)
@@ -534,6 +558,9 @@ def main(argv=None):
             print("Wi-Fi input configured. Run install, then check button_input.connected in status.")
             return 0
         if args.command == "status":
+            if args.mode == "cloud":
+                from .cloud_watch import status as cloud_status
+                return cloud_status(RUNTIME)
             state = BusyAPI(read_token()).status()
             service = _service("print")
             from busybar_apps.adsbao.checker import read_status as read_aircraft_status
