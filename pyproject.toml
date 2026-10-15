@@ -3,11 +3,15 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "busy-bar-status"
+name = "busy-bar-toys"
 version = "0.1.0"
 description = "BUSY Bar checkers for local Codex tasks and nearby ADSBao aircraft"
 requires-python = ">=3.10"
 dependencies = ["Pillow>=10.1,<13", "busylib==2.6.0", "websockets>=15,<18", "httpx2>=2,<3"]
+
+[project.urls]
+Repository = "https://github.com/orriduck/busy-bar-toys"
+Documentation = "https://github.com/orriduck/busy-bar-toys#readme"
 
 [project.scripts]
 busy-bar = "busybar_status.cli:main"

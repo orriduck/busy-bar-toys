@@ -243,7 +243,7 @@ Keep all existing hooks.
         "hooks": [
           {
             "type": "command",
-            "command": "/ABSOLUTE/PATH/busy-bar/.venv/bin/busy-bar hook",
+            "command": "/ABSOLUTE/PATH/busy-bar-toys/.venv/bin/busy-bar hook",
             "timeout": 3
           }
         ]
