@@ -26,7 +26,7 @@ def _short(login, strip):
 
 def _item(id, group, level, title, repo, number, detail):
     return Notification(id, level, "github", "GITHUB", title, f"{repo} #{number} {detail}",
-                        accent=LEVEL_ACCENT[level], icon=badge(GLYPH, level, COLOR), group=group)
+                        accent=LEVEL_ACCENT[level], icon=badge(GLYPH, COLOR), group=group)
 
 
 class _People:

@@ -53,7 +53,7 @@ def sources(config, state_dir, *, inbox, **_):
             prefix = "" if done else f"exit {note['code']}: "
             detail = f"{prefix}{note.get('command', '')} ({duration(note.get('seconds', 0))})"
             items.append(Notification(f"task:{path.stem}", level, "terminal", "TERMINAL", "DONE" if done else "FAILED",
-                                      detail, accent=(82, 222, 150) if done else (229, 165, 10), icon=badge(GLYPH, level, COLOR)))
+                                      detail, accent=(82, 222, 150) if done else (229, 165, 10), icon=badge(GLYPH, COLOR)))
         return items
 
     return [Source("terminal-tasks", "terminal", 3, "event", poll)]

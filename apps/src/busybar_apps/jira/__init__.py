@@ -20,7 +20,7 @@ def sources(config, state_dir, **_):
         issues = result if isinstance(result, list) else result.get("issues", [])
         return [Notification(f"jira:{i['key']}", "attention", "jira", "JIRA", "TICKET ASSIGNED",
                              f"{i['key']} {(i.get('fields') or {}).get('summary') or i.get('summary') or ''}".strip(),
-                             accent=(229, 165, 10), icon=badge(GLYPH, "attention", COLOR))
+                             accent=(229, 165, 10), icon=badge(GLYPH, COLOR))
                 for i in seen.fresh(issues, lambda i: i["key"])]
 
     return [Source("jira-assigned", "jira", 120, "event", poll)]

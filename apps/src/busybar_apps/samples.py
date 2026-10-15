@@ -9,7 +9,7 @@ from .adsbao.display import notification as aircraft
 def samples():
     def item(id, level, module, brand, title, detail, accent):
         return Notification(f"sample:{id}", level, module.__name__.rsplit(".", 1)[-1], brand, title, detail,
-                            accent=accent, icon=badge(module.GLYPH, level, module.COLOR))
+                            accent=accent, icon=badge(module.GLYPH, module.COLOR))
 
     amber = (229, 165, 10)
     return [

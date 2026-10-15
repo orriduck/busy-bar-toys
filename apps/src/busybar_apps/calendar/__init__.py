@@ -32,7 +32,7 @@ def sources(config, state_dir, **_):
     def poll(now):
         events = list(upcoming(run(ARGS, timeout=20).stdout, now, lead))
         return [Notification(f"meeting:{int(e['start'])}:{e['title'][:40]}", "info", "calendar", "CALENDAR", "MEETING",
-                             f"{e['time']} {e['title']}", accent=(140, 180, 255), icon=badge(GLYPH, "info", COLOR))
+                             f"{e['time']} {e['title']}", accent=(140, 180, 255), icon=badge(GLYPH, COLOR))
                 for e in seen.fresh(events, lambda e: f"{int(e['start'])}:{e['title']}")]
 
     return [Source("calendar", "calendar", 30, "event", poll)]
