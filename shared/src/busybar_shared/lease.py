@@ -34,7 +34,13 @@ class DisplayLease:
             try:
                 data = json.loads(self.client.read_file(PATH))
                 self._cached = data if isinstance(data, dict) else None
-            except (APIError, ValueError, TypeError, UnicodeError):
+            except APIError as error:
+                # Firmware reports a missing storage file as HTTP 400. Other
+                # failures leave ownership unknown and must stop writes/actions.
+                if error.http_status not in (400,404):
+                    raise
+                self._cached = None
+            except (ValueError, TypeError, UnicodeError):
                 self._cached = None
             self._read_at = self.clock()
         return self._cached
@@ -55,9 +61,9 @@ class DisplayLease:
         self._cached, self._read_at = lease, self.clock()
 
     def acquire(self, level):
-        """Take the display. Urgent items take it from another host."""
+        """Urgent items preempt lower levels; equal urgent items wait for release."""
         other = self.foreign(fresh=True)
-        if other and level != "urgent":
+        if other and (level != "urgent" or other.get('level') == 'urgent'):
             return False
         self._write(level)
         if level != "urgent" and self.foreign(fresh=True):

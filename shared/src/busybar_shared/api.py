@@ -10,7 +10,9 @@ APP_NAME = "ai-status"
 
 
 class APIError(RuntimeError):
-    pass
+    def __init__(self, message, *, http_status=None):
+        super().__init__(message)
+        self.http_status = http_status
 
 
 class AuthError(APIError):
@@ -65,7 +67,7 @@ class BusyAPI:
                 raise AuthError("BUSY token rejected; check its device scope or expiry.") from None
             if code == 409:
                 raise ConflictError("Display owned by a higher priority application.") from None
-            raise APIError(f"BUSY request failed (HTTP {code}).") from None
+            raise APIError(f"BUSY request failed (HTTP {code}).", http_status=code) from None
         except (URLError, TimeoutError, OSError):
             raise ConnectionError("BUSY cloud or device is unavailable.") from None
         except (ValueError, UnicodeError):
