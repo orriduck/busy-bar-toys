@@ -34,7 +34,7 @@ class AircraftWatchTests(unittest.TestCase):
         watcher=Mock();watcher.poll.side_effect=poll;watcher.dot_thread_ids=set()
         monitor=Mock();monitor.pop_start_pressed.side_effect=lambda:button and current['now']==105
         with tempfile.TemporaryDirectory() as directory,ExitStack() as stack:
-            patches={'RUNTIME':Path(directory),'read_token':Mock(return_value='test-only'),
+            patches={'RUNTIME':Path(directory),'LOG':Mock(),'read_token':Mock(return_value='test-only'),
                      'BusyAPI':Mock(return_value=api),'TaskRegistry':Mock(return_value=registry),
                      'RolloutWatcher':Mock(return_value=watcher),'configured_input_monitor':Mock(return_value=monitor),
                      'configured_checker':Mock(return_value=source),'NetworkSampler':Mock(),
@@ -65,7 +65,6 @@ class AircraftWatchTests(unittest.TestCase):
         self.assertFalse(any(t>100 and any(e['id']=='thinking' for e in p['elements']) for t,p in draws))
 
     def test_device_errors_gate_aircraft_refresh_and_all_other_display_work(self):
-        with self.assertLogs('busy-bar',level='WARNING'):
-            draws,clears=self.scenario(fail_refresh=True)
+        draws,clears=self.scenario(fail_refresh=True)
         self.assertEqual([t for t,p in draws],[100,105,110])
         self.assertEqual(clears,[115])

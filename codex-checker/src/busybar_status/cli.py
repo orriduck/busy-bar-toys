@@ -357,6 +357,9 @@ def main(argv=None):
     register_aircraft_commands(sub)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # HTTP request URLs contain the rounded observation point. Keep library
+    # request traces out of the service log; our diagnostics contain no URL.
+    logging.getLogger('httpx2').setLevel(logging.WARNING)
     try:
         if args.command.startswith('adsbao-'):
             from adsbao_checker.commands import run as run_aircraft_command
