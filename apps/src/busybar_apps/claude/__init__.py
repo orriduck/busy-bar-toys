@@ -1,10 +1,11 @@
-"""Claude Code agent app: hook mapping, local turns, and a spark source icon."""
-import math
+"""Claude Code agent app: hook mapping, local turns, and the Claude source icon."""
+from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops
 
 from busybar_agents.profiles import AgentProfile, register
 
+ASSETS = Path(__file__).parent / "assets"
 WAITING_NOTIFICATIONS = frozenset({"permission_prompt", "elicitation_dialog"})
 
 
@@ -21,25 +22,20 @@ HOOK_STATES = {"UserPromptSubmit": "working", "PreToolUse": "working",
                "Stop": "done", "SessionEnd": "stopped"}
 
 
-def spark_icon(size=16):
-    """An eight-ray spark, supersampled and thresholded to the pixel grid."""
-    scale = 8
-    big = Image.new("L", (size * scale, size * scale))
-    draw = ImageDraw.Draw(big)
-    center = size * scale / 2
-    for ray, length in enumerate((1.0, .72, .94, .68, 1.0, .72, .94, .68)):
-        angle = math.pi / 2 + ray * math.pi / 4
-        reach = center * .98 * length
-        half = scale * 1.1
-        cos, sin = math.cos(angle), math.sin(angle)
-        draw.polygon([(center - sin * half, center + cos * half),
-                      (center + cos * reach, center + sin * reach),
-                      (center + sin * half, center - cos * half)], fill=255)
-    draw.ellipse([center - scale * 1.6, center - scale * 1.6, center + scale * 1.6, center + scale * 1.6], fill=255)
-    mask = big.resize((size, size), Image.Resampling.BOX).point(lambda v: 255 if v > 90 else 0)
-    return Image.merge("RGB", (mask, mask, mask))
+def claude_icon(size=16):
+    with Image.open(ASSETS / "claude.png") as original:
+        red, _, blue = original.convert("RGB").split()
+        mask = ImageChops.subtract(red, blue).point(lambda value: max(0, min(255, (value - 50) * 3)))
+        bounds = mask.point(lambda value: 255 if value > 120 else 0).getbbox()
+        if bounds:
+            side = max(bounds[2]-bounds[0], bounds[3]-bounds[1]) + 6
+            cx, cy = (bounds[0]+bounds[2])/2, (bounds[1]+bounds[3])/2
+            mask = mask.crop((round(cx-side/2), round(cy-side/2),
+                              round(cx+side/2), round(cy+side/2)))
+        mask = mask.resize((size, size), Image.Resampling.LANCZOS)
+        return Image.merge("RGB", (mask, mask, mask))
 
 
-PROFILE = AgentProfile("claude", "Claude", spark_icon, HOOK_STATES,
+PROFILE = AgentProfile("claude", "Claude", claude_icon, HOOK_STATES,
                        new_turn_events=frozenset({"UserPromptSubmit"}))
 register(PROFILE)
