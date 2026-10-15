@@ -5,6 +5,9 @@ import unittest
 from busybar_agents.motion import MotionDirector
 from busybar_agents.motion_assets import bar_name
 from busybar_agents.network import NetworkRates
+from busybar_apps import load_agents
+
+load_agents()
 
 
 class Device:

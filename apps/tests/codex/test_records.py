@@ -4,7 +4,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from busybar_agents.events import TaskRegistry, RolloutWatcher, load_dot_thread_ids
+from busybar_apps import load_agents
+from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry, RolloutWatcher
+from busybar_apps.dots.orbit import load_dot_thread_ids
+
+load_agents()
 
 
 def hook(session="s", turn="t", state="working", timestamp=100, **kwargs):

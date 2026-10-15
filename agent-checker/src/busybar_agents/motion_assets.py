@@ -53,7 +53,7 @@ def build_assets():
         for reveal,count in [(False,out_count),(True,in_count)]:
             assets[fade_name(region,reveal)]=fade_asset(size,reveal=reveal,frames=count)
     for state in ('waiting','standby','error','unknown'):
-        task=SimpleNamespace(source='chatgpt',state='done' if state=='standby' else state)
+        task=SimpleNamespace(source=None,state='done' if state=='standby' else state)
         strip=render(task,0)[0].crop((0,0,4,16))
         assets[bar_name(state)]=encode_sections((4,16),{'hold':[strip]})
     return assets

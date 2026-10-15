@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock,patch
 from contextlib import ExitStack
 from busybar_service.cli import watch
-from busybar_agents.events import TaskRegistry
+from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
 from busybar_apps.adsbao.commands import mock_aircraft
 
 

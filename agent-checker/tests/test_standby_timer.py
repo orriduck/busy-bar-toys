@@ -1,5 +1,8 @@
 import unittest
 from busybar_agents.view import StandbyTimer
+from busybar_apps import load_agents
+
+load_agents()
 
 
 class StandbyTimerTests(unittest.TestCase):

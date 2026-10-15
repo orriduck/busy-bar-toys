@@ -2,6 +2,9 @@ import struct
 import unittest
 
 from busybar_agents.animation import thinking_animation,thinking_offset
+from busybar_apps import load_agents
+
+load_agents()
 
 
 class AnimationTests(unittest.TestCase):

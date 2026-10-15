@@ -3,40 +3,19 @@ from pathlib import Path
 from functools import lru_cache
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw
 from .animation import ANIMATION_FILE, thinking_offset, glow_frame, standby_glow, WIDTH, HEIGHT
 from .network import compact_rate
+from . import profiles
 from busybar_shared.graphics import clock_text, clock_font, draw_clock, tiny_text, font, fitted_text, to_xpm
 
-ASSETS = Path(__file__).parent / "assets"
 ICON_SIZE, TEXT_WIDTH = 14, 30
 ICON_X = round((72-ICON_SIZE-1-TEXT_WIDTH)/2)
 TEXT_X = ICON_X+ICON_SIZE+1
 COLORS = {"working": "#459AFF", "waiting": "#FFD84A", "done": "#52DE96",
           "error": "#FF5A65", "stopped": "#8893A4", "unknown": "#8893A4"}
 def source_icon(source, size=16):
-    if source == "dots":
-        # Five independent points: one center and four satellites, drawn on the pixel grid.
-        image = Image.new("RGB", (size, size), "black")
-        draw = ImageDraw.Draw(image)
-        scale = size / 16
-        for x, y, radius in [(7.5, 7.5, 2.5), (3, 3, 1.2), (12, 3, 1.2),
-                             (3, 12, 1.2), (12, 12, 1.2)]:
-            draw.ellipse(tuple(round(v * scale) for v in
-                              (x-radius, y-radius, x+radius, y+radius)), fill="white")
-        return image
-    with Image.open(ASSETS / "chatgpt.png") as original:
-        # Convert the official black-on-white icon into a white mask on the LED's black canvas.
-        mask = ImageOps.invert(original.convert("RGB").convert("L"))
-        # Retain the source mark's square proportions and internal negative spaces.
-        bounds = mask.point(lambda value: 255 if value > 120 else 0).getbbox()
-        if bounds:
-            side = max(bounds[2]-bounds[0], bounds[3]-bounds[1]) + 10
-            cx, cy = (bounds[0]+bounds[2])/2, (bounds[1]+bounds[3])/2
-            mask = mask.crop((round(cx-side/2), round(cy-side/2),
-                              round(cx+side/2), round(cy+side/2)))
-        mask = mask.resize((size, size), Image.Resampling.LANCZOS)
-        return Image.merge("RGB", (mask, mask, mask))
+    return profiles.profile(source).icon(size)
 
 
 def rate_label(value):
@@ -57,7 +36,7 @@ def rate_left(value):
 
 
 def render(task, now, count=1, rates=None):
-    source = task.source if task else "chatgpt"
+    source = task.source if task else None
     state = task.state if task else "idle"
     upload = rates.upload if rates else None
     download = rates.download if rates else None
@@ -84,7 +63,7 @@ def render(task, now, count=1, rates=None):
     back = Image.new("RGB", (160, 80), "black")
     draw = ImageDraw.Draw(back)
     back.paste(source_icon(source, 24), (4, 4))
-    title = "Your dot" if source == "dots" else "ChatGPT"
+    title = profiles.profile(source).title
     demo = getattr(task, "session_id", None) == "demo"
     draw.text((36, 5), title + (" DEMO" if demo else ""),
               font=font(12 if demo else 16), fill="white")
