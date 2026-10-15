@@ -1,4 +1,4 @@
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { BusyClient, allowRequest } from "../src/busy";
 import {
   encrypt,
@@ -135,4 +135,139 @@ it("global slots never create extra filenames through extension changes", () => 
     usedAt: 1,
   };
   expect(() => reserveSlots(s, [hash], new Set(), 2)).toThrow("SLOT_CAPACITY");
+});
+
+it("bootstraps a fresh namespace once and waits for the final scoped clear ACK", async () => {
+  const calls: Request[] = [];
+  let release: (response: Response) => void = () => {};
+  const finalAck = new Promise<Response>((resolve) => (release = resolve));
+  let entered: () => void = () => {};
+  const finalClearEntered = new Promise<void>((resolve) => (entered = resolve));
+  const client = new BusyClient("fake", {
+    fetch: async (request: Request) => {
+      calls.push(request);
+      if (calls.length === 1)
+        return new Response("private upstream error", { status: 400 });
+      if (calls.length === 2) return Response.json({ result: "OK" });
+      entered();
+      return finalAck;
+    },
+  } as Pick<Fetcher, "fetch">);
+  let settled = false;
+  const result = client
+    .request("DELETE", "/display/draw?application_name=busy-control")
+    .finally(() => (settled = true));
+  try {
+    await Promise.race([finalClearEntered, result]);
+    expect(calls.map((request) => request.method)).toEqual([
+      "DELETE",
+      "POST",
+      "DELETE",
+    ]);
+    expect(calls[0].url).toBe(calls[2].url);
+    expect(await calls[1].json()).toEqual({
+      application_name: "busy-control",
+      priority: 51,
+      elements: [
+        {
+          id: "control-init",
+          type: "rectangle",
+          display: "front",
+          color: "#00000000",
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+          opacity: 0,
+          timeout: 1,
+        },
+      ],
+    });
+    expect(settled).toBe(false);
+  } finally {
+    release(Response.json({ result: "OK" }));
+    await result.catch(() => {});
+  }
+  expect(await result).toEqual({ result: "OK" });
+});
+
+it("does not swallow or recursively bootstrap a failed final clear, and never logs its body", async () => {
+  const calls: string[] = [];
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const client = new BusyClient("fake", {
+    fetch: async (request: Request) => {
+      calls.push(request.method);
+      return request.method === "POST"
+        ? Response.json({ result: "OK" })
+        : new Response("private-secret-upstream-body", { status: 400 });
+    },
+  } as Pick<Fetcher, "fetch">);
+  try {
+    await expect(
+      client.request("DELETE", "/display/draw?application_name=busy-control"),
+    ).rejects.toThrow("UPSTREAM_FAILURE");
+    expect(calls).toEqual(["DELETE", "POST", "DELETE"]);
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("private-secret");
+  } finally {
+    warning.mockRestore();
+  }
+});
+
+it("reports a blocked namespace bootstrap without retrying the clear", async () => {
+  const calls: string[] = [];
+  const client = new BusyClient("fake", {
+    fetch: async (request: Request) => {
+      calls.push(request.method);
+      return new Response("private error", {
+        status: request.method === "DELETE" ? 400 : 409,
+      });
+    },
+  } as Pick<Fetcher, "fetch">);
+  await expect(
+    client.request("DELETE", "/display/draw?application_name=busy-control"),
+  ).rejects.toThrow("DEVICE_BLOCKED");
+  expect(calls).toEqual(["DELETE", "POST"]);
+});
+
+it("never bootstraps or widens a selective clear rejected with400", async () => {
+  const calls: Request[] = [];
+  const client = new BusyClient("fake", {
+    fetch: async (request: Request) => {
+      calls.push(request);
+      return new Response("private error", { status: 400 });
+    },
+  } as Pick<Fetcher, "fetch">);
+  const payload = { application_name: "busy-control", element_ids: ["mask"] };
+  await expect(
+    client.request(
+      "DELETE",
+      "/display/draw?application_name=busy-control",
+      payload,
+    ),
+  ).rejects.toThrow("UPSTREAM_FAILURE");
+  expect(calls).toHaveLength(1);
+  expect(await calls[0].json()).toEqual(payload);
+});
+
+it("fixes native cloud priority at51 and rejects legacy or arbitrary priorities", async () => {
+  const calls: Request[] = [];
+  const client = new BusyClient("fake", {
+    fetch: async (request: Request) => {
+      calls.push(request);
+      return Response.json({ result: "OK" });
+    },
+  } as Pick<Fetcher, "fetch">);
+  const payload = {
+    application_name: "busy-control",
+    priority: 51,
+    elements: [
+      { id: "text", type: "text", text: "Hi", font: "small", timeout: 1 },
+    ],
+  };
+  await client.request("POST", "/display/draw", payload);
+  for (const priority of [50, 52, 100])
+    await expect(
+      client.request("POST", "/display/draw", { ...payload, priority }),
+    ).rejects.toThrow("DEVICE_DRAW_PARAMS");
+  expect(calls).toHaveLength(1);
 });

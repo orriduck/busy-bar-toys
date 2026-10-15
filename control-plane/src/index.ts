@@ -29,7 +29,7 @@ import {
   validateElements,
   validateScene,
 } from "./model";
-import { BusyClient, NAMESPACE } from "./busy";
+import { BusyClient, NAMESPACE, NATIVE_PRIORITY } from "./busy";
 import { storeAsset, pinnedSlots, reserveSlots } from "./assets";
 import {
   base64,
@@ -1023,7 +1023,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             drawExpiresAt = drawSentAt + ttl * 1000;
             await client.request("POST", "/display/draw", {
               application_name: NAMESPACE,
-              priority: 50,
+              priority: NATIVE_PRIORITY,
               ...(current.scene.ledColor
                 ? { led_notification_color: current.scene.ledColor }
                 : {}),
@@ -1038,6 +1038,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         const currentCommand = live.commands.find((c) => c.id === cmd.id);
         if (!currentCommand) continue;
         if (failed) {
+          console.warn("Device command failed", {
+            kind: cmd.kind,
+            code:
+              failed instanceof ProtocolError ? failed.code : "UNKNOWN_FAILURE",
+          });
           tick(live, Date.now());
           live.visibleSince = null;
           live.applying = live.selected;

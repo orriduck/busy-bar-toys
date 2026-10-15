@@ -1,6 +1,7 @@
 import { ProtocolError, requireThat, record, validateElements } from "./model";
 import { boundedBody } from "./security";
 export const NAMESPACE = "busy-control";
+export const NATIVE_PRIORITY = 51;
 export const BUSY_ORIGIN = "https://api.busy.app/busybar";
 export function allowRequest(method: string, path: string) {
   requireThat(
@@ -58,6 +59,14 @@ export class BusyClient {
     path: string,
     payload?: object | Uint8Array,
   ): Promise<unknown> {
+    return this.attempt(method, path, payload, true);
+  }
+  private async attempt(
+    method: string,
+    path: string,
+    payload: object | Uint8Array | undefined,
+    bootstrapFullClear: boolean,
+  ): Promise<unknown> {
     allowRequest(method, path);
     if (method === "POST" && path === "/display/draw") {
       const b = record(payload);
@@ -71,7 +80,7 @@ export class BusyClient {
           ].includes(k),
         ) &&
           b.application_name === NAMESPACE &&
-          b.priority === 50,
+          b.priority === NATIVE_PRIORITY,
         "DEVICE_DRAW_PARAMS",
         403,
       );
@@ -175,7 +184,47 @@ export class BusyClient {
         ? this.upstream.fetch(request)
         : fetch(request));
       if (!response.ok) {
+        console.warn("BUSY request failed", {
+          method,
+          path: path.split("?")[0],
+          status: response.status,
+        });
         await response.body?.cancel();
+        if (
+          bootstrapFullClear &&
+          response.status === 400 &&
+          method === "DELETE" &&
+          path === "/display/draw?application_name=" + NAMESPACE &&
+          payload === undefined
+        ) {
+          // Real firmware rejects clearing an application that has never drawn.
+          // Establish only our namespace with a transparent, one-second widget;
+          // the original clear must then ACK before this command can succeed.
+          await this.attempt(
+            "POST",
+            "/display/draw",
+            {
+              application_name: NAMESPACE,
+              priority: NATIVE_PRIORITY,
+              elements: [
+                {
+                  id: "control-init",
+                  type: "rectangle",
+                  display: "front",
+                  color: "#00000000",
+                  x: 0,
+                  y: 0,
+                  width: 1,
+                  height: 1,
+                  opacity: 0,
+                  timeout: 1,
+                },
+              ],
+            },
+            false,
+          );
+          return await this.attempt(method, path, payload, false);
+        }
         throw new ProtocolError(
           response.status === 409
             ? "DEVICE_BLOCKED"
