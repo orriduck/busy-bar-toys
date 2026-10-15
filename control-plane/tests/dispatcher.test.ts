@@ -66,6 +66,7 @@ async function setup() {
         method: body ? "POST" : "GET",
         headers: {
           cookie,
+          "X-Busy-Device": deviceId,
           Origin: "https://control.test",
           "Content-Type": "application/json",
         },
@@ -515,4 +516,61 @@ it("does not confirm an expired renewal prefix after a late suffix retry and rec
   expect(fresh.health.status).toBe("healthy");
   expect(fresh.displaying.confirmedValidUntil).toBe(start + 167000);
   expect(count).toBe(5);
+});
+it("applies all64 changed full-publish elements in bounded chunks before confirming the new version", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  const scene = (width: number) => {
+    const elements = Array.from({ length: 64 }, (_, n) => ({
+      id: "widget-" + n,
+      type: "rectangle",
+      width,
+      height: 1,
+    }));
+    return {
+      entryDurationMs: 0,
+      commands: [
+        { offsetMs: 0, elements: elements.slice(0, 32) },
+        { offsetMs: 0, elements: elements.slice(32) },
+      ],
+    };
+  };
+  await send("/publish", {
+    ...presentation(epoch),
+    level: "urgent",
+    scene: scene(1),
+  });
+  await displayed(admin);
+  expect(
+    (
+      await send("/publish", {
+        ...presentation(epoch),
+        version: 2,
+        level: "urgent",
+        scene: scene(2),
+      })
+    ).status,
+  ).toBe(200);
+  for (let j = 0; j < 50; j++) {
+    await admin("/snapshot");
+    const pending = await runInDurableObject(
+      env.DEVICES.getByName(deviceId),
+      (_instance, ctx) => new StateStore(ctx.storage).load()!,
+    );
+    if (pending.admission[0]?.version === 2 && pending.commands.length === 0)
+      break;
+  }
+  const draws = calls.filter((c) => c.body);
+  expect(draws).toHaveLength(4);
+  for (const draw of draws.slice(2)) {
+    const elements = draw.body!.elements as { width: number }[];
+    expect(elements).toHaveLength(32);
+    expect(elements.every((e) => e.width === 2)).toBe(true);
+  }
+  const state = await runInDurableObject(
+    env.DEVICES.getByName(deviceId),
+    (_instance, ctx) => new StateStore(ctx.storage).load()!,
+  );
+  expect(state.health.status).toBe("healthy");
+  expect(state.admission[0].version).toBe(2);
+  expect(state.commands).toHaveLength(0);
 });

@@ -365,12 +365,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               refresh: true,
             });
           if (changed.length)
-            enqueue(s, {
-              generation: s.generation,
-              kind: "draw",
-              dueAt: now,
-              elements: changed,
-              refresh: true,
+            this.queueRefresh(s, changed, now, {
               itemKey: item.itemKey,
               itemVersion: item.version,
             });
@@ -723,6 +718,24 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     await this.dispatch();
     await this.arm();
   }
+  private queueRefresh(
+    s: State,
+    elements: Element[],
+    now: number,
+    metadata: Pick<Command, "itemKey" | "itemVersion" | "refreshBatch"> = {},
+  ) {
+    const batch = metadata.refreshBatch ?? s.commandSeq + 1;
+    for (let offset = 0; offset < elements.length; offset += 32)
+      enqueue(s, {
+        generation: s.generation,
+        kind: "draw",
+        dueAt: now,
+        elements: elements.slice(offset, offset + 32),
+        refresh: true,
+        ...metadata,
+        refreshBatch: batch,
+      });
+  }
   private latestElements(item: Item): Element[] {
     const latest = new Map<string, Element>();
     for (const command of item.scene.commands)
@@ -775,15 +788,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       )
         return;
       const elements = latest.filter(matches);
-      for (let offset = 0; offset < elements.length; offset += 32)
-        enqueue(s, {
-          generation: s.generation,
-          kind: "draw",
-          dueAt: now,
-          elements: elements.slice(offset, offset + 32),
-          refresh: true,
-          refreshBatch: batch,
-        });
+      this.queueRefresh(s, elements, now, { refreshBatch: batch });
     };
     renew("text", s.nextTextAt);
     renew("widgets", s.nextWidgetAt);
@@ -1144,6 +1149,18 @@ export default {
           Date.now(),
         );
         requireThat(session, "UNAUTHORIZED", 401);
+        const expectedDevice = request.headers.get("X-Busy-Device");
+        if (
+          mutation &&
+          !(path === "/api/session" && request.method === "DELETE")
+        )
+          requireThat(expectedDevice !== null, "DEVICE_BINDING_REQUIRED", 403);
+        if (expectedDevice !== null)
+          requireThat(
+            expectedDevice === session.deviceId,
+            "DEVICE_SESSION_CHANGED",
+            409,
+          );
         deviceId = session.deviceId;
         auth = {
           kind: "session",

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { createState } from "../src/model";
 import { digest, encrypt, signSession } from "../src/security";
 const origin = "https://control.test";
+const devicesByCookie = new Map<string, string>();
 async function admin() {
   const deviceId = await digest(crypto.randomUUID()),
     id = crypto.randomUUID(),
@@ -18,6 +19,7 @@ async function admin() {
     encodeURIComponent(
       await signSession({ deviceId, id, expiresAt }, env.SESSION_SIGNING_KEY),
     );
+  devicesByCookie.set(cookie, deviceId);
   return { deviceId, cookie };
 }
 async function api(
@@ -31,6 +33,9 @@ async function api(
     headers: {
       cookie,
       Origin: origin,
+      ...(devicesByCookie.has(cookie)
+        ? { "X-Busy-Device": devicesByCookie.get(cookie)! }
+        : {}),
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -172,4 +177,51 @@ it("stores cache larger than2MiB as bounded independent SQLite records", async (
       .one().size;
     expect(header).toBeLessThan(10000);
   });
+});
+it("rejects stale cross-tab expected-device binding before mutating or logging out the newly selected device", async () => {
+  const a = await admin(),
+    b = await admin();
+  for (const owner of [a, b]) {
+    const result = await api("/api/services", owner.cookie, {
+      id: "same",
+      name: "Same",
+      template: "custom",
+      expectedRevision: 0,
+    });
+    expect(result.status).toBe(201);
+    await result.arrayBuffer();
+  }
+  const write = (expected: string | undefined) =>
+    exports.default.fetch(origin + "/api/services/same", {
+      method: "PATCH",
+      headers: {
+        cookie: b.cookie,
+        Origin: origin,
+        "Content-Type": "application/json",
+        ...(expected ? { "X-Busy-Device": expected } : {}),
+      },
+      body: JSON.stringify({ expectedRevision: 1, config: { priority: 99 } }),
+    });
+  const stale = await write(a.deviceId);
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toEqual({ error: "DEVICE_SESSION_CHANGED" });
+  const missing = await write(undefined);
+  expect(missing.status).toBe(403);
+  expect(await missing.json()).toEqual({ error: "DEVICE_BINDING_REQUIRED" });
+  const unchanged = (await (await api("/api/snapshot", b.cookie)).json()) as {
+    configRevision: number;
+    services: { config: { priority: number } }[];
+  };
+  expect(unchanged.configRevision).toBe(1);
+  expect(unchanged.services[0].config.priority).toBe(50);
+  const logout = await exports.default.fetch(origin + "/api/session", {
+    method: "DELETE",
+    headers: { cookie: b.cookie, Origin: origin, "X-Busy-Device": a.deviceId },
+  });
+  expect(logout.status).toBe(409);
+  await logout.arrayBuffer();
+  expect((await api("/api/session", b.cookie)).status).toBe(200);
+  const normal = await write(b.deviceId);
+  expect(normal.status).toBe(200);
+  await normal.arrayBuffer();
 });
