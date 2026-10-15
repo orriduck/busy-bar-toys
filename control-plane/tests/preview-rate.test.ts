@@ -201,6 +201,66 @@ it("records valid heartbeat liveness at the timer boundary without trusting send
   }
 });
 
+it.each(["valid", "invalid", "revoked"] as const)(
+  "handles an accepted %s heartbeat when idle expiry runs before clock synchronization",
+  async (mode) => {
+    const nativeTimeout = globalThis.setTimeout,
+      start = Date.now(),
+      timers = new Map<number, { callback: () => void; delay: number }>();
+    let now = start,
+      nextTimer = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.stubGlobal("setTimeout", (callback: () => void, delay: number) => {
+      timers.set(++nextTimer, { callback, delay });
+      return nextTimer;
+    });
+    vi.stubGlobal("clearTimeout", (id: number) => timers.delete(id));
+    const fire = (id: number) => {
+      const timer = timers.get(id)!;
+      timers.delete(id);
+      timer.callback();
+    };
+    let s: Awaited<ReturnType<typeof setupRateRelay>> | undefined;
+    try {
+      s = await setupRateRelay();
+      const idleId = [...timers].find(([, timer]) => timer.delay === 15000)![0];
+      // A just-arrived WS heartbeat observes the old opening-event clock.
+      s.socket.send(
+        JSON.stringify(
+          mode === "invalid"
+            ? { type: "heartbeat", extra: true }
+            : { type: "heartbeat" },
+        ),
+      );
+      await new Promise((resolve) => nativeTimeout(resolve, 0));
+      if (mode === "revoked") {
+        s.state.services.bridge.config.allowPreview = false;
+        s.relay.update(s.state);
+      }
+      const syncId = [...timers].find(([, timer]) => timer.delay === 1)?.[0];
+      now = start + 15000;
+      if (timers.has(idleId)) fire(idleId);
+      expect(s.relay.status().connected).toBe(mode === "valid");
+      if (mode === "valid") {
+        expect(syncId).toBeDefined();
+        // A later clock callback must not count the same heartbeat twice.
+        now++;
+        fire(syncId!);
+        const nextIdleId = [...timers].find(
+          ([, timer]) => timer.delay === 15000,
+        )![0];
+        now = start + 30000;
+        fire(nextIdleId);
+        expect(s.relay.status().connected).toBe(false);
+      }
+    } finally {
+      await s?.close();
+      clock.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 it("disconnects abusive immediate ingress instead of accumulating a frame queue", async () => {
   const s = await setupRateRelay();
   try {

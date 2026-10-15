@@ -40,6 +40,7 @@ type Publisher = {
   frameTimer?: ReturnType<typeof setTimeout>;
   pendingFrame: PreviewFrame | null;
   lastActivity: number;
+  activityPending: boolean;
   ingressTokens: number;
   ingressAt: number;
 };
@@ -82,9 +83,7 @@ export class PreviewRelay {
     p.clockTimer = setTimeout(() => {
       p.clockTimer = undefined;
       if (this.publisher !== p) return;
-      // Validation failures disconnect and cancel this timer. A surviving
-      // publisher therefore had valid activity immediately before this I/O.
-      p.lastActivity = this.now();
+      this.now();
       this.revalidate();
     }, 1);
   }
@@ -134,12 +133,20 @@ export class PreviewRelay {
   }
   private publisherValid(p: Publisher) {
     this.authorize(p.auth);
-    requireThat(p.lastActivity + 15000 > this.now(), "PREVIEW_PUBLISHER_IDLE");
     requireThat(
       this.authority!.services[p.auth.serviceId].epoch === p.epoch,
       "EPOCH_EXPIRED",
       409,
     );
+    const now = this.now();
+    // Consume validated receipt once the server clock advances, whether the
+    // next I/O boundary is clock synchronization, idle expiry, or another request.
+    // Authority is checked first, so revoked activity cannot renew the lease.
+    if (p.activityPending && now > p.lastActivity) {
+      p.lastActivity = now;
+      p.activityPending = false;
+    }
+    requireThat(p.lastActivity + 15000 > now, "PREVIEW_PUBLISHER_IDLE");
   }
   private revalidate() {
     for (const [id, v] of this.viewers) {
@@ -217,6 +224,7 @@ export class PreviewRelay {
       tokens: 6,
       tokenAt: this.now(),
       lastActivity: this.now(),
+      activityPending: false,
       ingressTokens: 60,
       ingressAt: this.now(),
       timer: setTimeout(
@@ -314,6 +322,7 @@ export class PreviewRelay {
       Object.keys(f).length === 1
     ) {
       p.lastActivity = now;
+      p.activityPending = true;
       return;
     }
     requireThat(
@@ -338,6 +347,7 @@ export class PreviewRelay {
     requireThat(Number(f.sequence) > p.sequence, "PREVIEW_SEQUENCE", 409);
     p.sequence = Number(f.sequence);
     p.lastActivity = now;
+    p.activityPending = true;
     requireThat(this.viewers.size > 0, "PREVIEW_NO_DEMAND");
     // The input budget permits one second of network coalescing. Forwarding
     // remains thirty/s with six-frame jitter and exactly one pending latest frame.
