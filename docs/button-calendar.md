@@ -22,9 +22,11 @@ The user subsequently selected Wi-Fi. The observer now supports a private `input
 
 The Wi-Fi investigation discovered the exact device through the official SDK's mDNS discovery. Its advertised address matched the live cloud Wi-Fi status, but direct TCP/HTTP timed out and Chrome reported `ERR_ADDRESS_UNREACHABLE`. This does not establish the cause; client isolation, routing, or another local network condition still needs investigation. No Wi-Fi password, access mode, router settings, macOS permissions or account settings were changed.
 
-The deployed service has now been configured for Wi-Fi, with its dedicated local access token stored and read back successfully from Keychain. The private configuration contains only `addr` and has mode 0600. Live status confirms cloud connected, service running, and `button_input.transport=wifi`, while `button_input.connected=false` / `error=unavailable` confirms the remaining connectivity failure. The full suite now passes 100 local tests. A scan of all tracked/candidate files against both actual credentials found no credential leakage.
+The service was configured for Wi-Fi, with its dedicated local access token stored and read back successfully from Keychain. The private configuration contains only `addr` and has mode 0600. At that check, cloud drawing worked, but `button_input.connected=false` / `error=unavailable` confirmed that local input remained unavailable.
 
-[Ten-second automatic return to the native calendar](standby-timeout.md) has passed separate actual-device acceptance and does not depend on the pending button stream.
+**Latest check, 2026-10-14:** the user confirmed that the Mac uses 5 GHz and the Bar uses 2.4 GHz. Direct local TCP subsequently succeeded. The running observer now reports `button_input.connected=true`, an empty error, and `button_input.transport=wifi`. This flag requires a valid decoded device stream; a saved address alone cannot set it. No router or Wi-Fi settings were changed. The differing radio bands are not preventing this observed connection. Physical Start/Pause acceptance remains pending because the user is not available to press it now.
+
+[Ten-second automatic return to the native calendar](standby-timeout.md) has passed separate actual-device acceptance and does not depend on the local button stream.
 
 ![Original calendar and explicitly labeled device state demos](images/actual-standby-states.png)
 

@@ -8,6 +8,9 @@ from .animation import ANIMATION_FILE, thinking_offset, glow_frame, standby_glow
 from .network import compact_rate
 
 ASSETS = Path(__file__).parent / "assets"
+ICON_SIZE, TEXT_WIDTH = 14, 30
+ICON_X = round((72-ICON_SIZE-1-TEXT_WIDTH)/2)
+TEXT_X = ICON_X+ICON_SIZE+1
 COLORS = {"working": "#459AFF", "waiting": "#FFD84A", "done": "#52DE96",
           "error": "#FF5A65", "stopped": "#8893A4", "unknown": "#8893A4"}
 GLYPHS = {
@@ -106,6 +109,16 @@ def rate_label(value):
     return compact[:-1] + " " + unit
 
 
+def total_rate_text(rates):
+    if rates is None or rates.upload is None or rates.download is None:
+        return '--'
+    return compact_rate(rates.upload+rates.download)
+
+
+def rate_left(value):
+    return TEXT_X+(TEXT_WIDTH-(10+len(value)*4-1))//2
+
+
 def render(task, now, count=1, rates=None):
     source = task.source if task else "chatgpt"
     state = task.state if task else "idle"
@@ -114,18 +127,14 @@ def render(task, now, count=1, rates=None):
     front = Image.new("RGB", (72, 16), "black")
     # Center on the full display, like the native calendar. The status light
     # is an edge overlay and must not push the main content to the right.
-    icon_size, text_width, gap = 14, 30, 1
-    icon_x = round((front.width-icon_size-gap-text_width)/2)
-    text_x = icon_x+icon_size+gap
-    front.paste(source_icon(source, icon_size), (icon_x, 1))
+    front.paste(source_icon(source, ICON_SIZE), (ICON_X, 1))
     draw = ImageDraw.Draw(front)
     value = clock_text(now)
     clock_width = round(clock_font().getlength(value))
-    draw_clock(draw, (text_x + (text_width-clock_width)//2, 1), value)
-    total = compact_rate(upload+download if upload is not None and download is not None else None)
+    draw_clock(draw, (TEXT_X + (TEXT_WIDTH-clock_width)//2, 1), value)
+    total = total_rate_text(rates)
     # Two activity indicators and a single aggregate rate fit under the clock.
-    line_width = 10 + len(total)*4-1
-    left = text_x + (text_width-line_width)//2
+    left = rate_left(total)
     tiny_text(draw, (left, 10), "↑", "#FFBE45" if upload is not None and upload>0 else "#303030")
     tiny_text(draw, (left+4, 10), "↓", "#45D7FF" if download is not None and download>0 else "#303030")
     tiny_text(draw, (left+10, 10), total, "#505050")

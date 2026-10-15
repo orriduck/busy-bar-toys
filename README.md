@@ -49,6 +49,32 @@ Updates from an old turn do not restore it.
 Start/Pause also restores the calendar when the local button connection is available.
 Automatic return does not need this connection.
 
+## Display transitions
+
+The display fades in when a new task starts.
+The light fades out before its color changes.
+It then fades in with the new color.
+An icon change uses the same sequence.
+The clock stays visible during these changes.
+
+Changed digits roll upward.
+A change of network unit fades the complete rate field.
+Repeated values do not restart an effect.
+The device plays the animation frames from stored files.
+
+Standby remains visible for ten seconds after its entrance effect.
+The display then fades out and returns to the device calendar.
+
+See the [transition settings and device captures](docs/motion.md).
+
+To use static lights and direct display changes, install with this option:
+
+```sh
+.venv/bin/busy-bar install --reduced-motion
+```
+
+Run `install` without this option to restore motion effects.
+
 ## Requirements
 
 - macOS.
@@ -250,6 +276,15 @@ Show a five-second demo:
 .venv/bin/busy-bar demo --source dots --state waiting --seconds 5
 ```
 
+Show an 18-second transition demo:
+
+```sh
+.venv/bin/busy-bar motion-demo --seconds 18
+```
+
+This demo uses example clock values and network rates.
+It does not change the device clock.
+
 Start the observer after the demo:
 
 ```sh
@@ -295,6 +330,7 @@ Run the tests:
 Device checks used firmware 1.2.4 and API 27.5.0 on 2026-10-14.
 See the [layout checks](docs/centered-glow.md), [button checks](docs/button-calendar.md),
 [standby timeout check](docs/standby-timeout.md), and [compact display check](docs/compact-standby.md).
+See the [motion check](docs/motion.md) for transition captures.
 
 ## References
 

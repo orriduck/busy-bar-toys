@@ -22,6 +22,7 @@ from .animation import ANIMATION_FILE, thinking_animation
 from .network import NetworkSampler, NetworkRates
 from .view import ViewMode, StandbyTimer
 from .device_input import configured_input_monitor, read_input_status
+from .motion import MotionDirector
 
 LABEL = "app.busybar.ai-status"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
@@ -35,7 +36,7 @@ def _service(action, *, check=False):
     return subprocess.run(args, capture_output=True, text=True, check=check)
 
 
-def install():
+def install(*, reduced_motion=False):
     read_token()  # Fail before changing any service files if credentials aren't ready.
     RUNTIME.mkdir(mode=0o700, parents=True, exist_ok=True)
     RUNTIME.chmod(0o700)
@@ -52,6 +53,8 @@ def install():
         "StandardOutPath": str(logs / "service.log"),
         "StandardErrorPath": str(logs / "service.log"),
     }
+    if reduced_motion:
+        config['ProgramArguments'].append('--reduced-motion')
     _service("bootout")
     PLIST.write_bytes(plistlib.dumps(config))
     PLIST.chmod(0o600)
@@ -105,8 +108,10 @@ def watch(args):
     backoff = 5
     owned = False
     last_state = None
-    animation_uploaded = False
     network = NetworkSampler()
+    rates = None
+    next_sample = 0
+    motion = MotionDirector(client, reduced=getattr(args, 'reduced_motion', False))
     view = ViewMode(RUNTIME / "view.json")
     standby_timer = StandbyTimer()
     monitor = configured_input_monitor(RUNTIME)
@@ -156,29 +161,34 @@ def watch(args):
                 LOG.info("State: %s", task.state if task else "idle")
                 last_state = signature
                 next_draw = min(next_draw, now)
-            if now >= next_draw:
+            if now >= next_draw or motion.due:
                 try:
-                    if allowed:
-                        rates = network.sample()
-                        if task and task.state == "working" and not animation_uploaded:
-                            client.upload_asset(ANIMATION_FILE, thinking_animation())
-                            animation_uploaded = True
-                        drawn = client.draw(make_payload(task, now, registry.active_count(now), rates))
-                        owned = drawn or owned
-                        if drawn and standby:
-                            standby_timer.shown(time.monotonic())
-                    elif owned:
-                        client.clear()
-                        owned = False
+                    if now >= next_draw:
+                        if allowed:
+                            sample_tick = time.monotonic()
+                            if sample_tick >= next_sample:
+                                rates = network.sample()
+                                next_sample = sample_tick + 5
+                            motion.show(task, now, registry.active_count(now), rates)
+                        elif motion.visible:
+                            motion.hide()
+                        next_draw = now + 5
+                    if motion.due:
+                        motion.advance()
+                    owned = motion.visible
                     backoff = 5
                 except AuthError:
                     LOG.error("Authentication stopped the observer. Check Keychain and reinstall to resume.")
                     return 0  # No automatic authentication retry storm in launchd.
                 except (ConnectionError, APIError):
+                    owned = motion.visible
+                    motion.cancel()
                     LOG.warning("Device unavailable; retry in %s seconds.", backoff)
+                    next_draw = now + backoff
                     backoff = min(backoff * 2, 60)
-                next_draw = now + backoff
-            time.sleep(0.25)
+            if allowed and standby and motion.standby_visible:
+                standby_timer.shown(time.monotonic())
+            time.sleep(0.05 if motion.pending else 0.25)
     finally:
         monitor.stop()
         monitor.write_status(RUNTIME / "input-status.json")
@@ -231,6 +241,32 @@ def demo(args):
         client.clear()
 
 
+def motion_demo(args):
+    """Show a finite DEMO with synthetic clock and rate changes."""
+    client=BusyAPI(read_token())
+    motion=MotionDirector(client,reduced=args.reduced_motion)
+    sequence=[('working','chatgpt',1024,2048),('working','chatgpt',2048,4096),
+              ('waiting','chatgpt',0,6144),('working','dots',12288,24576),
+              ('error','dots',1024**2,256*1024),('done','chatgpt',0,0)]
+    try:
+        motion.prepare()
+        started=time.monotonic();wall=time.time();previous=-1
+        while time.monotonic()-started<args.seconds:
+            phase=min(5,int((time.monotonic()-started)*6/args.seconds))
+            if phase!=previous:
+                state,source,up,down=sequence[phase]
+                task=Task('demo',str(phase),source,'DEMO',state,wall,wall)
+                motion.show(task,wall+phase*60,1,NetworkRates(up,down,'DEMO'))
+                previous=phase
+            motion.advance()
+            time.sleep(.05)
+        motion.hide()
+        while motion.pending:
+            motion.advance();time.sleep(.05)
+    finally:
+        client.clear()
+
+
 def capture(args):
     client = BusyAPI(read_token())
     out = Path(args.output)
@@ -246,7 +282,10 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     observe = sub.add_parser("watch", help="Watch local Codex lifecycle events")
     observe.add_argument("--dot-thread", action="append", default=[], help="Explicit dots identity override; never fabricates status")
-    for name in ("status", "install", "uninstall", "clear", "token-set", "input-wifi"):
+    observe.add_argument("--reduced-motion", action="store_true", help="Use static lights and direct display changes")
+    setup = sub.add_parser('install')
+    setup.add_argument('--reduced-motion', action='store_true', help='Install the service without motion effects')
+    for name in ("status", "uninstall", "clear", "token-set", "input-wifi"):
         sub.add_parser(name)
     for name in ("preview", "capture"):
         command = sub.add_parser(name)
@@ -255,6 +294,9 @@ def main(argv=None):
     command.add_argument("--source", choices=("chatgpt", "dots"), default="chatgpt")
     command.add_argument("--state", choices=("working", "waiting", "done", "error", "stopped"), default="working")
     command.add_argument("--seconds", type=int, choices=range(1,61), default=5, metavar="1..60")
+    command=sub.add_parser('motion-demo',help='Show finite DEMO transitions with synthetic clock and rates')
+    command.add_argument('--seconds',type=int,choices=range(6,31),default=18,metavar='6..30')
+    command.add_argument('--reduced-motion',action='store_true')
     command = sub.add_parser("emit", help="Emit a real lifecycle state from an external tool")
     command.add_argument("state", choices=("working", "waiting", "done", "error", "stopped"))
     command.add_argument("--source", choices=("chatgpt", "dots"), default="chatgpt")
@@ -267,11 +309,12 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         if args.command == "watch": return watch(args)
-        if args.command == "install": return install()
+        if args.command == "install": return install(reduced_motion=args.reduced_motion)
         if args.command == "uninstall": return uninstall()
         if args.command == "preview": return preview(args)
         if args.command == "capture": return capture(args)
         if args.command == "demo": return demo(args)
+        if args.command == 'motion-demo': return motion_demo(args)
         if args.command == "clear": return BusyAPI(read_token()).clear() and 0
         if args.command == "input-wifi":
             from .credentials import INPUT_HELPER

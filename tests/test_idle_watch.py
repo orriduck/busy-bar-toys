@@ -24,7 +24,7 @@ class IdleWatchTests(unittest.TestCase):
                 sampler.return_value.sample.return_value=None
                 monitor.return_value.pop_start_pressed.return_value=False
                 with self.assertRaises(KeyboardInterrupt):
-                    watch(SimpleNamespace(dot_thread=[]))
+                    watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
             self.assertEqual(api.draw.call_count,1)
             payload=api.draw.call_args.args[0]
             self.assertEqual(payload['application_name'],'ai-status')
@@ -63,7 +63,7 @@ class ButtonWatchTests(unittest.TestCase):
                 monitor.return_value.pop_start_pressed.side_effect=[False,True,False,False]
                 sampler.return_value.sample.return_value=None
                 with self.assertRaises(KeyboardInterrupt):
-                    watch(SimpleNamespace(dot_thread=[]))
+                    watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
             self.assertEqual(api.draw.call_count,2)
             self.assertEqual(api.clear.call_count,2)
 
@@ -96,7 +96,7 @@ class ButtonWatchTests(unittest.TestCase):
                 monitor.return_value.pop_start_pressed.side_effect=[False,True,False,False]
                 sampler.return_value.sample.return_value=None
                 with self.assertRaises(KeyboardInterrupt):
-                    watch(SimpleNamespace(dot_thread=[]))
+                    watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
             self.assertEqual(api.draw.call_count,2)
             self.assertEqual(api.clear.call_count,2)
             monitor.return_value.start.assert_called_once()
@@ -137,6 +137,66 @@ class StandbyWatchTests(unittest.TestCase):
                 monitor.return_value.pop_start_pressed.return_value=False
                 sampler.return_value.sample.return_value=None
                 with self.assertRaises(KeyboardInterrupt):
-                    watch(SimpleNamespace(dot_thread=[]))
+                    watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
             self.assertEqual(draws,[100,101,107,117])
             self.assertEqual(clears,[111,117])
+
+class MotionWatchTests(unittest.TestCase):
+    def test_real_motion_controller_keeps_timer_and_next_turn_semantics(self):
+        from busybar_status.events import TaskRegistry
+        registry=TaskRegistry();current={'now':100}
+        times=iter([100,100.5,101,101.3,101.6,111.59,111.61,111.9,112,113])
+        def wall_time():
+            current['now']=next(times);return current['now']
+        def poll(now):
+            if now in (100,101,113):
+                registry.ingest({'session_id':'one','turn_id':'new' if now==113 else 'old',
+                                 'state':'done' if now==101 else 'working','timestamp':now},now)
+        with tempfile.TemporaryDirectory() as directory:
+            api=Mock();draws=[];clears=[]
+            api.draw.side_effect=lambda payload:draws.append((current['now'],payload)) or True
+            api.clear.side_effect=lambda:clears.append(current['now'])
+            watcher=Mock();watcher.poll.side_effect=poll
+            with patch('busybar_status.cli.RUNTIME',Path(directory)), \
+                 patch('busybar_status.cli.read_token',return_value='test-only'), \
+                 patch('busybar_status.cli.BusyAPI',return_value=api), \
+                 patch('busybar_status.cli.TaskRegistry',return_value=registry), \
+                 patch('busybar_status.cli.RolloutWatcher',return_value=watcher), \
+                 patch('busybar_status.cli.configured_input_monitor') as monitor, \
+                 patch('busybar_status.cli.NetworkSampler') as sampler, \
+                 patch('busybar_status.cli.load_dot_thread_ids',return_value=set()), \
+                 patch('busybar_status.cli.read_spool',return_value=[]), \
+                 patch('busybar_status.cli.time.time',side_effect=wall_time), \
+                 patch('busybar_status.cli.time.monotonic',side_effect=lambda:current['now']), \
+                 patch('busybar_status.cli.time.sleep',side_effect=[None]*9+[KeyboardInterrupt]), \
+                 patch('busybar_status.cli.signal.signal'):
+                watcher.dot_thread_ids=set()
+                monitor.return_value.pop_start_pressed.return_value=False
+                sampler.return_value.sample.return_value=None
+                with self.assertRaises(KeyboardInterrupt):watch(SimpleNamespace(dot_thread=[]))
+            self.assertEqual(clears,[111.9,113])
+            self.assertEqual(sampler.return_value.sample.call_count,2)
+            self.assertTrue(any(t==101 and [e['id'] for e in p['elements']]==['motion-bar']
+                                for t,p in draws))
+            self.assertTrue(any(t==113 and any(e['id']=='motion-view' for e in p['elements'])
+                                for t,p in draws))
+
+    def test_asset_auth_failure_stops_the_observer_without_a_retry(self):
+        from busybar_status.api import AuthError
+        with tempfile.TemporaryDirectory() as directory:
+            api=Mock();api.upload_asset.side_effect=AuthError('rejected')
+            with patch('busybar_status.cli.RUNTIME',Path(directory)), \
+                 patch('busybar_status.cli.read_token',return_value='test-only'), \
+                 patch('busybar_status.cli.BusyAPI',return_value=api), \
+                 patch('busybar_status.cli.RolloutWatcher'), \
+                 patch('busybar_status.cli.configured_input_monitor') as monitor, \
+                 patch('busybar_status.cli.NetworkSampler'), \
+                 patch('busybar_status.cli.load_dot_thread_ids',return_value=set()), \
+                 patch('busybar_status.cli.read_spool',return_value=[]), \
+                 patch('busybar_status.cli.signal.signal'), \
+                 self.assertLogs('busy-bar',level='ERROR'):
+                monitor.return_value.pop_start_pressed.return_value=False
+                self.assertEqual(watch(SimpleNamespace(dot_thread=[])),0)
+            self.assertEqual(api.upload_asset.call_count,1)
+            api.draw.assert_not_called()
+            monitor.return_value.stop.assert_called_once()
