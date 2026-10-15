@@ -69,8 +69,8 @@
       "name": "datadog",
       "frames": 423,
       "seconds": 14.1,
-      "gif_bytes": 648514,
-      "mp4_bytes": 96388
+      "gif_bytes": 651803,
+      "mp4_bytes": 96864
     },
     {
       "name": "jira",
@@ -111,8 +111,8 @@
       "name": "shared-display",
       "frames": 212,
       "seconds": 7.066666666666666,
-      "gif_bytes": 354788,
-      "mp4_bytes": 48295
+      "gif_bytes": 358733,
+      "mp4_bytes": 48403
     }
   ]
 }

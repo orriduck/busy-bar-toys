@@ -1,6 +1,6 @@
 """Clearly labeled sample notifications for demonstrations and previews."""
 from busybar_notifier.badge import badge
-from busybar_notifier.model import Notification
+from busybar_notifier.model import URGENT_COLOR, Notification
 from . import calendar, credentials, datadog, github, jira, metaflow, terminal
 from .adsbao.commands import mock_aircraft
 from .adsbao.display import notification as aircraft
@@ -9,7 +9,7 @@ from .adsbao.display import notification as aircraft
 def samples():
     def item(id, level, module, brand, title, detail, accent):
         return Notification(f"sample:{id}", level, module.__name__.rsplit(".", 1)[-1], brand, title, detail,
-                            accent=accent, icon=badge(module.GLYPH, module.COLOR))
+                            accent=accent, icon=badge(module.GLYPH, URGENT_COLOR if level == "urgent" else module.COLOR))
 
     amber = (229, 165, 10)
     return [

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from busybar_apps import notifier_sources
 from busybar_apps import calendar, credentials, datadog, github, jira, metaflow, terminal
+from busybar_notifier.model import URGENT_COLOR
 from busybar_shared.command import CommandError
 
 
@@ -54,6 +55,7 @@ class SourceTests(unittest.TestCase):
             source = datadog.sources({"team": "team-a", "monitors": False}, self.root, refresh=refreshed.append)[0]
             items = source.poll(0)
             self.assertEqual([(i.id, i.level, i.title, i.detail) for i in items], [("page:p1", "urgent", "PAGED!", "#7 Lagging")])
+            self.assertEqual(items[0].icon.getpixel((1, 1)), URGENT_COLOR)
             items[0].primary()
         run.assert_called_once_with(["pup", "api", "-X", "POST", "v2/on-call/pages/p1/acknowledge"])
         self.assertEqual(refreshed, ["datadog-pages"])
@@ -63,6 +65,7 @@ class SourceTests(unittest.TestCase):
         with patch.object(datadog, "run_json", Recorder([(["pup", "monitors"], monitors)])) as recorder:
             items = datadog.sources({"team": "team-a"}, self.root, refresh=None)[1].poll(0)
         self.assertEqual([i.detail for i in items], ["orders-api: Latency is high", "Plain name"])
+        self.assertEqual(items[0].icon.getpixel((1, 1)), datadog.COLOR)
         self.assertIn("team:team-a,env:prod", recorder.calls[0])
 
     def test_github_team_prs_start_with_a_baseline_then_alert_once(self):

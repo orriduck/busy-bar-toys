@@ -2,7 +2,7 @@
 import re
 
 from busybar_notifier.badge import badge
-from busybar_notifier.model import Notification
+from busybar_notifier.model import URGENT_COLOR, Notification
 from busybar_notifier.source import Source
 from busybar_shared.command import run, run_json
 
@@ -26,11 +26,11 @@ def pages_source(config, refresh):
         pages = _pup(["on-call", "pages", "list", "--team", team, "--read-only", "--page-size", "20"])
         return [Notification(f"page:{p['id']}", "urgent", "datadog", "DATADOG", "PAGED!",
                              f"#{p['attributes'].get('key', '')} {p['attributes'].get('title', '')}".strip(),
-                             accent=(255, 90, 101), icon=badge(GLYPH, COLOR),
+                             accent=(255, 90, 101), icon=badge(GLYPH, URGENT_COLOR),
                              primary=lambda page_id=p["id"]: acknowledge(page_id))
                 for p in pages if p.get("attributes", {}).get("status") == "triggered"]
 
-    return Source("datadog-pages", "datadog", 30, "state", poll, icon=badge(GLYPH, COLOR))
+    return Source("datadog-pages", "datadog", 30, "state", poll, icon=badge(GLYPH, URGENT_COLOR))
 
 
 def monitors_source(config):
