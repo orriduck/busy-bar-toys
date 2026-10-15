@@ -4,7 +4,7 @@
 
 Cloud mode sends local agent states and notifications to the control plane. The control plane owns the device display, queue, grouping, snooze, and calendar return. Source tools and their credentials stay on the Mac. The default mode remains `standalone`.
 
-The shared cloud preview accepts synthetic data only. Use your private production origin for real collectors. Mock acceptance does not prove physical display behavior. No production deployment or device migration is part of these steps.
+Use the [production management page](https://busy-bar-control-plane.orriduck.workers.dev) for real collectors. The shared cloud preview accepts synthetic data only. Mock acceptance does not prove physical display behavior. These steps configure and migrate one Mac; repeat them with a separate service registration on each Mac.
 
 ## 1. Prepare the client
 

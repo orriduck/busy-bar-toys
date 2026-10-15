@@ -4,7 +4,7 @@ Baseline: main@93e0688. Worktree has its own editable Python environment; baseli
 
 ## Local verification
 
-2026-10-15: 280 Python tests and 49 Worker/UI tests pass. TypeScript, Vite build, production dry-run and both preview dry-runs pass. The new Swift helper compiles; it was not invoked against Keychain. CLI help and local Markdown links were checked. Python 3.10 CI exposed a fixture clock shared with logging; the observer/motion test clocks are now isolated. A regression forces the older logging behavior on newer Python. The runtime matrix is checked in GitHub CI.
+2026-10-15: 280 Python tests and 59 Worker/UI tests pass. TypeScript, Vite build, production dry-run and both preview dry-runs pass. The new Swift helper compiles; it was not invoked against Keychain. CLI help and local Markdown links were checked. Python 3.10 CI exposed a fixture clock shared with logging; the observer/motion test clocks are now isolated. A regression forces the older logging behavior on newer Python. The runtime matrix is checked in GitHub CI.
 
 Backend, Python and UI spec/quality reviews passed after focused fixes. Regressions include bounded64-element batches, actual TTL expiry, clear-only ACK coverage, transient masks and recovery scenes, session/device fences, fail-closed collector setup mode, interrupted actions, expired urgent fallback, sleep/clock changes, aircraft rearm, partial HTTP bodies, asset eviction/concurrent LRU, revoked input grants and urgent recognition before rendering.
 
@@ -27,6 +27,12 @@ After the user completed Cloudflare authorization, deployed [the isolated previe
 
 Remote HTTPS login, Secure session, SQLite persistence across redeployment, two-page SSE policy synchronization, a synthetic action with running/succeeded results, urgent handoff, group expansion and pause were verified. After closing both management pages, the source fixture continued; the timed group ended, Codex resumed, and the paused flight stayed paused. This confirms browser-independent operation with a live synthetic source; it does not simulate every source being offline. The Python client's explicit application User-Agent was verified against the hosted endpoint after the default urllib marker received403.
 
-## Separate production release checks
+## Real production rollout
 
-Production deployment and real-device migration remain pending. No real BUSY token rotation or launchd reinstall was performed. Both Macs must be prepared before revoking old direct-writer tokens. Preserve the old checkout/Keychain identities until a reviewed migration is possible. Mock API acknowledgment does not verify firmware pixels, native animation timing or OS notification permission. Full abrupt-process crash acceptance remains separate; persisted uncertain intent reconstruction and actual acknowledged-object eviction are covered locally.
+2026-10-15: the user requested real-device operation and explicitly left the second Mac running for later registration. Deployed `wrangler.jsonc` at [the production origin](https://busy-bar-control-plane.orriduck.workers.dev). It has a fresh SQLite namespace and secret bindings, no mock upstream and the exact HTTPS `PUBLIC_ORIGIN`. The existing device token authenticated successfully. Separate agent/notifier publisher credentials were saved in this Mac's Keychain; only its agent service has the input capability. No other Mac token was revoked.
+
+Real firmware rejected a clear on the fresh namespace with400. A transparent1px bootstrap draw at50 was blocked by the legacy observer; the same bounded draw at51 succeeded and the subsequent scoped clear succeeded. The backend now performs this full-clear-only recovery and requires the final clear ACK. Selective clears cannot widen their scope. The entire sequence shares an8s deadline and checks generation before every write. Ten regressions cover this native boundary and the independent quality review passed.
+
+Foreground production collectors returned healthy, API-confirmed agent ownership. Actual front/back framebuffers were decoded and visually inspected: ChatGPT icon, clock and network rates are visible, replacing the other Mac's legacy Claude view. These private device captures remain ignored local artifacts; the committed management screenshot is still synthetic. No physical button press, real aircraft passage or OS notification acceptance is claimed in this rollout.
+
+Register the other Mac before retiring its direct-writer token. Until then it remains an independent legacy writer; higher-priority legacy/native apps can block cloud drawing. Full abrupt-process crash acceptance remains separate; persisted uncertain intent reconstruction and actual acknowledged-object eviction are covered locally.

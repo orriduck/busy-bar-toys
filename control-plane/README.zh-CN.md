@@ -6,7 +6,9 @@
 
 Cloudflare 后端负责调度和写屏。Mac 负责采集 Codex、Your dot 与通知，向后端发送完整画面。关闭浏览器后，云端仍可继续调度。
 
-**真实 Bar 和原有后台服务尚未迁移。** 本地演示与云端预览使用模拟 BUSY API，不能控制真实设备。生产部署仍待完成。
+打开[正式管理页](https://busy-bar-control-plane.orriduck.workers.dev)，使用设备级 BUSY API token 登录。生产环境调用真实 BUSY cloud API，存储和 secret bindings 均与预览隔离。
+
+本地演示和共享云端预览使用模拟 BUSY API，不能控制真实设备。`demo-token` 仅用于预览。
 
 ![管理演示：分组队列与服务设置](../docs/images/control-plane-management.jpg)
 
@@ -95,9 +97,9 @@ npm run dry-run
 
 `wrangler secret put NAME` 从标准输入读取值，并会创建部署版本。密钥不能进入命令参数、Git 或日志。
 
-设备迁移前，先准备好两台 Mac。给后端新建设备级 cloud token。将本地直连写屏服务改为独立发布凭证，再撤销旧直连 cloud token，并验证旧凭证失败。只删 Keychain 条目不等于撤销。撤销 cloud token 不影响 USB 或本地 Wi-Fi 访问。
+完整迁移时，先准备好所有 Mac。给后端新建设备级 cloud token。将本地直连写屏服务改为独立发布凭证，再撤销旧直连 cloud token，并验证旧凭证失败。只删 Keychain 条目不等于撤销。撤销 cloud token 不影响 USB 或本地 Wi-Fi 访问。
 
-目前只部署了隔离的预览。生产部署、设备 token 轮换与 Mac 迁移仍是独立的发布步骤。
+可以分批迁移 Mac。在旧 Mac 注册到新后端前，保留它正在使用的 token。云端命名空间使用原生优先级 51，高于旧普通显示的 50。更高优先级的设备应用仍可能阻挡云端绘制。所有 Mac 迁移并撤销旧直写 token 后，才算完成直写收口。
 
 ## 存储与故障规则
 

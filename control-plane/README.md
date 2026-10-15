@@ -6,7 +6,9 @@ Manage one BUSY Bar from a browser. Register display services. Set their priorit
 
 The Cloudflare backend schedules the queue and writes the display. A local Mac collects Codex, Your dot and notification data. It sends complete scenes to the backend. Closing the browser does not stop cloud scheduling.
 
-**The real Bar and its existing service have not been migrated.** Both the local demo and cloud preview use a simulated BUSY API. They cannot control a real device. Production deployment remains pending.
+Open the [production management page](https://busy-bar-control-plane.orriduck.workers.dev) and sign in with your device-scoped BUSY API token. Production uses the real BUSY cloud API. It has separate storage and secret bindings from the preview.
+
+The local demo and shared cloud preview use a simulated BUSY API. They cannot control a real device. Use `demo-token` only with the preview.
 
 ![Management demo with a grouped queue and service settings](../docs/images/control-plane-management.jpg)
 
@@ -82,7 +84,7 @@ Run the Python suite from the repository root:
 
 Local tests do not verify real firmware visuals, animation timing, production availability or two-Mac migration. Acknowledged-command eviction is tested directly. Uncertain-command recovery is tested by reconstructing the object over saved SQLite intent. A full abrupt-process failure remains a separate acceptance check.
 
-## Prepare a future deployment
+## Deploy your own backend
 
 The production configuration has no mock upstream binding. It uses the fixed BUSY cloud API origin. Do not deploy the demo configuration or copy its public fixture secrets.
 
@@ -95,9 +97,9 @@ The production configuration has no mock upstream binding. It uses the fixed BUS
 
 `wrangler secret put NAME` reads its value from stdin. It creates a deployed version. Keep secret values out of arguments, Git and logs.
 
-For a device migration, first prepare both Macs. Create a new device-scoped cloud token for the backend. Replace local direct writers with scoped publishers. Then revoke old direct-writer cloud tokens and verify they fail. Deleting a Keychain item alone does not revoke a token. Cloud token revocation does not disable USB or local Wi-Fi access.
+For a complete migration, first prepare every Mac. Create a new device-scoped cloud token for the backend. Replace local direct writers with scoped publishers. Then revoke old direct-writer cloud tokens and verify they fail. Deleting a Keychain item alone does not revoke a token. Cloud token revocation does not disable USB or local Wi-Fi access.
 
-Only the isolated preview has been deployed. Production deployment, device-token rotation and Mac migration remain separate release steps.
+A staged migration can leave an older Mac running until it is registered. Do not revoke its token during that stage. The cloud namespace uses native priority 51, above the old normal display at 50. A higher-priority native application can still block cloud drawing. Full removal of direct writers requires migrating the remaining Macs and revoking their old cloud tokens.
 
 ## Storage and failure rules
 
