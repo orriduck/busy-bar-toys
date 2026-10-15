@@ -6,7 +6,7 @@ from adsbao_checker import display
 
 
 class FlightTypeTests(unittest.TestCase):
-    def test_brand_holds_half_a_second_before_flipping_to_the_flight(self):
+    def test_brand_holds_half_a_second_before_rolling_to_the_flight(self):
         plane=mock_aircraft();total=display.ENTRANCE_FRAMES
         first=display.ICON_ENTER_FRAMES-1
         last=display.ICON_ENTER_FRAMES+display.BRAND_HOLD_FRAMES-1
@@ -17,6 +17,22 @@ class FlightTypeTests(unittest.TestCase):
         self.assertNotEqual(frames[last].tobytes(),frames[-1].tobytes())
         self.assertEqual(frames[-1].tobytes(),display.render(plane)[0].tobytes())
         self.assertLess(len(display.entrance_asset(plane)),255*1024)
+
+    def test_character_layers_preserve_short_and_compressed_bold_titles(self):
+        from PIL import ImageChops
+        for text in ('ADSBAO','JBU462','WWWW8888','AAL7'):
+            layers=display.title_layers(text,41)
+            result=Image.new('RGB',(41,7))
+            for layer in layers:result=ImageChops.lighter(result,layer)
+            expected=Image.new('RGB',(41,7));expected.paste(display.title_image(text,41),(0,0))
+            self.assertEqual(result.tobytes(),expected.tobytes(),text)
+
+    def test_detail_line_contains_only_aircraft_type(self):
+        from dataclasses import replace
+        plane=mock_aircraft()
+        a=display.render(plane)[0]
+        b=display.render(replace(plane,distance=plane.distance*2))[0]
+        self.assertEqual(a.tobytes(),b.tobytes(),'Distance must not affect the front display')
 
     def test_flight_identity_uses_the_native_bold_seven_pixel_glyphs(self):
         title=getattr(display,'title_image',None)

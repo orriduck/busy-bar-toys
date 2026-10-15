@@ -3,6 +3,7 @@ import unittest
 from adsbao_checker.traffic import parse_envelope
 from adsbao_checker.proximity import EncounterTracker
 from adsbao_checker.presenter import AircraftPresenter
+from adsbao_checker.display import ENTRANCE_SECONDS
 from test_proximity import envelope
 from types import SimpleNamespace
 
@@ -24,10 +25,11 @@ class PresenterTests(unittest.TestCase):
     def test_ten_visible_seconds_then_fade_and_yield_to_coordinator(self):
         self.assertTrue(self.presenter.start(self.plane,demo=True))
         self.assertTrue(self.presenter.active)
-        self.clock[0]=111.19;self.assertFalse(self.presenter.advance())
-        self.clock[0]=111.21;self.assertFalse(self.presenter.advance())
+        end=100+ENTRANCE_SECONDS+10
+        self.clock[0]=end-.01;self.assertFalse(self.presenter.advance())
+        self.clock[0]=end+.01;self.assertFalse(self.presenter.advance())
         self.assertEqual(self.presenter.phase,'exit')
-        self.clock[0]=111.5;self.assertTrue(self.presenter.advance())
+        self.clock[0]=end+.3;self.assertTrue(self.presenter.advance())
         self.assertFalse(self.presenter.active)
         self.assertEqual(self.api.clears,0)
         last=self.api.draws[-1]['elements']

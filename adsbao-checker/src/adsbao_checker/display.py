@@ -2,25 +2,41 @@
 from PIL import Image,ImageDraw
 from functools import lru_cache
 from busybar_shared.graphics import tiny_text,fitted_text,to_xpm,clock_font,draw_clock
-from busybar_shared.native import FPS,encode_sections,smooth,settle,split_flap_frame
+from busybar_shared.native import FPS,encode_sections,smooth,settle,staggered_roll_frame
 from .proximity import MILE
 
 JADE=(100,220,179)
 ICON_ENTER_FRAMES=9
 BRAND_HOLD_FRAMES=15
-FLIP_FRAMES=12
-ENTRANCE_FRAMES=ICON_ENTER_FRAMES+BRAND_HOLD_FRAMES+FLIP_FRAMES
+CHARACTER_ROLL_FRAMES=15
+CHARACTER_DELAY_FRAMES=2
+TITLE_ROLL_FRAMES=CHARACTER_ROLL_FRAMES+7*CHARACTER_DELAY_FRAMES
+ENTRANCE_FRAMES=ICON_ENTER_FRAMES+BRAND_HOLD_FRAMES+TITLE_ROLL_FRAMES
 ENTRANCE_SECONDS=ENTRANCE_FRAMES/FPS
 
 
-@lru_cache(maxsize=64)
-def title_image(title):
+@lru_cache(maxsize=128)
+def title_image(title,max_width=55):
     width=max(1,round(clock_font().getlength(title)))
     image=Image.new('RGB',(width,7))
     draw_clock(ImageDraw.Draw(image),(0,0),title)
     if bounds:=image.getbbox():image=image.crop((0,0,bounds[2],7))
-    if image.width>55:image=image.resize((55,7),Image.Resampling.BOX)
+    if image.width>max_width:image=image.resize((max_width,7),Image.Resampling.BOX)
     return image
+
+
+@lru_cache(maxsize=128)
+def title_layers(title,width):
+    """Partition the exact fitted title at its native character boundaries."""
+    raw=title_image(title,255);fitted=title_image(title,width)
+    scale=fitted.width/raw.width
+    boundaries=[min(fitted.width,round(round(clock_font().getlength(title[:i]))*scale))
+                for i in range(len(title))]+[fitted.width]
+    layers=[]
+    for left,right in zip(boundaries,boundaries[1:]):
+        layer=Image.new('RGB',(width,7))
+        layer.paste(fitted.crop((left,0,right,7)),(left,0));layers.append(layer)
+    return tuple(layers)
 
 
 def aircraft_icon():
@@ -35,21 +51,17 @@ def render(nearby,*,progress=1,demo=False):
     plane=nearby.aircraft
     title=plane.identity[:8]
     heading=title_image(title)
-    detail=f'{nearby.distance/MILE:.1f}MI'+(' '+plane.kind if plane.kind else '')
-    detail=detail[:11]
+    detail=(plane.kind or '')[:11]
     text_width=max(heading.width,len(detail)*4-1)
     left=(72-(16+1+text_width))//2;tx=left+17
     step=max(0,min(1,progress))*(ENTRANCE_FRAMES-1)
     entering=min(1,step/(ICON_ENTER_FRAMES-1))
-    flip=max(0,min(1,(step-(ICON_ENTER_FRAMES+BRAND_HOLD_FRAMES-1))/FLIP_FRAMES))
+    rolling=step-(ICON_ENTER_FRAMES+BRAND_HOLD_FRAMES-1)
     p=settle(entering)
     front=Image.new('RGB',(72,16),'black');draw=ImageDraw.Draw(front)
-    brand=title_image('ADSBAO')
-    if brand.width>text_width:brand=brand.resize((text_width,7),Image.Resampling.BOX)
-    old,new=Image.new('RGB',(text_width,7)),Image.new('RGB',(text_width,7))
-    old.paste(brand,(0,0));new.paste(heading,(0,0))
-    flipped=split_flap_frame(old,new,flip).point(lambda value:round(value*p))
-    front.paste(flipped,(tx,1))
+    rolled=staggered_roll_frame(title_layers('ADSBAO',text_width),title_layers(title,text_width),
+                               rolling,duration=CHARACTER_ROLL_FRAMES,delay=CHARACTER_DELAY_FRAMES)
+    front.paste(rolled.point(lambda value:round(value*p)),(tx,1))
     tiny_text(draw,(tx,10),detail,tuple(round(c*smooth(entering)) for c in JADE))
     x=round(-17+(left+17)*p)
     if p<1:

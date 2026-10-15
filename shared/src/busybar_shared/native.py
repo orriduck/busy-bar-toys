@@ -2,7 +2,7 @@
 from functools import lru_cache
 import math
 import struct
-from PIL import Image
+from PIL import Image,ImageChops
 
 FPS=30
 
@@ -64,33 +64,22 @@ def roll_frame(previous,target,t):
                            resample=Image.Resampling.BICUBIC)
 
 
-def split_flap_frame(previous,target,t):
-    """Two hinged halves: old upper closes, then the new lower falls into place."""
-    if previous.size!=target.size or previous.mode!=target.mode:
-        raise ValueError('Flap faces must have matching dimensions and modes')
-    t=max(0,min(1,t))
-    if t==0:return previous.copy()
-    if t==1:return target.copy()
-    width,height=target.size;hinge=height//2
-    image=previous.copy()
-    image.paste(target.crop((0,0,width,hinge)),(0,0))
-    if t<.5:
-        # The old upper face folds toward the horizontal hinge.
-        angle=smooth(t*2)*math.pi/2
-        extent=max(1,round(hinge*math.cos(angle)))
-        face=previous.crop((0,0,width,hinge)).resize((width,extent),Image.Resampling.BOX)
-        face=face.point(lambda value:round(value*(1-.6*math.sin(angle))))
-        image.paste(face,(0,hinge-extent))
-    else:
-        # The new lower face unfolds over the previous lower face.
-        angle=smooth((t-.5)*2)*math.pi/2
-        extent=max(1,round((height-hinge)*math.sin(angle)))
-        face=target.crop((0,hinge,width,height)).resize((width,extent),Image.Resampling.BOX)
-        face=face.point(lambda value:round(value*(.4+.6*math.sin(angle))))
-        image.paste(face,(0,hinge))
-    # The hinge is visible only during the flip; settled letters retain Bold7.
-    image.paste((0,0,0),(0,hinge,width,hinge+1))
-    return image
+def staggered_roll_frame(previous,target,frame,*,duration=15,delay=2):
+    """Roll character layers in order with the same damping as numeric glyphs."""
+    if duration<=0 or delay<0 or not (previous or target):
+        raise ValueError('A staggered roll needs layers and valid timing')
+    sample=(previous or target)[0]
+    layers=tuple(previous)+tuple(target)
+    if any(layer.size!=sample.size or layer.mode!=sample.mode for layer in layers):
+        raise ValueError('Character layers must have matching dimensions and modes')
+    blank=Image.new(sample.mode,sample.size)
+    result=blank.copy()
+    for i in range(max(len(previous),len(target))):
+        old=previous[i] if i<len(previous) else blank
+        new=target[i] if i<len(target) else blank
+        rolled=roll_frame(old,new,(frame-i*delay)/duration)
+        result=ImageChops.lighter(result,rolled)
+    return result
 
 
 @lru_cache(maxsize=16)

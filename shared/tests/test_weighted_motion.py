@@ -4,17 +4,21 @@ from busybar_shared import native
 
 
 class WeightedMotionTests(unittest.TestCase):
-    def test_split_flap_changes_upper_then_lower_with_exact_settled_faces(self):
-        old=Image.new('RGB',(7,7),'red');new=Image.new('RGB',(7,7),'blue')
-        self.assertEqual(native.split_flap_frame(old,new,0).tobytes(),old.tobytes())
-        self.assertEqual(native.split_flap_frame(old,new,1).tobytes(),new.tobytes())
-        closing=native.split_flap_frame(old,new,.4)
-        opening=native.split_flap_frame(old,new,.7)
-        self.assertEqual(closing.getpixel((0,0)),(0,0,255))
-        self.assertEqual(closing.getpixel((0,6)),(255,0,0))
-        self.assertEqual(opening.getpixel((0,0)),(0,0,255))
-        self.assertGreater(opening.getpixel((0,4))[2],0)
-        self.assertEqual(opening.getpixel((0,3)),(0,0,0))
+    def test_staggered_roll_reuses_digit_sampler_and_delays_later_characters(self):
+        old=[];new=[]
+        for x in (0,4,8):
+            a=Image.new('RGB',(12,7));a.paste('white',(x,0,x+3,2));old.append(a)
+            b=Image.new('RGB',(12,7));b.paste('white',(x,5,x+3,7));new.append(b)
+        result=native.staggered_roll_frame(old,new,1,duration=15,delay=2)
+        self.assertEqual(result.crop((0,0,4,7)).tobytes(),
+                         native.roll_frame(old[0],new[0],1/15).crop((0,0,4,7)).tobytes())
+        for i in (1,2):
+            self.assertEqual(result.crop((i*4,0,i*4+4,7)).tobytes(),
+                             old[i].crop((i*4,0,i*4+4,7)).tobytes())
+        settled=native.staggered_roll_frame(old,new,19,duration=15,delay=2)
+        for i in range(3):
+            self.assertEqual(settled.crop((i*4,0,i*4+4,7)).tobytes(),
+                             new[i].crop((i*4,0,i*4+4,7)).tobytes())
 
     def test_damped_progress_accelerates_then_settles_without_overshoot(self):
         curve=getattr(native,'settle',None)

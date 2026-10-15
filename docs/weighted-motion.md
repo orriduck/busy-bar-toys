@@ -16,10 +16,12 @@ version. Fractional pixel coverage removes whole-row stepping.
 The first and last frames contain the exact original glyphs.
 
 The aircraft uses the same progress curve for its horizontal movement.
-It enters in 300 ms. The title holds `ADSBAO` for 500 ms, then flips to the flight
-identity in 400 ms. The shared split-flap sampler closes the old upper half,
-then opens the new lower half. A dark hinge and shaded moving face show the turn.
-The complete introduction takes 1.2 seconds. The ten-second hold starts afterward.
+It enters in 300 ms. The title holds `ADSBAO` for 500 ms, then rolls to the flight
+identity one character at a time. Each character uses the same 500 ms damped
+sampler as the clock digits. Adjacent characters start two frames apart (67 ms).
+The full introduction takes about 1.77 seconds, including eight character slots.
+The lower line shows only the aircraft type. It is blank when no type is known.
+The ten-second hold starts after the introduction.
 Reduced-motion mode keeps static glyphs and a static aircraft.
 
 The thinking light uses a quintic position curve for each stroke.
@@ -35,19 +37,19 @@ The following files are software renderings of the production assets.
 They show the 30 fps frame sequence without cloud delays.
 
 - [Codex transitions and blue light](images/weighted-motion-preview.gif).
-- [ADSBAO split-flap entrance](images/split-flap-flight-preview.gif).
+- [ADSBAO staggered character entrance](images/staggered-flight-preview.gif).
 
-The latest actual-device mock capture contains 60 framebuffer samples.
-Visual inspection confirmed the brand, both flip phases, bold identity, glyph
+The latest actual-device mock capture contains 59 framebuffer samples.
+Visual inspection confirmed the brand, staggered character rolls, bold identity, glyph
 changes, light states, Codex restoration, and native calendar restoration.
 Captured introduction frames match the generated native frames exactly.
 After the final title appears, all matching hold samples remain on that final
 frame, including after the five-second display refresh.
 The demo uses synthetic flight, clock, and rate values; its back display says DEMO.
 
-![Actual device mock samples](images/actual-split-flap-motion.gif)
+![Actual device mock samples](images/actual-staggered-motion.gif)
 
-![Actual brand, flip, and stable flight identity](images/actual-split-flap-intro.png)
+![Actual brand, rolling characters, and stable flight identity](images/actual-staggered-intro.png)
 
 Cloud sampling is about two frames per second.
 It does not measure native playback frame rate or resolve every easing frame.
@@ -56,16 +58,16 @@ Cloud transport can add a pause between fade-out and the next display update.
 
 ## Validation
 
-All 164 local tests passed.
+All 166 local tests passed.
 New checks cover damping, monotonic progress, exact glyph endpoints,
 fractional coverage, endpoint speed, smooth reversal, native bold letters,
 and the widest eight-character identity.
 Existing checks cover native file limits, display ownership, static mode,
 button dismissal, retry delays, and restoration.
 
-Changed assets use `motion-v3`, `thinking-v5`, and `adsbao-entry-v3` names.
+Changed assets use `motion-v3`, `thinking-v5`, and `adsbao-entry-v4` names.
 This prevents a running native player from keeping the old asset source.
-The clock atlas is 205,437 bytes. The aircraft introduction is 124,636 bytes.
+The clock atlas is 205,437 bytes. The aircraft introduction is 183,456 bytes.
 Both fit the 255 KiB file limit.
 
 Firmware initially selects a looping default range when it loads a new file.

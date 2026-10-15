@@ -25,7 +25,7 @@ class AircraftPresenter:
     def start(self,nearby,*,demo=False):
         if self.active:return False
         self._sequence+=1
-        path=f'adsbao-entry-v3-{self._sequence%2}.anim'
+        path=f'adsbao-entry-v4-{self._sequence%2}.anim'
         if not self.reduced:
             self._prepare();self.client.upload_asset(path,entrance_asset(nearby))
         if not self.client.draw(payload(nearby,demo=demo,reduced=self.reduced,path=path)):return False

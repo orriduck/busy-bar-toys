@@ -14,7 +14,7 @@ class AircraftWatchTests(unittest.TestCase):
     def scenario(self,button=False,fail_refresh=False):
         registry=TaskRegistry();current={'now':100}
         ticks=([100,105,105.25,105.5,110,110.25,111,115] if fail_refresh else
-               [100,100.5,105,110.39,110.41,110.7,111.3,112])
+               [100,100.5,105,110.39,111.8,112.1,112.5,113])
         times=iter(ticks)
         def wall():current['now']=next(times);return current['now']
         def poll(now):
@@ -57,7 +57,7 @@ class AircraftWatchTests(unittest.TestCase):
         restored=[(t,p) for t,p in bodies if t>110.5]
         self.assertTrue(restored)
         self.assertTrue(any('waiting' in e.get('path','') for e in restored[0][1]['elements']))
-        self.assertEqual(clears,[112])
+        self.assertEqual(clears,[113])
 
     def test_button_dismissal_returns_to_calendar_and_blocks_old_turn(self):
         draws,clears=self.scenario(button=True)
