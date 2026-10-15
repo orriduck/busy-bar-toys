@@ -139,3 +139,10 @@ class MotionTests(unittest.TestCase):
         self.assertTrue(self.motion.due)
         self.motion.advance()
         self.assertEqual(self.motion.current.state,'waiting')
+
+    def test_overlay_reentry_resets_all_interrupted_region_masks(self):
+        self.show('working');self.show('waiting')
+        self.motion.invalidate()
+        self.show('working')
+        ids={e['id'] for e in self.api.draws[-1]['elements']}
+        self.assertTrue({'motion-view','motion-bar','motion-icon','motion-rate'}<=ids)

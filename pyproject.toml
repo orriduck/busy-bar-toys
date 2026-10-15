@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "busy-bar-status"
 version = "0.1.0"
-description = "A BUSY Bar status light for local Codex tasks and Your dot events"
+description = "BUSY Bar checkers for local Codex tasks and nearby ADSBao aircraft"
 requires-python = ">=3.10"
-dependencies = ["Pillow>=10.1,<13", "busylib==2.6.0", "websockets>=15,<18"]
+dependencies = ["Pillow>=10.1,<13", "busylib==2.6.0", "websockets>=15,<18", "httpx2>=2,<3"]
 
 [project.scripts]
 busy-bar = "busybar_status.cli:main"

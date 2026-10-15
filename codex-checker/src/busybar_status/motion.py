@@ -99,7 +99,10 @@ class MotionDirector:
                          loop=True,await_previous_end=target.state=='working')
             strip.pop('data',None)
             payload['elements']+=self._rolls(target,regions)
-            payload['elements']+=[self._mask(region,True) for region in regions]
+            # A different checker may interrupt an outgoing local mask. Reset
+            # every region on full re-entry so no old opaque mask can survive.
+            masks=list(REGIONS) if 'view' in regions else regions
+            payload['elements']+=[self._mask(region,True) for region in masks]
         if not self.client.draw(payload):return False
         self.current=target;self.visible=True
         self._lease_until=self.clock()+15
@@ -170,3 +173,7 @@ class MotionDirector:
 
     def cancel(self):
         self._phase=None;self.target=None;self._regions=[]
+
+    def invalidate(self):
+        """Another checker replaced our widgets; use a fresh entrance next time."""
+        self.cancel();self.current=None;self.visible=False;self._settles_at=0;self._lease_until=0

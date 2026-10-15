@@ -23,6 +23,8 @@ from .network import NetworkSampler, NetworkRates
 from .view import ViewMode, StandbyTimer
 from busybar_shared.device_input import configured_input_monitor, read_input_status
 from .motion import MotionDirector
+from adsbao_checker.checker import configured_checker
+from adsbao_checker.presenter import AircraftPresenter
 
 LABEL = "app.busybar.ai-status"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
@@ -38,6 +40,9 @@ def _service(action, *, check=False):
 
 def install(*, reduced_motion=False):
     read_token()  # Fail before changing any service files if credentials aren't ready.
+    from adsbao_checker.checker import read_config as read_aircraft_config
+    if sys.platform == 'darwin' and read_aircraft_config(RUNTIME):
+        subprocess.run([sys.executable, str(REPO / 'scripts/build-location-helper.py')], check=True)
     RUNTIME.mkdir(mode=0o700, parents=True, exist_ok=True)
     RUNTIME.chmod(0o700)
     logs = Path.home() / "Library/Logs/BusyBarAI"
@@ -116,8 +121,17 @@ def watch(args):
     standby_timer = StandbyTimer()
     monitor = configured_input_monitor(RUNTIME)
     last_input_status = 0
+    aircraft = configured_checker(RUNTIME, REPO)
+    plane = AircraftPresenter(client, reduced=getattr(args, 'reduced_motion', False)) if aircraft else None
+    last_aircraft_poll = 0
+    candidate = None
+    alert_retry = 0
+    dismiss_plane = False
+    device_retry_at = 0
     try:
         monitor.start()
+        if aircraft:
+            aircraft.start()
         while not stopping:
             now = time.time()
             if now - last_dot_refresh >= 60:
@@ -139,11 +153,12 @@ def watch(args):
             was_calendar = view.calendar
             if monitor.pop_start_pressed():
                 view.dismiss(known_turns)
+                dismiss_plane = bool(plane and plane.active)
                 LOG.info("View: calendar")
                 next_draw = min(next_draw, now)
             allowed = view.allows(turns, known_turns=known_turns)
             standby = task is None or task.state in {"done", "stopped"}
-            if not allowed or not standby:
+            if not allowed or not standby or (plane and plane.active):
                 standby_timer.reset()
             elif standby_timer.expired(time.monotonic()):
                 view.dismiss(known_turns)
@@ -155,15 +170,44 @@ def watch(args):
                 if not view.calendar: LOG.info("View: codex")
             if now-last_input_status >= 5:
                 monitor.write_status(RUNTIME / "input-status.json")
+                if aircraft:
+                    try: aircraft.write_status(active=plane.active)
+                    except OSError: LOG.warning("Could not save aircraft diagnostics.")
                 last_input_status = now
+            if aircraft and now-last_aircraft_poll >= 1:
+                try: candidate = aircraft.poll(now)
+                except (OSError, ValueError):
+                    candidate = None
+                    LOG.warning("Aircraft observation unavailable.")
+                last_aircraft_poll = now
             signature = (task.session_id, task.turn_id, task.state) if task else None
             if signature != last_state:
                 LOG.info("State: %s", task.state if task else "idle")
                 last_state = signature
                 next_draw = min(next_draw, now)
-            if now >= next_draw or motion.due:
+            needs_display = now >= next_draw or motion.due or (plane and plane.active) or (candidate and time.monotonic() >= alert_retry)
+            if needs_display and time.monotonic() >= device_retry_at:
                 try:
-                    if now >= next_draw:
+                    if plane and not plane.active and candidate and time.monotonic() >= alert_retry:
+                        if plane.start(candidate):
+                            owned = True
+                            motion.invalidate()
+                            standby_timer.reset()
+                            try: aircraft.mark_alerted(candidate, now)
+                            except OSError: LOG.warning("Could not save aircraft encounter metadata.")
+                        candidate = None
+                        alert_retry = time.monotonic() + 5
+                    if plane and plane.active:
+                        if dismiss_plane:
+                            plane.dismiss()
+                            dismiss_plane = False
+                        if plane.advance():
+                            motion.invalidate()
+                            next_draw = now
+                            if not allowed:
+                                client.clear()
+                                owned = False
+                    if (not plane or not plane.active) and now >= next_draw:
                         if allowed:
                             sample_tick = time.monotonic()
                             if sample_tick >= next_sample:
@@ -173,23 +217,27 @@ def watch(args):
                         elif motion.visible:
                             motion.hide()
                         next_draw = now + 5
-                    if motion.due:
+                    if (not plane or not plane.active) and motion.due:
                         motion.advance()
-                    owned = motion.visible
+                    owned = motion.visible or bool(plane and plane.active) or owned
                     backoff = 5
+                    device_retry_at = 0
                 except AuthError:
                     LOG.error("Authentication stopped the observer. Check Keychain and reinstall to resume.")
                     return 0  # No automatic authentication retry storm in launchd.
                 except (ConnectionError, APIError):
-                    owned = motion.visible
+                    owned = motion.visible or bool(plane and plane.active) or owned
                     motion.cancel()
                     LOG.warning("Device unavailable; retry in %s seconds.", backoff)
+                    device_retry_at = time.monotonic() + backoff
                     next_draw = now + backoff
                     backoff = min(backoff * 2, 60)
-            if allowed and standby and motion.standby_visible:
+            if allowed and standby and motion.standby_visible and not (plane and plane.active):
                 standby_timer.shown(time.monotonic())
             time.sleep(0.05 if motion.pending else 0.25)
     finally:
+        if aircraft:
+            aircraft.stop()
         monitor.stop()
         monitor.write_status(RUNTIME / "input-status.json")
         if owned:
@@ -305,9 +353,14 @@ def main(argv=None):
     command.add_argument("--project", default="AI task")
     command = sub.add_parser("hook", help="Consume structured hook JSON on stdin")
     command.add_argument("--source", choices=("chatgpt", "dots"), default="chatgpt")
+    from adsbao_checker.commands import register as register_aircraft_commands
+    register_aircraft_commands(sub)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.command.startswith('adsbao-'):
+            from adsbao_checker.commands import run as run_aircraft_command
+            return run_aircraft_command(args, RUNTIME, REPO)
         if args.command == "watch": return watch(args)
         if args.command == "install": return install(reduced_motion=args.reduced_motion)
         if args.command == "uninstall": return uninstall()
@@ -327,11 +380,13 @@ def main(argv=None):
         if args.command == "status":
             state = BusyAPI(read_token()).status()
             service = _service("print")
+            from adsbao_checker.checker import read_status as read_aircraft_status
             print(json.dumps({"connected": True, "firmware": state.get("firmware", {}).get("version"),
                               "api": state.get("system", {}).get("api_semver"),
                               "service_loaded": service.returncode == 0,
                               "service_running": "state = running" in service.stdout,
                               "view": "calendar" if ViewMode(RUNTIME / "view.json").calendar else "codex",
+                              "adsbao": read_aircraft_status(RUNTIME),
                               "button_input": read_input_status(RUNTIME / "input-status.json")
                                   if "state = running" in service.stdout else {"connected": False}}, indent=2))
         elif args.command == "token-set":

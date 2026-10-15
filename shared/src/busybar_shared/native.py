@@ -50,5 +50,3 @@ def fade_asset(size, *, reveal, frames):
         alpha=round(255*((1-progress) if reveal else progress))
         images.append(Image.new('RGBA',size,(0,0,0,alpha)))
     return encode_sections(size,{'fade':images},rgba=True)
-
-
