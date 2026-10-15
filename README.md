@@ -2,20 +2,22 @@
 
 把 AI 的工作状态放到桌面的 BUSY Bar 上。
 
-普通 ChatGPT/Codex 任务显示 ChatGPT 图标；Your dot 使用原创五点图标。监控期间，前屏保留纽约时间（24 小时制、自动夏令时），右侧显示任务状态，下方显示耗时和并行任务数；背屏显示时钟、项目文件夹名与任务详情。
+普通 ChatGPT/Codex 任务显示 ChatGPT 图标；Your dot 使用原创五点图标。前屏使用与 BUSY 原生时钟相同的点阵字体，显示纽约时间（24 小时制、自动夏令时），下方灰字显示 `↑ 上行`、`↓ 下行`。前后屏都不显示 WORK / WAIT 等状态文字，空闲时继续显示时钟和网速。背屏标明上下行的完整单位。
 
 思考指示条在底部左右往复，由设备原生动画以 30 fps 播放，一次完整往返约 3.1 秒。时钟与状态仍每 5 秒刷新，不需要用频繁的云端绘图驱动动画。
 
-![当前时间与 Codex 任务同时显示](docs/images/actual-clock.png)
+![原生点阵时钟与实时上下行网速](docs/images/actual-network.png)
 
 | 状态 | 前屏 | 含义 |
 |---|---|---|
-| working | 蓝色 WORK | 任务正在执行 |
-| waiting | 橙色 WAIT | 任务正在等待输入或权限 |
-| done | 绿色 DONE | 本轮结束，12 秒后让出屏幕 |
-| error | 红色 ERROR | 收到任务级错误事件 |
-| stopped | 灰色 STOP | 用户中断了本轮任务 |
-| unknown | 灰色 CHECK | 30 分钟没有收到新事件，不推断已完成 |
+| working | 蓝色往复条 | 任务正在执行 |
+| waiting | 橙色静止条 | 任务正在等待输入或权限 |
+| done | 绿色静止条 | 本轮结束，12 秒后恢复空闲时钟 |
+| error | 红色静止条 | 收到任务级错误事件 |
+| stopped | 灰色静止条 | 用户中断了本轮任务 |
+| unknown | 灰色静止条 | 30 分钟没有收到新事件，不推断已完成 |
+
+网速来自**运行后台程序的这台 Mac 的默认网络接口**，每 5 秒按实际字节计数差更新，不发起测速下载。前屏 B/K/M/G 分别简写 B/s、KiB/s、MiB/s、GiB/s。首次采样、网络切换、计数重置或读数失败时显示 `--`，有效采样后恢复。网速不是 BUSY Bar 本身的流量或网络带宽上限。
 
 ## 目前能自动跟踪什么
 
@@ -123,7 +125,7 @@ swiftc scripts/store-token.swift -o .venv/bin/busy-token-store
 
 接口核查：2026-10-14，BUSY Bar 固件 1.2.4 / API 27.5.0。
 
-验收记录：[初版](docs/verification.md)、[时钟与往复动画](docs/clock-and-animation.md)。
+验收记录：[初版](docs/verification.md)、[时钟与往复动画](docs/clock-and-animation.md)、[原生时钟与网速](docs/clock-and-network.md)。
 
 - [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api)
 - [固件 1.2.4 OpenAPI](https://api.busy.app/busybar/openapi.yaml?Name=1.2.4)

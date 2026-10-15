@@ -1,0 +1,5 @@
+BUSY Bold 7 pixel font, firmware tag 1.2.4.
+Source: https://github.com/busy-app/busybar-firmware/blob/1.2.4/assets/shared/fonts/ttf/busy_bold_7px.ttf
+Font license: SIL Open Font License 1.1; see OFL-1.1.txt.
+License declaration: https://github.com/busy-app/busybar-firmware/blob/1.2.4/LICENSE.md
+Original font unmodified. Rendered at size 16 to obtain its native 6x7 glyphs.

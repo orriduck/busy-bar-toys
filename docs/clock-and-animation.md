@@ -1,5 +1,7 @@
 # Clock and thinking animation — 2026-10-14
 
+Historical first clock layout. The subsequent [clock/network update](clock-and-network.md) replaces elapsed/state labels with network speeds and the original BUSY clock font.
+
 User request: move the thinking animation back and forth and keep the wall clock visible while monitoring Codex.
 
 Front layout: source icon at x=0, fixed white HH:MM at x=20, colored task state at x=52, elapsed minutes/concurrent count below, a 52×1 animation strip at y=15. Back layout: source, current time, state, project and elapsed time. Clock uses America/New_York in 24-hour form, including daylight saving time. Status changes do not hide or recolor it.

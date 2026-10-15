@@ -19,6 +19,7 @@ from .events import Task, TaskRegistry, RolloutWatcher, load_dot_thread_ids
 from .runtime import RUNTIME, SPOOL, hook_event, write_event, read_spool
 from .frames import decode_frame
 from .animation import ANIMATION_FILE, thinking_animation
+from .network import NetworkSampler, NetworkRates
 
 LABEL = "app.busybar.ai-status"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
@@ -103,6 +104,7 @@ def watch(args):
     owned = False
     last_state = None
     animation_uploaded = False
+    network = NetworkSampler()
     try:
         while not stopping:
             now = time.time()
@@ -127,14 +129,11 @@ def watch(args):
                 next_draw = min(next_draw, now)
             if now >= next_draw:
                 try:
-                    if task:
-                        if task.state == "working" and not animation_uploaded:
-                            client.upload_asset(ANIMATION_FILE, thinking_animation())
-                            animation_uploaded = True
-                        owned = client.draw(make_payload(task, now, registry.active_count(now))) or owned
-                    elif owned:
-                        client.clear()
-                        owned = False
+                    rates = network.sample()
+                    if task and task.state == "working" and not animation_uploaded:
+                        client.upload_asset(ANIMATION_FILE, thinking_animation())
+                        animation_uploaded = True
+                    owned = client.draw(make_payload(task, now, registry.active_count(now), rates)) or owned
                     backoff = 5
                 except AuthError:
                     LOG.error("Authentication stopped the observer. Check Keychain and reinstall to resume.")
@@ -161,7 +160,7 @@ def preview(args):
     for source in ("chatgpt", "dots"):
         for state in ("working", "waiting", "done", "error"):
             task = Task("preview", "preview", source, "busy-bar", state, now-125, now)
-            front, back = render(task, now, 2)
+            front, back = render(task, now, 2, NetworkRates(1536, 850*1024, "preview"))
             front.save(out / f"{source}-{state}-front.png")
             back.save(out / f"{source}-{state}-back.png")
             card = Image.new("RGB", (600, 230), "#11151D")
@@ -179,13 +178,14 @@ def preview(args):
 def demo(args):
     client = BusyAPI(read_token())
     started = time.time()
+    network = NetworkSampler()
     task = Task("demo", "demo", args.source, "DEMO", args.state, started, started)
     try:
         if task.state == "working":
             client.upload_asset(ANIMATION_FILE, thinking_animation())
         end = started + args.seconds
         while time.time() < end:
-            if not client.draw(make_payload(task, time.time(), 1)):
+            if not client.draw(make_payload(task, time.time(), 1, network.sample())):
                 print("Display suppressed by focus mode.")
                 return 0
             time.sleep(min(5, max(0, end-time.time())))

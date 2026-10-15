@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from busybar_status.display import render, make_payload, to_xpm, clock_text, thinking_offset
 from datetime import datetime, timezone
+from busybar_status.network import NetworkRates
 
 
 class DisplayTests(unittest.TestCase):
@@ -55,6 +56,43 @@ class DisplayTests(unittest.TestCase):
         clock = work.crop((20,1,49,8))
         self.assertEqual(clock.tobytes(), wait.crop((20,1,49,8)).tobytes())
         self.assertIsNotNone(clock.getbbox())
+
+    def test_front_dedicates_both_rows_to_clock_and_gray_network_rates(self):
+        now = 100
+        slow = NetworkRates(123,456,'en0')
+        fast = NetworkRates(4096,8192,'en0')
+        front, _ = render(self.task(),now,1,slow)
+        updated, _ = render(self.task(),now,1,fast)
+        self.assertEqual(front.crop((20,0,72,9)).tobytes(),
+                         updated.crop((20,0,72,9)).tobytes())
+        self.assertNotEqual(front.crop((20,9,72,14)).tobytes(),
+                            updated.crop((20,9,72,14)).tobytes())
+        raw=front.crop((20,0,72,14)).tobytes()
+        pixels=zip(raw[0::3],raw[1::3],raw[2::3])
+        self.assertTrue(all(r==g==b for r,g,b in pixels))
+        self.assertIn(80,raw)
+
+    def test_state_words_are_removed_from_both_screens(self):
+        work, back = render(self.task(),100,1)
+        wait, waiting_back = render(self.task(state='waiting'),100,1)
+        self.assertEqual(work.crop((0,0,72,15)).tobytes(),
+                         wait.crop((0,0,72,15)).tobytes())
+        self.assertEqual(back.tobytes(),waiting_back.tobytes())
+
+    def test_idle_keeps_clock_and_network_without_a_working_animation(self):
+        front, back=render(None,100,0,NetworkRates(100,200,'en0'))
+        self.assertIsNotNone(front.crop((20,0,72,14)).getbbox())
+        self.assertIsNotNone(back.getbbox())
+        payload=make_payload(None,100,0)
+        self.assertTrue(all(e['type']!='animation' for e in payload['elements']))
+
+    def test_demo_remains_identifiable_after_removing_project_and_state_text(self):
+        task=self.task()
+        normal=render(task,100)[1]
+        task.session_id='demo'
+        demo=render(task,100)[1]
+        self.assertNotEqual(normal.crop((0,0,145,29)).tobytes(),
+                            demo.crop((0,0,145,29)).tobytes())
 
     def test_thinking_moves_out_and_back_without_teleporting(self):
         # 92 frames at 30fps: left -> right -> left, no endpoint hold.

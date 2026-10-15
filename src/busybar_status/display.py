@@ -1,15 +1,15 @@
 """Render compact bitmaps locally; the device receives ASCII XPM2 only."""
 from pathlib import Path
+from functools import lru_cache
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from .animation import ANIMATION_FILE, thinking_offset
+from .network import compact_rate
 
 ASSETS = Path(__file__).parent / "assets"
 COLORS = {"working": "#459AFF", "waiting": "#FFBE45", "done": "#52DE96",
           "error": "#FF5A65", "stopped": "#8893A4", "unknown": "#8893A4"}
-LABELS = {"working": "WORK", "waiting": "WAIT", "done": "DONE",
-          "error": "ERROR", "stopped": "STOP", "unknown": "CHECK"}
 GLYPHS = {
     "0": ["111","101","101","101","111"], "1": ["010","110","010","010","111"],
     "2": ["111","001","111","100","111"], "3": ["111","001","111","001","111"],
@@ -25,35 +25,26 @@ GLYPHS = {
     "S": ["111","100","111","001","111"], "T": ["111","010","010","010","010"],
     "W": ["101","101","111","111","101"], "X": ["101","101","010","101","101"],
     "+": ["000","010","111","010","000"], " ": ["000"] * 5,
+    "B": ["110","101","110","101","110"], "G": ["111","100","101","101","111"],
+    "↑": ["010","111","010","010","010"], "↓": ["010","010","010","111","010"],
+    ".": ["000","000","000","000","010"], "-": ["000","000","111","000","000"],
 }
-
-CLOCK_DIGITS = {
-    "0": ["01110","10001","10011","10101","11001","10001","01110"],
-    "1": ["00100","01100","00100","00100","00100","00100","01110"],
-    "2": ["01110","10001","00001","00010","00100","01000","11111"],
-    "3": ["11110","00001","00001","01110","00001","00001","11110"],
-    "4": ["00010","00110","01010","10010","11111","00010","00010"],
-    "5": ["11111","10000","10000","11110","00001","00001","11110"],
-    "6": ["01110","10000","10000","11110","10001","10001","01110"],
-    "7": ["11111","00001","00010","00100","01000","01000","01000"],
-    "8": ["01110","10001","10001","01110","10001","10001","01110"],
-    "9": ["01110","10001","10001","01111","00001","00001","01110"],
-    ":": ["0","1","1","0","1","1","0"],
-}
-
 
 def clock_text(now, timezone="America/New_York"):
     return datetime.fromtimestamp(now, ZoneInfo(timezone)).strftime("%H:%M")
 
 
+@lru_cache(maxsize=1)
+def clock_font():
+    # Original firmware font: 16 TTF units yields native 6x7 pixel glyphs.
+    return ImageFont.truetype(str(ASSETS / "busy_bold_7px.ttf"), 16)
+
+
 def draw_clock(draw, xy, value):
-    x,y = xy
-    for character in value:
-        glyph = CLOCK_DIGITS[character]
-        for row,pixels in enumerate(glyph):
-            for col,bit in enumerate(pixels):
-                if bit == "1": draw.point((x+col,y+row), fill="#FFFFFF")
-        x += len(glyph[0])+1
+    face = clock_font()
+    top = face.getbbox(value)[1]
+    draw.text((xy[0], xy[1]-top), value, font=face, fill="#FFFFFF", stroke_width=0)
+
 
 
 def tiny_text(draw, xy, text, fill):
@@ -108,32 +99,41 @@ def fitted_text(draw, xy, text, max_width, size=12):
     draw.text(xy, text, font=face, fill="white")
 
 
-def render(task, now, count=1):
+def rate_label(value):
+    compact = compact_rate(value)
+    if compact == "--": return "-- B/s"
+    unit = {"B": "B/s", "K": "KiB/s", "M": "MiB/s", "G": "GiB/s"}[compact[-1]]
+    return compact[:-1] + " " + unit
+
+
+def render(task, now, count=1, rates=None):
+    source = task.source if task else "chatgpt"
+    state = task.state if task else "idle"
+    upload = rates.upload if rates else None
+    download = rates.download if rates else None
     front = Image.new("RGB", (72, 16), "black")
-    front.paste(source_icon(task.source), (0, 0))
+    front.paste(source_icon(source), (0, 0))
     draw = ImageDraw.Draw(front)
-    color = COLORS[task.state]
-    elapsed = max(0, int(now - task.started_at))
+    color = COLORS.get(state, "#28313C")
     draw_clock(draw, (20, 1), clock_text(now))
-    tiny_text(draw, (52, 2), LABELS[task.state], color)
-    minutes = elapsed // 60
-    tiny_text(draw, (20, 10), f"{min(minutes, 999)}M", "#8893A4")
-    if count > 1: tiny_text(draw, (52, 10), f"X{min(count,99)}", color)
+    tiny_text(draw, (20, 9), "↑" + compact_rate(upload), "#505050")
+    tiny_text(draw, (46, 9), "↓" + compact_rate(download), "#505050")
     draw.line((20, 15, 71, 15), fill="#102030")
-    if task.state == "working":
+    if state == "working":
         x = 20 + thinking_offset(now)
         draw.line((x, 15, x + 5, 15), fill=color)
     else:
         draw.line((20, 15, 71, 15), fill=color)
-
     back = Image.new("RGB", (160, 80), "black")
-    back.paste(source_icon(task.source, 24), (4, 4))
     draw = ImageDraw.Draw(back)
-    draw.text((36, 5), "Your dot" if task.source == "dots" else "ChatGPT", font=font(16), fill="white")
+    back.paste(source_icon(source, 24), (4, 4))
+    title = "Your dot" if source == "dots" else "ChatGPT"
+    demo = getattr(task, "session_id", None) == "demo"
+    draw.text((36, 5), title + (" DEMO" if demo else ""),
+              font=font(12 if demo else 16), fill="white")
     draw.text((5, 29), clock_text(now), font=font(18), fill="white")
-    draw.text((88, 33), LABELS[task.state], font=font(11), fill="white")
-    fitted_text(draw, (5, 51), task.project or "AI task", 135, 12)
-    draw.text((5, 68), f"{minutes:02d}:{elapsed%60:02d}  |  {count} active", font=font(9), fill="#AAAAAA")
+    draw.text((5, 53), "UP " + rate_label(upload), font=font(10), fill="#AAAAAA")
+    draw.text((5, 66), "DN " + rate_label(download), font=font(10), fill="#AAAAAA")
     return front, back
 
 
@@ -153,15 +153,15 @@ def to_xpm(image):
     return "\n".join(lines) + "\n"
 
 
-def make_payload(task, now, count=1):
-    images = render(task, now, count)
+def make_payload(task, now, count=1, rates=None):
+    images = render(task, now, count, rates)
     elements = [
         {"id": name, "type": "xpmbitmap", "display": name, "x": 0, "y": 0,
          "timeout": 15, "data": to_xpm(image)}
         for name, image in zip(("front", "back"), images)]
     strip = {"id": "thinking", "display": "front", "x": 20, "y": 15,
              "timeout": 15, "z_index": 1}
-    if task.state == "working":
+    if task and task.state == "working":
         strip.update(type="animation", path=ANIMATION_FILE, loop=True,
                      await_previous_end=True, section="default")
     else:
