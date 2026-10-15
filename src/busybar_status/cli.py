@@ -20,6 +20,8 @@ from .runtime import RUNTIME, SPOOL, hook_event, write_event, read_spool
 from .frames import decode_frame
 from .animation import ANIMATION_FILE, thinking_animation
 from .network import NetworkSampler, NetworkRates
+from .view import ViewMode
+from .device_input import InputMonitor, read_input_status
 
 LABEL = "app.busybar.ai-status"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
@@ -105,7 +107,11 @@ def watch(args):
     last_state = None
     animation_uploaded = False
     network = NetworkSampler()
+    view = ViewMode(RUNTIME / "view.json")
+    monitor = InputMonitor()
+    last_input_status = 0
     try:
+        monitor.start()
         while not stopping:
             now = time.time()
             if now - last_dot_refresh >= 60:
@@ -122,6 +128,20 @@ def watch(args):
                     registry.ingest(event, now)
                     last_spool[key] = stamp
             task = registry.select(now)
+            turns = registry.active_turns(now)
+            known_turns = registry.known_turns()
+            was_calendar = view.calendar
+            if monitor.pop_start_pressed():
+                view.dismiss(known_turns)
+                LOG.info("View: calendar")
+                next_draw = min(next_draw, now)
+            allowed = view.allows(turns, known_turns=known_turns)
+            if was_calendar != view.calendar:
+                next_draw = min(next_draw, now)
+                if not view.calendar: LOG.info("View: codex")
+            if now-last_input_status >= 5:
+                monitor.write_status(RUNTIME / "input-status.json")
+                last_input_status = now
             signature = (task.session_id, task.turn_id, task.state) if task else None
             if signature != last_state:
                 LOG.info("State: %s", task.state if task else "idle")
@@ -129,11 +149,15 @@ def watch(args):
                 next_draw = min(next_draw, now)
             if now >= next_draw:
                 try:
-                    rates = network.sample()
-                    if task and task.state == "working" and not animation_uploaded:
-                        client.upload_asset(ANIMATION_FILE, thinking_animation())
-                        animation_uploaded = True
-                    owned = client.draw(make_payload(task, now, registry.active_count(now), rates)) or owned
+                    if allowed:
+                        rates = network.sample()
+                        if task and task.state == "working" and not animation_uploaded:
+                            client.upload_asset(ANIMATION_FILE, thinking_animation())
+                            animation_uploaded = True
+                        owned = client.draw(make_payload(task, now, registry.active_count(now), rates)) or owned
+                    elif owned:
+                        client.clear()
+                        owned = False
                     backoff = 5
                 except AuthError:
                     LOG.error("Authentication stopped the observer. Check Keychain and reinstall to resume.")
@@ -144,6 +168,8 @@ def watch(args):
                 next_draw = now + backoff
             time.sleep(0.25)
     finally:
+        monitor.stop()
+        monitor.write_status(RUNTIME / "input-status.json")
         if owned:
             try: client.clear()
             except APIError: pass
@@ -241,7 +267,10 @@ def main(argv=None):
             print(json.dumps({"connected": True, "firmware": state.get("firmware", {}).get("version"),
                               "api": state.get("system", {}).get("api_semver"),
                               "service_loaded": service.returncode == 0,
-                              "service_running": "state = running" in service.stdout}, indent=2))
+                              "service_running": "state = running" in service.stdout,
+                              "view": "calendar" if ViewMode(RUNTIME / "view.json").calendar else "codex",
+                              "button_input": read_input_status(RUNTIME / "input-status.json")
+                                  if "state = running" in service.stdout else {"connected": False}}, indent=2))
         elif args.command == "token-set":
             helper = REPO / ".venv/bin/busy-token-store"
             if not helper.exists(): raise RuntimeError("Compile scripts/store-token.swift first; see README.")

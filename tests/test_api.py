@@ -19,8 +19,8 @@ class APITests(unittest.TestCase):
             return Response(b'{"status":"ok"}')
         BusyAPI("private-secret", open_url=open_url).clear()
         self.assertEqual(requests[0].method, "DELETE")
-        self.assertEqual(json.loads(requests[0].data), {"application_name": "ai-status"})
-        self.assertEqual(requests[0].full_url, "https://api.busy.app/busybar/display/draw")
+        self.assertIsNone(requests[0].data)
+        self.assertEqual(requests[0].full_url, "https://api.busy.app/busybar/display/draw?application_name=ai-status")
 
     def test_focus_conflict_suppresses_display_update(self):
         def open_url(req, timeout):
@@ -56,8 +56,8 @@ class APITests(unittest.TestCase):
             client.draw({"elements":[{"id":"thinking","type":kind}]})
         deletes=[r for r in requests if r.method=="DELETE"]
         self.assertEqual(len(deletes),2)
-        self.assertTrue(all(json.loads(r.data)=={
-            "application_name":"ai-status"} for r in deletes))
+        self.assertTrue(all(r.data is None and r.full_url.endswith(
+            "/display/draw?application_name=ai-status") for r in deletes))
         self.assertEqual([r.method for r in requests],["DELETE","POST","POST","DELETE","POST","POST"])
 
     def test_auth_errors_do_not_echo_response_or_token(self):

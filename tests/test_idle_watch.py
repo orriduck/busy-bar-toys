@@ -15,12 +15,14 @@ class IdleWatchTests(unittest.TestCase):
                  patch('busybar_status.cli.read_token',return_value='test-only'), \
                  patch('busybar_status.cli.BusyAPI',return_value=api), \
                  patch('busybar_status.cli.RolloutWatcher'), \
+                 patch('busybar_status.cli.InputMonitor') as monitor, \
                  patch('busybar_status.cli.NetworkSampler') as sampler, \
                  patch('busybar_status.cli.load_dot_thread_ids',return_value=set()), \
                  patch('busybar_status.cli.read_spool',return_value=[]), \
                  patch('busybar_status.cli.time.sleep',side_effect=KeyboardInterrupt), \
                  patch('busybar_status.cli.signal.signal'):
                 sampler.return_value.sample.return_value=None
+                monitor.return_value.pop_start_pressed.return_value=False
                 with self.assertRaises(KeyboardInterrupt):
                     watch(SimpleNamespace(dot_thread=[]))
             self.assertEqual(api.draw.call_count,1)
@@ -31,3 +33,71 @@ class IdleWatchTests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+class ButtonWatchTests(unittest.TestCase):
+    def test_start_blocks_stale_turn_heartbeat_until_a_new_turn(self):
+        from busybar_status.events import TaskRegistry
+        registry=TaskRegistry()
+        registry.ingest({'session_id':'one','turn_id':'old','state':'working','timestamp':100})
+        def poll(now):
+            if now==2001:
+                registry.ingest({'session_id':'one','timestamp':now,'type':'event_msg','payload':{'type':'token_count'}})
+            elif now==2002:
+                registry.ingest({'session_id':'one','turn_id':'new','state':'working','timestamp':now})
+        with tempfile.TemporaryDirectory() as directory:
+            api=Mock()
+            watcher=Mock();watcher.poll.side_effect=poll
+            with patch('busybar_status.cli.RUNTIME',Path(directory)), \
+                 patch('busybar_status.cli.read_token',return_value='test-only'), \
+                 patch('busybar_status.cli.BusyAPI',return_value=api), \
+                 patch('busybar_status.cli.TaskRegistry',return_value=registry), \
+                 patch('busybar_status.cli.RolloutWatcher',return_value=watcher), \
+                 patch('busybar_status.cli.InputMonitor') as monitor, \
+                 patch('busybar_status.cli.NetworkSampler') as sampler, \
+                 patch('busybar_status.cli.load_dot_thread_ids',return_value=set()), \
+                 patch('busybar_status.cli.read_spool',return_value=[]), \
+                 patch('busybar_status.cli.time.time',side_effect=[100,2000,2001,2002]), \
+                 patch('busybar_status.cli.time.sleep',side_effect=[None,None,None,KeyboardInterrupt]), \
+                 patch('busybar_status.cli.signal.signal'):
+                watcher.dot_thread_ids=set()
+                monitor.return_value.pop_start_pressed.side_effect=[False,True,False,False]
+                sampler.return_value.sample.return_value=None
+                with self.assertRaises(KeyboardInterrupt):
+                    watch(SimpleNamespace(dot_thread=[]))
+            self.assertEqual(api.draw.call_count,2)
+            self.assertEqual(api.clear.call_count,2)
+
+    def test_start_holds_native_calendar_through_old_turn_updates_and_resumes_new_turn(self):
+        from busybar_status.events import TaskRegistry
+        registry=TaskRegistry()
+        poll_count=0
+        def poll(now):
+            nonlocal poll_count
+            turn='new' if poll_count==3 else 'old'
+            state='waiting' if poll_count==2 else 'working'
+            registry.ingest({'session_id':'one','turn_id':turn,'state':state,'timestamp':now},now)
+            poll_count+=1
+        with tempfile.TemporaryDirectory() as directory:
+            api=Mock()
+            watcher=Mock();watcher.poll.side_effect=poll
+            with patch('busybar_status.cli.RUNTIME',Path(directory)), \
+                 patch('busybar_status.cli.read_token',return_value='test-only'), \
+                 patch('busybar_status.cli.BusyAPI',return_value=api), \
+                 patch('busybar_status.cli.TaskRegistry',return_value=registry), \
+                 patch('busybar_status.cli.RolloutWatcher',return_value=watcher), \
+                 patch('busybar_status.cli.InputMonitor',create=True) as monitor, \
+                 patch('busybar_status.cli.NetworkSampler') as sampler, \
+                 patch('busybar_status.cli.load_dot_thread_ids',return_value=set()), \
+                 patch('busybar_status.cli.read_spool',return_value=[]), \
+                 patch('busybar_status.cli.time.time',side_effect=[100,101,102,103]), \
+                 patch('busybar_status.cli.time.sleep',side_effect=[None,None,None,KeyboardInterrupt]), \
+                 patch('busybar_status.cli.signal.signal'):
+                watcher.dot_thread_ids=set()
+                monitor.return_value.pop_start_pressed.side_effect=[False,True,False,False]
+                sampler.return_value.sample.return_value=None
+                with self.assertRaises(KeyboardInterrupt):
+                    watch(SimpleNamespace(dot_thread=[]))
+            self.assertEqual(api.draw.call_count,2)
+            self.assertEqual(api.clear.call_count,2)
+            monitor.return_value.start.assert_called_once()
+            monitor.return_value.stop.assert_called_once()

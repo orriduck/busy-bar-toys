@@ -1,5 +1,7 @@
 # Centered clock and vertical glow — 2026-10-14
 
+Follow-up: [button/calendar and standby](button-calendar.md) changes approval to yellow and standby to a full-height white light.
+
 User direction: follow the calendar's centered layout, compact the traffic display, use different arrow colors, and move the state bar to the far-left columns with vertical motion and light falloff.
 
 The icon is centered vertically at 14×14. The 57-pixel icon/text group is centered in the space after the four-column light and a three-column gutter. Its 40-pixel text panel centers the original BUSY clock and the compact network line independently. Upload is amber `#FFBE45`, download cyan `#45D7FF`; numerals stay gray. The group dimensions remain fixed as the rates change. There is no bottom horizontal strip or textual task state.

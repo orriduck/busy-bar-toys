@@ -98,6 +98,30 @@ class DisplayTests(unittest.TestCase):
         payload=make_payload(None,100,0)
         self.assertTrue(all(e['type']!='animation' for e in payload['elements']))
 
+    def test_standby_is_full_height_white_and_approval_is_yellow(self):
+        for task in (None,self.task(state='done'),self.task(state='stopped')):
+            front,_=render(task,100,0)
+            self.assertTrue(all(front.getpixel((0,y))==(255,255,255) for y in range(16)))
+            self.assertTrue(all(front.getpixel((1,y))==(255,255,255) for y in range(16)))
+            self.assertTrue(all(r==g==b for y in range(16)
+                                for r,g,b in [front.getpixel((3,y))]))
+        waiting,_=render(self.task(state='waiting'),100)
+        r,g,b=waiting.getpixel((0,7))
+        self.assertGreater(g,200)
+        self.assertGreater(r,b)
+        self.assertGreater(g,b)
+        self.assertNotEqual(waiting.crop((0,0,4,16)).tobytes(),
+                            render(self.task(),100)[0].crop((0,0,4,16)).tobytes())
+
+    def test_waiting_glow_keeps_its_bright_yellow_core_in_transmitted_bitmap(self):
+        strip=make_payload(self.task(state='waiting'),100)['elements'][-1]['data'].splitlines()
+        _,height,colors,_=map(int,strip[1].split())
+        palette={line[0]:bytes.fromhex(line.split('#')[1]) for line in strip[2:2+colors]}
+        r,g,b=palette[strip[2+colors+7][0]]
+        self.assertGreater(g,200)
+        self.assertGreater(r,b)
+        self.assertGreater(g,b)
+
     def test_demo_remains_identifiable_after_removing_project_and_state_text(self):
         task=self.task()
         normal=render(task,100)[1]

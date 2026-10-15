@@ -20,6 +20,22 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual((task.session_id, task.source, task.project, task.state), ("waiting", "chatgpt", "bar", "waiting"))
         self.assertEqual(r.active_count(102), 2)
 
+    def test_active_turn_identities_include_all_running_tasks_but_not_done_or_stale(self):
+        r=TaskRegistry()
+        r.ingest(hook('a','one'))
+        r.ingest(hook('b','two',state='waiting'))
+        r.ingest(hook('c','three',state='done'))
+        self.assertEqual(r.active_turns(101),frozenset({('a','one'),('b','two')}))
+        self.assertEqual(r.active_turns(1901),frozenset())
+
+    def test_known_turns_include_stale_and_previous_turns(self):
+        r = TaskRegistry()
+        r.ingest(hook(turn="old",timestamp=100))
+        r.ingest(hook(turn="new",timestamp=199))
+        r.ingest(hook(turn="new",state="done",timestamp=200))
+        self.assertEqual(r.active_turns(2000),frozenset())
+        self.assertEqual(r.known_turns(),frozenset({("s","old"),("s","new")}))
+
     def test_completion_flash_and_stale_active(self):
         r = TaskRegistry()
         r.ingest(hook(), now=100)

@@ -8,7 +8,7 @@ from .animation import ANIMATION_FILE, thinking_offset, glow_frame, WIDTH, HEIGH
 from .network import compact_rate
 
 ASSETS = Path(__file__).parent / "assets"
-COLORS = {"working": "#459AFF", "waiting": "#FFBE45", "done": "#52DE96",
+COLORS = {"working": "#459AFF", "waiting": "#FFD84A", "done": "#52DE96",
           "error": "#FF5A65", "stopped": "#8893A4", "unknown": "#8893A4"}
 GLYPHS = {
     "0": ["111","101","101","101","111"], "1": ["010","110","010","010","111"],
@@ -128,8 +128,11 @@ def render(task, now, count=1, rates=None):
     tiny_text(draw, (left, 10), "↓", "#45D7FF")
     tiny_text(draw, (left+4, 10), down, "#505050")
     color = tuple(bytes.fromhex(COLORS.get(state, "#28313C")[1:]))
-    light = glow_frame(now, color, moving=state == "working",
-                       intensity=.2 if state == "idle" else 1)
+    if state in {"idle", "done", "stopped"}:
+        # Standby: a continuous white core spanning the full physical height.
+        light = bytes((255,255,255,255,255,255,80,80,80,24,24,24)) * HEIGHT
+    else:
+        light = glow_frame(now, color, moving=state == "working")
     front.paste(Image.frombytes("RGB", (WIDTH,HEIGHT), light), (0,0))
     back = Image.new("RGB", (160, 80), "black")
     draw = ImageDraw.Draw(back)
@@ -189,6 +192,12 @@ def make_payload(task, now, count=1, rates=None):
         strip.update(type="animation", path=ANIMATION_FILE, loop=True,
                      await_previous_end=True, section="default")
     else:
-        strip.update(type="xpmbitmap", data=to_xpm(images[0].crop((0,0,WIDTH,HEIGHT))))
+        light = images[0].crop((0,0,WIDTH,HEIGHT))
+        # Preserve the bright state-colored core rather than averaging its few
+        # pixels into the much more numerous dim halo pixels.
+        raw = light.tobytes()
+        peak = max(zip(raw[0::3],raw[1::3],raw[2::3]),key=sum)
+        light_palette = [tuple(round(c*level/15) for c in peak) for level in range(16)]
+        strip.update(type="xpmbitmap", data=to_xpm(light, light_palette))
     elements.append(strip)
     return {"application_name": "ai-status", "priority": 50, "elements": elements}

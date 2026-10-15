@@ -89,7 +89,9 @@ class BusyAPI:
             return False
 
     def clear(self):
-        result = self.request("/display/draw", "DELETE", {"application_name": APP_NAME})
+        # Firmware 1.2.4 shadows the JSON namespace variable in its DELETE
+        # handler. Use the working query parameter; a JSON-only scope is ignored.
+        result = self.request("/display/draw?" + urlencode({"application_name": APP_NAME}), "DELETE")
         self._thinking_kind = None
         return result
 

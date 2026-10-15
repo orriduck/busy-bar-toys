@@ -11,13 +11,21 @@
 | 状态 | 前屏 | 含义 |
 |---|---|---|
 | working | 左侧蓝色往复光条 | 任务正在执行 |
-| waiting | 左侧橙色静止光条 | 任务正在等待输入或权限 |
-| done | 左侧绿色静止光条 | 本轮结束，12 秒后恢复空闲时钟 |
+| waiting | 左侧黄色静止光条 | 任务正在等待输入或权限 |
+| done | 全高白色光条 | 本轮结束，进入 standby |
 | error | 左侧红色静止光条 | 收到任务级错误事件 |
-| stopped | 左侧灰色静止光条 | 用户中断了本轮任务 |
+| stopped | 全高白色光条 | 用户中断了本轮任务，进入 standby |
 | unknown | 左侧灰色静止光条 | 30 分钟没有收到新事件，不推断已完成 |
 
 网速来自**运行后台程序的这台 Mac 的默认网络接口**，每 5 秒按实际字节计数差更新，不发起测速下载。前屏 B/K/M/G 分别简写 B/s、KiB/s、MiB/s、GiB/s。首次采样、网络切换、计数重置或读数失败时显示 `--`，有效采样后恢复。网速不是 BUSY Bar 本身的流量或网络带宽上限。
+
+## Start / Pause 与原生日历
+
+**按键切换需要 BUSY Bar 通过 USB 数据线连接这台 Mac**。程序自动监听 `10.0.4.20` 的实时按键事件，`status` 中的 `button_input.connected` 必须为 `true`。云端绘图正常不代表按键通道已接通；当前 BAR cloud token 不能打开这个本地事件流。未连通时，颜色和时钟仍显示，但 Start / Pause 切换不会生效。
+
+连接后，按 Start / Pause 会停止本程序绘图，恢复设备原本的日历；直到**下一轮新任务**开始才重新显示 Codex。旧任务的思考、批准、完成和心跳更新都不会抢回屏幕。日历模式保存在私有运行目录，重启程序后仍然有效。
+
+留在 Codex 界面时，蓝色上下浮动表示思考，黄色静止光表示等待批准/输入，完整高度的白条表示 standby（没有活跃任务、本轮完成或用户中断）。错误和未知状态仍分别保留红色与灰色，避免误报为 standby。
 
 ## 目前能自动跟踪什么
 
@@ -125,7 +133,7 @@ swiftc scripts/store-token.swift -o .venv/bin/busy-token-store
 
 接口核查：2026-10-14，BUSY Bar 固件 1.2.4 / API 27.5.0。
 
-验收记录：[初版](docs/verification.md)、[时钟与往复动画](docs/clock-and-animation.md)、[原生时钟与网速](docs/clock-and-network.md)、[居中布局与发光条](docs/centered-glow.md)。
+验收记录：[初版](docs/verification.md)、[时钟与往复动画](docs/clock-and-animation.md)、[原生时钟与网速](docs/clock-and-network.md)、[居中布局与发光条](docs/centered-glow.md)、[按键与 standby](docs/button-calendar.md)。
 
 - [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api)
 - [固件 1.2.4 OpenAPI](https://api.busy.app/busybar/openapi.yaml?Name=1.2.4)

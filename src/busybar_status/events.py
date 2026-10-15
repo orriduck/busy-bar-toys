@@ -163,6 +163,15 @@ class TaskRegistry:
         priority = {"waiting": 5, "working": 4, "error": 3, "unknown": 2, "done": 1, "stopped": 1}
         return max(visible, key=lambda task: (priority[task.state], task.updated_at), default=None)
 
+    def active_turns(self, now: float) -> frozenset[tuple[str, str]]:
+        return frozenset((task.session_id,task.turn_id) for task in self._tasks.values()
+                         if task.state in {"working","waiting"} and now-task.updated_at <= STALE_SECONDS)
+
+    def known_turns(self) -> frozenset[tuple[str, str]]:
+        """Return every observed turn, including stale turns that may heartbeat later."""
+        return frozenset((session,turn) for session,turns in self._seen_turns.items()
+                         if session not in self._ignored for turn in turns)
+
     def active_count(self, now: float) -> int:
         return sum(task.state in {"working", "waiting"} and now - task.updated_at <= STALE_SECONDS for task in self._tasks.values())
 
