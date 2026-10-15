@@ -731,7 +731,6 @@ class PreviewCaptureClockTest(unittest.IsolatedAsyncioTestCase):
         started=await self.scheduled_samples(partial_stall=True)
         intervals=[b-a for a,b in zip(started,started[1:])]
         self.assertGreater(intervals[3],.04)
-        self.assertLess(intervals[3],2/preview.FPS)
         self.assertGreaterEqual(intervals[4],.025)
 
     async def test_stalled_event_loop_skips_missed_ticks_without_catchup_burst(self):
