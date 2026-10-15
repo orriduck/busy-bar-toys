@@ -61,7 +61,7 @@ class CloudTest(unittest.TestCase):
             rec=state.recognize('a',kind='condition',level='urgent',title='A',detail='',scene={},actionKeys=['primary'])
             config={'serviceId':'notifier','instanceId':'mac','epoch':'e'}
             key=json.dumps(['notifier','mac',rec['itemId']],separators=(',',':'))
-            action={'id':'act','serviceId':'notifier','instanceId':'mac','itemId':rec['itemId'],'itemKey':key,'generation':2,'actionKey':'primary','status':'pending','expiresAt':110000}
+            action={'id':'act','serviceId':'notifier','instanceId':'mac','itemId':rec['itemId'],'itemKey':key,'generation':2,'actionKey':'primary','status':'pending','expiresAt':110000,'version':1}
             snapshot={'generation':2,'selected':key,'items':[{'itemKey':key,'itemId':rec['itemId'],'version':1,'actionKeys':['primary']}], 'actions':[action]}
             calls=[]
             executor=cloud.Actions(state,config,clock=lambda:100)
@@ -198,6 +198,63 @@ class CloudTest(unittest.TestCase):
             diagnostic=cloud.State(state.path).data['notificationStatus']
             self.assertEqual(diagnostic['status'],'failed')
             self.assertNotIn('private',json.dumps(diagnostic))
+
+    def test_expired_urgent_tombstone_preserves_fallback_and_prevents_replay(self):
+        for reason in ('expired','epoch-expired'):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                now=[100.0]; notices=[]
+                config={'role':'notifier','serviceId':'n','instanceId':'m','epoch':'e'}
+                producer=cloud.Producer(directory,config,object(),clock=lambda:now[0],notify=lambda *a:notices.append(a))
+                record=producer.state.recognize('source:x',kind='condition',level='urgent',title='Urgent page',detail='Keep this detail',scene={})
+                key=json.dumps(['n','m',record['itemId']],separators=(',',':'))
+                now[0]=105
+                producer.accept({'protocol':1,'revision':2,'health':{'status':'unknown'},'services':[{'id':'n','config':{'enabled':True}}], 'items':[], 'tombstones':[{'itemKey':key,'version':1,'reason':reason}]})
+                recovered=cloud.State(producer.state.path,clock=lambda:now[0])
+                self.assertIsNone(recovered.recognize('source:x',kind='condition',level='urgent',title='Urgent page',detail='',scene={}))
+                guard=cloud.Watchdog(recovered,config,clock=lambda:now[0],notify=lambda *a:notices.append(a))
+                now[0]=111; guard.check(); guard.check()
+                self.assertEqual(notices,[('Urgent page','Keep this detail')])
+                self.assertNotIn('detail',recovered.records['source:x'])
+
+    def test_expired_urgent_source_clear_still_suppresses_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            now=[100.0]; notices=[]; state=cloud.State(Path(directory)/'state.json',clock=lambda:now[0])
+            record=state.recognize('x',kind='condition',level='urgent',title='A',detail='B',scene={})
+            guard=cloud.Watchdog(state,{'serviceId':'n','instanceId':'m'},clock=lambda:now[0],notify=lambda *a:notices.append(a))
+            state.tombstone(record['itemId'],'expired'); state.clear('x')
+            now[0]=111; guard.check(); self.assertEqual(notices,[])
+
+    def test_sleep_wall_advance_expires_proof_with_little_monotonic_progress(self):
+        for restart in (False,True):
+            with self.subTest(restart=restart), tempfile.TemporaryDirectory() as directory:
+                wall=[100.0]; mono=[10.0]; notices=[]
+                state=cloud.State(Path(directory)/'state.json',clock=lambda:wall[0])
+                state.recognize('u',kind='condition',level='urgent',title='A',detail='',scene={})
+                guard=cloud.Watchdog(state,{'serviceId':'n','instanceId':'m'},clock=lambda:wall[0],monotonic=lambda:mono[0],notify=lambda *a:notices.append(a))
+                state.records['u']['deadline']=170000; state.save()
+                wall[0]=1000; mono[0]=11
+                if restart:
+                    state=cloud.State(state.path,clock=lambda:wall[0])
+                    guard=cloud.Watchdog(state,{'serviceId':'n','instanceId':'m'},clock=lambda:wall[0],monotonic=lambda:mono[0],notify=lambda *a:notices.append(a))
+                guard.check(); self.assertEqual(len(notices),1)
+                state.recognize('next',kind='condition',level='urgent',title='Next',detail='',scene={})
+                wall[0]=900; mono[0]=22; guard.check()
+                self.assertEqual(len(notices),2,'UTC advance followed by rollback must still allow monotonic progress')
+
+    def test_stale_action_version_or_business_target_never_runs_new_callback(self):
+        for version,business in ((1,'new-target'),(2,'old-target')):
+            with self.subTest(version=version,business=business), tempfile.TemporaryDirectory() as directory:
+                state=cloud.State(Path(directory)/'state.json',clock=lambda:100)
+                state.recognize('a',kind='condition',level='urgent',title='Old',detail='',scene={},businessId='old-target')
+                rec=state.recognize('a',kind='condition',level='urgent',title='New',detail='',scene={},businessId='new-target')
+                config={'serviceId':'n','instanceId':'m'}; calls=[]
+                action={'id':'stale','serviceId':'n','instanceId':'m','itemId':rec['itemId'],'itemKey':'key','generation':2,'version':version,'businessId':business,'actionKey':'primary','status':'pending','expiresAt':110000}
+                snapshot={'generation':2,'selected':'key','items':[{'itemId':rec['itemId'],'itemKey':'key','version':2,'actionKeys':['primary']}],'actions':[action]}
+                executor=cloud.Actions(state,config,clock=lambda:100)
+                executor.callbacks[rec['itemId']]={'primary':lambda:calls.append('new callback')}
+                executor.accept(snapshot)
+                self.assertEqual(calls,[])
+                self.assertEqual(state.data['actions']['stale']['status'],'failed')
 
     def test_bounded_sse_full_snapshot(self):
         raw=[b'event: snapshot\n',b'data: {"revision":1}\n',b'\n']

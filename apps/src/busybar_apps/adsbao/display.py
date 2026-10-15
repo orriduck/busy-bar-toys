@@ -31,7 +31,9 @@ def aircraft_icon():
 
 def notification(nearby):
     plane = nearby.aircraft
-    item = Notification(f"aircraft:{plane.hex}", "info", "adsbao", "ADSBAO", plane.identity[:8],
+    encounter = getattr(nearby, "encounter_id", None)
+    item_id = f"aircraft:{plane.hex}:{encounter}" if encounter else f"aircraft:{plane.hex}"
+    item = Notification(item_id, "info", "adsbao", "ADSBAO", plane.identity[:8],
                         (plane.kind or "")[:11], note=f"{plane.identity} {plane.kind} {nearby.distance / MILE:.1f} mi",
                         accent=JADE, icon=aircraft_icon(), payload=nearby)
     return replace(item, hold=notice.entrance_seconds(item) + HOLD_SECONDS)

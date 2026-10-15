@@ -66,6 +66,19 @@ class CloudQueue:
         self.producer=producer; self.reduced=reduced; self.on_shown=None
         self._items={}; self._lock=threading.RLock()
         producer.on_admitted=self._shown
+        self._prior_tombstone=producer.on_tombstone
+        producer.on_tombstone=self._terminal
+
+    def _prune(self):
+        with self.producer.state.lock:
+            live={record['itemId'] for record in self.producer.state.records.values()
+                  if not record.get('cleared') and not record.get('tombstone')}
+        for key in set(self._items)-live: self._items.pop(key,None)
+        for key in set(self.producer.actions.callbacks)-live: self.producer.actions.callbacks.pop(key,None)
+
+    def _terminal(self,item_id,reason):
+        with self._lock: self._prune()
+        if self._prior_tombstone: self._prior_tombstone(item_id,reason)
 
     def _shown(self,item_id):
         with self._lock: item=self._items.get(item_id)
@@ -92,6 +105,7 @@ class CloudQueue:
                 self.producer.state.records[key]['localFingerprint']=fingerprint; self.producer.state.save()
             self._items[record['itemId']]=item
             self.producer.actions.callbacks[record['itemId']]={'primary':item.primary} if item.primary else {}
+            self._prune()
 
     def set_state(self,source,notifications):
         with self._lock:
@@ -101,10 +115,12 @@ class CloudQueue:
                     self.producer.state.clear(key)
                     self.producer.actions.callbacks.pop(record['itemId'],None)
             for item in notifications: self._put(item,'condition',source)
+            self._prune()
 
     def push(self,notifications):
         with self._lock:
             for item in notifications: self._put(item,'event',item.source or item.app)
+            self._prune()
 
     def source_ok(self,source,every):
         now=int(self.producer.clock()*1000)

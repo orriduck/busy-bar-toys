@@ -27,6 +27,7 @@ LOCAL_ASSET_BYTES = 8 * 1024 * 1024
 LOCAL_RECORDS = 4096
 LOCAL_ACTIONS = 512
 LOCAL_INPUTS = 2048
+DELIVERY_FAILURE_REASONS = frozenset(('expired', 'epoch-expired', 'epoch_expired', 'heartbeat-expired', 'source-expired'))
 IDENTIFIER = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 HELPER = Path(__file__).resolve().parents[3] / '.venv/bin/busy-cloud-keychain'
 
@@ -196,8 +197,9 @@ class State:
         atomic_json(self.path,self.data)
 
     @staticmethod
-    def compact(record):
+    def compact(record,*,keep_fallback=False):
         for field in ('scene','update','publishBody','updateBody','signature','frameSignature','detail','title','localFingerprint'):
+            if keep_fallback and field in ('title','detail'): continue
             record.pop(field,None)
 
     def trim_assets(self,protect=None):
@@ -243,7 +245,7 @@ class State:
             rec=self.records.get(key)
             if rec and not rec.get('cleared'):
                 if rec.get('tombstone'):
-                    rec['cleared']=True; self.save(); return
+                    rec['cleared']=True; rec['fallbackPending']=False; self.compact(rec); self.save(); return
                 if len(self.data['ends'])>=LOCAL_RECORDS: raise CloudError('local_end_capacity')
                 rec['cleared']=True; rec['version']+=1
                 self.data['ends'][rec['itemId']]={'itemId':rec['itemId'],'version':rec['version']}
@@ -261,7 +263,9 @@ class State:
             for rec in self.records.values():
                 if rec['itemId']==item_id:
                     rec['tombstone']=reason; rec['acked']=rec['version']; rec.pop('ending',None)
-                    self.compact(rec)
+                    rec['fallbackPending']=(reason in DELIVERY_FAILURE_REASONS and rec.get('level')=='urgent'
+                                            and not rec.get('cleared') and not rec.get('notified'))
+                    self.compact(rec,keep_fallback=rec['fallbackPending'])
             self.save()
 
 
@@ -275,7 +279,7 @@ class Watchdog:
         saved=state.data.get('watchClock') or {}
         elapsed=self._anchor_mono-saved.get('monotonic',self._anchor_mono+1)
         if 0<=elapsed<31536000:
-            self._anchor_utc=int(saved['utc']+elapsed*1000)
+            self._anchor_utc=max(self._anchor_utc,int(saved['utc']+elapsed*1000))
         elif saved:
             # After a reboot or an uncertain clock domain, never move effective
             # time backwards and give an old failure deadline a fresh budget.
@@ -286,7 +290,11 @@ class Watchdog:
 
     def _now(self):
         tick=self.monotonic()
-        now=int(self._anchor_utc+max(0,tick-self._anchor_mono)*1000)
+        # macOS monotonic time excludes suspend. UTC must also advance the
+        # effective clock so a stale proof cannot survive hours of sleep.
+        value=max(self._anchor_utc+max(0,tick-self._anchor_mono)*1000,self.clock()*1000)
+        self._anchor_utc=value; self._anchor_mono=tick
+        now=int(value)
         with self.state.lock:
             self.state.data['watchClock']={'utc':now,'monotonic':tick}
         return now
@@ -359,9 +367,12 @@ class Watchdog:
         due=[]; now=self._now()
         with self.state.lock:
             for rec in self.state.records.values():
-                if (rec.get('level')=='urgent' and not any(rec.get(k) for k in ('notified','cleared','tombstone','suppressed'))
+                if (rec.get('level')=='urgent' and not any(rec.get(k) for k in ('notified','cleared','suppressed'))
+                        and (not rec.get('tombstone') or rec.get('fallbackPending'))
                         and now>=rec.get('deadline',rec['firstRecognizedAt']+self.delay)):
                     rec['notified']=True; due.append((rec.get('title','Urgent notification'),rec.get('detail','')))
+                    rec['fallbackPending']=False
+                    if rec.get('tombstone'): self.state.compact(rec)
             if due: self.state.save()  # Dedupe before invoking the OS.
         for title,detail in due:
             if self.notify is not None: self._deliver(title,detail)
@@ -396,7 +407,9 @@ class Actions:
                 callback=self.callbacks.get(action.get('itemId'),{}).get(action.get('actionKey'))
                 record=next((r for r in self.state.records.values() if r['itemId']==action.get('itemId')),None)
                 valid=(record is not None and not record.get('cleared') and not record.get('tombstone')
-                       and record['version']==(item or {}).get('version') and callback is not None and item is not None and action.get('itemKey')==item.get('itemKey')
+                       and not record.get('sourceUnknown')
+                       and action.get('version')==record['version']==(item or {}).get('version')
+                       and action.get('businessId')==record.get('businessId') and callback is not None and item is not None and action.get('itemKey')==item.get('itemKey')
                        and action.get('generation')==snapshot.get('generation')
                        and action.get('itemKey')==snapshot.get('selected')
                        and action.get('actionKey') in item.get('actionKeys',[])
@@ -426,7 +439,7 @@ class Producer:
         self.actions=Actions(self.state,config,clock=self.clock)
         self.snapshot={}; self._snapshot_lock=threading.Lock(); self._stop=threading.Event()
         self._threads=[]; self._assets={}; self._heart=0; self.error=None; self.on_admitted=None; self.on_tombstone=None
-        self._admitted=set(); self._io_lock=threading.Lock()
+        self._io_lock=threading.Lock()
 
     def accept(self,snapshot):
         if not isinstance(snapshot,dict) or snapshot.get('protocol')!=1: raise CloudError('invalid_snapshot')
@@ -459,12 +472,15 @@ class Producer:
                       and now<proof.get('validUntil',0)<=display.get('confirmedValidUntil',0))
             if admitted and item.get('instanceId')==self.config['instanceId']:
                 ident=item.get('itemId')
-                if ident not in self._admitted and not record.get('admitted') and self.on_admitted:
-                    if self.on_admitted(ident):
-                        self._admitted.add(ident)
+                if self.on_admitted:
+                    with self.state.lock:
+                        live=next((r for r in self.state.records.values() if r['itemId']==ident),None)
+                        if live is None or live.get('admitted'): continue
+                        live['admitted']=True; self.state.save()
+                    if not self.on_admitted(ident):
                         with self.state.lock:
                             live=next((r for r in self.state.records.values() if r['itemId']==ident),None)
-                            if live: live['admitted']=True; self.state.save()
+                            if live: live['admitted']=False; self.state.save()
 
     def asset(self,name,data):
         digest=hashlib.sha256(data).hexdigest(); suffix=Path(name).suffix.lstrip('.').lower()

@@ -101,13 +101,13 @@ Cloud watch 可以读取已配置的 Wi-Fi 输入。如有需要，先在 standa
 
 ## 投递和 urgent 兜底
 
-Notifier 发布所有来源的原始项。State 来源对应 condition，event 来源对应 event；保留原来源 group key，分组范围限定在 notifier 服务内。后端负责排序和 snooze。手动 clear 会封存 occurrence，heartbeat 不会复活它。来源确认条件已清除、以后再次出现时，才创建新的 occurrence UUID。
+Notifier 发布所有来源的原始项。State 来源对应 condition，event 来源对应 event；保留原来源 group key，分组范围限定在 notifier 服务内。飞机使用持久化 encounter ID：重复轮询和重启保留同一 ID；确认在外圈离开到达重置条件或每日重置后，才生成新 ID。后端负责排序和 snooze。手动 clear 会封存 occurrence，heartbeat 不会复活它。投递过期同样禁止 cloud 重放，但本地仍未解决的 urgent 项会保留兜底文字和期限，直到来源确认 clear 或执行兜底通知。来源确认条件已清除、以后再次出现时，才创建新的 occurrence UUID。
 
 来源轮询失败时保留最后条件并标记为不确定，停止续期。成功轮询的有效窗口有界，并考虑下一次预定轮询时间。卡住的来源不能无限续期缓存。仅在 cloud 确认接纳显示后调用来源 `on_shown`。
 
 客户端复用现有 native renderer。通知场景包括完整入场、0.3 秒时出现的 detail 和最终画面。动画按内容哈希以 `anim` 类型上传。超出单元素大小限制的背屏 bitmap 无损转为 PNG 资产。Agent 的时钟和网络更新使用 native update，并保留完整恢复场景。
 
-Urgent watchdog 独立于 HTTP、SSE 和来源轮询运行。默认从本地首次识别起计时 10 秒。匹配的设备确认、有效 queue proof，或精确匹配已接纳成员版本的 coverage proof，可以推迟本地 macOS 通知。证明有效期有限，重复快照不会重置失败期限。证明过期或所有者退出后，最多再过 10 秒触发兜底。Pause 和 disable 会抑制兜底。首次识别时间、期限和通知去重状态在重启后保留。运行时采用单调时钟，并持久化其 UTC 映射；系统时钟回拨不会重置期限。设备确认只代表 API 写入被确认，不代表实体像素验收。
+Urgent watchdog 独立于 HTTP、SSE 和来源轮询运行。默认从本地首次识别起计时 10 秒。匹配的设备确认、有效 queue proof，或精确匹配已接纳成员版本的 coverage proof，可以推迟本地 macOS 通知。证明有效期有限，重复快照不会重置失败期限。证明过期或所有者退出后，最多再过 10 秒触发兜底。Pause 和 disable 会抑制兜底。首次识别时间、期限和通知去重状态在重启后保留。运行时采用单调时钟，并持久化其 UTC 映射；系统时钟回拨不会重置期限。Mac 睡眠后还会使用当前 UTC 推进有效时间，防止过期证明跨睡眠继续有效。设备确认只代表 API 写入被确认，不代表实体像素验收。
 
 ## 排错
 

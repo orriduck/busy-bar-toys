@@ -125,6 +125,49 @@ class AdapterTest(unittest.TestCase):
             renderer2.show(Task('s','next','codex','project','working',100,110),110)
             self.assertNotEqual(producer2.state.records['agent']['itemId'],ident)
 
+    def test_aircraft_rearm_has_new_occurrence_but_pending_replay_dedupes(self):
+        from types import SimpleNamespace
+        from busybar_apps.adsbao.proximity import EncounterTracker
+        from busybar_apps.adsbao.traffic import parse_envelope
+        from busybar_apps.adsbao.display import notification
+        def frame(now,lon=.01):
+            return parse_envelope({'channel':'nearby:0.00:0.00','sequence':1,'stale':False,'emittedAt':now,'fetchedAt':now,'data':{'aircraft':{'ac':[{'hex':'abc123','flight':'TEST123','lat':0,'lon':lon,'fixAt':now}]}}},now=now)
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory); queue=CloudQueue(producer,reduced=True)
+            path=Path(directory)/'encounters.json'; fix=SimpleNamespace(latitude=0,longitude=0)
+            tracker=EncounterTracker(path); first=tracker.candidate(frame(1000),fix,now=1000)
+            queue.push([notification(first)])
+            record=next(iter(producer.state.records.values())); item_id=record['itemId']
+            producer.state.tombstone(item_id,'completed')
+            tracker=EncounterTracker(path)
+            queue.push([notification(tracker.candidate(frame(1001),fix,now=1001))])
+            self.assertEqual(len(producer.state.records),1)
+            tracker.mark_alerted(first,now=1001)
+            tracker.candidate(frame(1031,.06),fix,now=1031); tracker.candidate(frame(1091,.06),fix,now=1091)
+            queue.push([notification(tracker.candidate(frame(1092),fix,now=1092))])
+            new=[r for r in producer.state.records.values() if not r.get('tombstone')]
+            self.assertEqual(len(new),1)
+            self.assertNotEqual(new[0]['itemId'],item_id)
+
+    def test_recurrence_prunes_callback_and_notification_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory); queue=CloudQueue(producer,reduced=True)
+            item=Notification('x','urgent','app','APP','X',source='source',primary=lambda:None)
+            for index in range(20):
+                queue.set_state('source',[item]); queue.set_state('source',[])
+            self.assertEqual(queue._items,{})
+            self.assertEqual(producer.actions.callbacks,{})
+
+    def test_backend_terminal_state_prunes_notification_and_callback_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory); queue=CloudQueue(producer,reduced=True)
+            queue.push([Notification('x','urgent','app','APP','X',source='source',primary=lambda:None)])
+            record=next(iter(producer.state.records.values()))
+            key=json.dumps(['notifier','mac',record['itemId']],separators=(',',':'))
+            producer.accept({'protocol':1,'revision':1,'services':[],'items':[], 'tombstones':[{'itemKey':key,'version':1,'reason':'action-succeeded'}]})
+            self.assertEqual(queue._items,{})
+            self.assertEqual(producer.actions.callbacks,{})
+
     def test_admission_callback_only_after_device_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
             producer=self.producer(directory); queue=CloudQueue(producer,reduced=True); shown=[]
