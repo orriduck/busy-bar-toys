@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,14 @@ from busybar_service.cli import watch
 
 class LocalDisplayTest(unittest.TestCase):
     def setUp(self):
+        # Scope fixture clocks to the observer and its motion controller.
+        # Patching time.time on the stdlib module also changes logging's clock
+        # on Python 3.10 and consumes these finite per-iteration sequences.
+        clock=SimpleNamespace(time=time.time,monotonic=time.monotonic,sleep=time.sleep)
+        for target in ('busybar_service.cli.time','busybar_agents.motion.time'):
+            clock_patch=patch(target,clock)
+            clock_patch.start()
+            self.addCleanup(clock_patch.stop)
         # These fixtures advance wall time once per watch iteration. Lease I/O
         # has independent clock reads and is covered by test_shared_display.
         lease=Mock()
@@ -211,3 +220,25 @@ class MotionWatchTests(LocalDisplayTest):
             self.assertEqual(api.upload_asset.call_count,1)
             api.draw.assert_not_called()
             monitor.return_value.stop.assert_called_once()
+
+
+class WatchClockIsolationTests(unittest.TestCase):
+    def test_logging_wall_clock_reads_do_not_consume_observer_fixture_ticks(self):
+        import logging
+        factory=logging.getLogRecordFactory()
+        def record_with_wall_time(*args,**kwargs):
+            # Python 3.10 logging reads time.time(); force that behavior on
+            # newer interpreters too, where LogRecord uses time.time_ns().
+            logging.time.time()
+            return factory(*args,**kwargs)
+        scenarios=unittest.TestSuite([
+            ButtonWatchTests('test_start_blocks_stale_turn_heartbeat_until_a_new_turn'),
+            ButtonWatchTests('test_start_holds_native_calendar_through_old_turn_updates_and_resumes_new_turn'),
+            StandbyWatchTests('test_ten_second_standby_returns_calendar_without_refresh_reset_and_next_turn_resumes'),
+            MotionWatchTests('test_real_motion_controller_keeps_timer_and_next_turn_semantics'),
+        ])
+        result=unittest.TestResult()
+        with self.assertLogs('busy-bar',level='INFO'), patch('logging._logRecordFactory',side_effect=record_with_wall_time):
+            scenarios.run(result)
+        self.assertEqual(result.errors,[])
+        self.assertEqual(result.failures,[])
