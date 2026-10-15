@@ -2,7 +2,7 @@
 
 把 AI 的工作状态放到桌面的 BUSY Bar 上。
 
-普通 ChatGPT/Codex 任务显示 ChatGPT 图标；Your dot 使用原创五点图标。前屏使用与 BUSY 原生时钟相同的点阵字体，显示纽约时间（24 小时制、自动夏令时），图标、时钟和紧凑网速在左侧状态光条以外的区域居中排列。上行箭头为暖橙色，下行箭头为青蓝色，数字保持灰色。前后屏都不显示 WORK / WAIT 等状态文字，空闲时继续显示时钟和网速。背屏标明上下行的完整单位。
+普通 ChatGPT/Codex 任务显示 ChatGPT 图标；Your dot 使用原创五点图标。前屏使用与 BUSY 原生时钟相同的点阵字体，显示纽约时间（24 小时制、自动夏令时），图标、时钟和紧凑网速在左侧状态光条以外的区域居中排列。上行箭头为暖橙色，下行箭头为青蓝色，数字保持灰色。前后屏都不显示 WORK / WAIT 等状态文字。背屏标明上下行的完整单位。
 
 最左侧四列显示发光状态条：工作时，亮核与渐弱蓝色光晕上下往复，由设备原生动画以 30 fps 播放，一次完整往返约 3.1 秒。时钟与状态仍每 5 秒刷新，不需要用频繁的云端绘图驱动动画。
 
@@ -21,7 +21,9 @@
 
 ## Start / Pause 与原生日历
 
-**按键切换需要 BUSY Bar 通过 USB 数据线连接这台 Mac**。程序自动监听 `10.0.4.20` 的实时按键事件，`status` 中的 `button_input.connected` 必须为 `true`。云端绘图正常不代表按键通道已接通；当前 BAR cloud token 不能打开这个本地事件流。未连通时，颜色和时钟仍显示，但 Start / Pause 切换不会生效。
+任务结束或中断后，先显示全高白色 standby 光条和时钟网速；**持续 10 秒后自动恢复设备原本的日历**。从成功显示 standby 开始计时，重复刷新不延长时间；期间有活跃任务则取消倒计时。回日历后，直到下一轮新任务开始才重新显示 Codex。自动返回使用现有云端绘图连接，不依赖按键通道。
+
+**按键通道支持 Wi-Fi**。Mac 和 BUSY Bar 之间需要允许局域网直连，`status` 中 `button_input.transport=wifi` 且 `button_input.connected=true` 才表示已接通。云端绘图正常不代表按键通道可用；BAR cloud token 不能打开这个本地事件流。未配置 Wi-Fi 时，程序仍可监听 USB 地址 `10.0.4.20`。
 
 连接后，按 Start / Pause 会停止本程序绘图，恢复设备原本的日历；直到**下一轮新任务**开始才重新显示 Codex。旧任务的思考、批准、完成和心跳更新都不会抢回屏幕。日历模式保存在私有运行目录，重启程序后仍然有效。
 
@@ -43,12 +45,16 @@
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 swiftc scripts/store-token.swift -o .venv/bin/busy-token-store
+swiftc scripts/input-keychain.swift -o .venv/bin/busy-input-keychain
 .venv/bin/busy-bar token-set
 .venv/bin/busy-bar status
+.venv/bin/busy-bar input-wifi
 .venv/bin/busy-bar install
 ```
 
 `token-set` 隐藏输入，只通过 stdin 把 token 交给 macOS Security framework。token 放在钥匙串的 `app.busybar.ai-status` 条目中；不写入源码、配置文件、命令行参数或日志。首次 `/usr/bin/security` 读取可能弹出钥匙串授权提示，需要你手动允许。
+
+`input-wifi` 通过已绑定设备的云端 API 获取当前局域网地址，为按键流创建并复用专用本地 token，保存到钥匙串 `app.busybar.local-input`。运行目录里的 `input.json` 只保存设备地址，权限 0600。该命令不会修改设备已有的本地访问模式或密码。DHCP 地址变化后重新运行该命令，再运行 `install` 即可更新。配置成功只表示配置已保存，实时连通以 `status` 为准。
 
 `install` 安装当前用户的 LaunchAgent，立即启动并在登录后运行。它不会改动 Codex 的通知配置、hooks 信任配置、设备计时、亮度、声音、账户或网络设置。观察程序退出后，画面最多保留 15 秒；连接出错会退避重试，token 被拒绝则停止而不是反复认证。
 
@@ -133,7 +139,7 @@ swiftc scripts/store-token.swift -o .venv/bin/busy-token-store
 
 接口核查：2026-10-14，BUSY Bar 固件 1.2.4 / API 27.5.0。
 
-验收记录：[初版](docs/verification.md)、[时钟与往复动画](docs/clock-and-animation.md)、[原生时钟与网速](docs/clock-and-network.md)、[居中布局与发光条](docs/centered-glow.md)、[按键与 standby](docs/button-calendar.md)。
+验收记录：[初版](docs/verification.md)、[时钟与往复动画](docs/clock-and-animation.md)、[原生时钟与网速](docs/clock-and-network.md)、[居中布局与发光条](docs/centered-glow.md)、[按键与 standby](docs/button-calendar.md)、[10 秒自动回日历](docs/standby-timeout.md)。
 
 - [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api)
 - [固件 1.2.4 OpenAPI](https://api.busy.app/busybar/openapi.yaml?Name=1.2.4)

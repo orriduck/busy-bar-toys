@@ -16,7 +16,15 @@ Validation completed:
 - Device rendering verified the white full-height standby and yellow approval glow. Native blue motion remains the existing verified animation. Clearing only this app restored the original firmware calendar, captured below.
 - Visual inspection confirmed all three lights and readable clock/network values. The state cards are explicitly labeled on-device demos; they do not represent the current task lifecycle.
 
-**Acceptance still pending: physical Start/Pause on this device.** At this check the USB address was unreachable, direct local Wi-Fi HTTP was unreachable, and a cloud stream-ticket exchange using the existing BAR token returned 401. The installed listener therefore reports `button_input.connected=false`. Color updates are live; button switching cannot work until a local input connection is available. The process automatically retries the documented USB address, so connecting a data cable does not require a code change. No Wi-Fi password, device access mode, network routing or account settings were changed, and no new tokens were created.
+**Acceptance still pending: physical Start/Pause on this device.** At the initial check, USB and direct local Wi-Fi HTTP were unreachable, and a cloud stream-ticket exchange using the existing BAR token returned 401. Cloud drawing works independently of the local input connection.
+
+The user subsequently selected Wi-Fi. The observer now supports a private `input.json` with the device's actual local address and a dedicated `app.busybar.local-input` Keychain credential. `input-wifi` obtains that address from the bound device's cloud API and provisions/reuses its local access token; it preserves the existing device access mode and password. Status reports the selected transport separately from actual stream connectivity. Authentication failures stop retries; connection failures use bounded backoff. DHCP address changes require re-running setup and reinstalling the observer.
+
+The Wi-Fi investigation discovered the exact device through the official SDK's mDNS discovery. Its advertised address matched the live cloud Wi-Fi status, but direct TCP/HTTP timed out and Chrome reported `ERR_ADDRESS_UNREACHABLE`. This does not establish the cause; client isolation, routing, or another local network condition still needs investigation. No Wi-Fi password, access mode, router settings, macOS permissions or account settings were changed.
+
+The deployed service has now been configured for Wi-Fi, with its dedicated local access token stored and read back successfully from Keychain. The private configuration contains only `addr` and has mode 0600. Live status confirms cloud connected, service running, and `button_input.transport=wifi`, while `button_input.connected=false` / `error=unavailable` confirms the remaining connectivity failure. The full suite now passes 100 local tests. A scan of all tracked/candidate files against both actual credentials found no credential leakage.
+
+[Ten-second automatic return to the native calendar](standby-timeout.md) has passed separate actual-device acceptance and does not depend on the pending button stream.
 
 ![Original calendar and explicitly labeled device state demos](images/actual-standby-states.png)
 

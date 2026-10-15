@@ -20,8 +20,8 @@ from .runtime import RUNTIME, SPOOL, hook_event, write_event, read_spool
 from .frames import decode_frame
 from .animation import ANIMATION_FILE, thinking_animation
 from .network import NetworkSampler, NetworkRates
-from .view import ViewMode
-from .device_input import InputMonitor, read_input_status
+from .view import ViewMode, StandbyTimer
+from .device_input import configured_input_monitor, read_input_status
 
 LABEL = "app.busybar.ai-status"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
@@ -108,7 +108,8 @@ def watch(args):
     animation_uploaded = False
     network = NetworkSampler()
     view = ViewMode(RUNTIME / "view.json")
-    monitor = InputMonitor()
+    standby_timer = StandbyTimer()
+    monitor = configured_input_monitor(RUNTIME)
     last_input_status = 0
     try:
         monitor.start()
@@ -136,6 +137,14 @@ def watch(args):
                 LOG.info("View: calendar")
                 next_draw = min(next_draw, now)
             allowed = view.allows(turns, known_turns=known_turns)
+            standby = task is None or task.state in {"done", "stopped"}
+            if not allowed or not standby:
+                standby_timer.reset()
+            elif standby_timer.expired(time.monotonic()):
+                view.dismiss(known_turns)
+                allowed = False
+                next_draw = min(next_draw, now)
+                LOG.info("View: calendar (standby 10s)")
             if was_calendar != view.calendar:
                 next_draw = min(next_draw, now)
                 if not view.calendar: LOG.info("View: codex")
@@ -154,7 +163,10 @@ def watch(args):
                         if task and task.state == "working" and not animation_uploaded:
                             client.upload_asset(ANIMATION_FILE, thinking_animation())
                             animation_uploaded = True
-                        owned = client.draw(make_payload(task, now, registry.active_count(now), rates)) or owned
+                        drawn = client.draw(make_payload(task, now, registry.active_count(now), rates))
+                        owned = drawn or owned
+                        if drawn and standby:
+                            standby_timer.shown(time.monotonic())
                     elif owned:
                         client.clear()
                         owned = False
@@ -234,7 +246,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     observe = sub.add_parser("watch", help="Watch local Codex lifecycle events")
     observe.add_argument("--dot-thread", action="append", default=[], help="Explicit dots identity override; never fabricates status")
-    for name in ("status", "install", "uninstall", "clear", "token-set"):
+    for name in ("status", "install", "uninstall", "clear", "token-set", "input-wifi"):
         sub.add_parser(name)
     for name in ("preview", "capture"):
         command = sub.add_parser(name)
@@ -261,6 +273,14 @@ def main(argv=None):
         if args.command == "capture": return capture(args)
         if args.command == "demo": return demo(args)
         if args.command == "clear": return BusyAPI(read_token()).clear() and 0
+        if args.command == "input-wifi":
+            from .credentials import INPUT_HELPER
+            from .wifi_setup import configure_wifi
+            if not INPUT_HELPER.exists():
+                raise RuntimeError("Compile scripts/input-keychain.swift first; see README.")
+            configure_wifi(BusyAPI(read_token()), RUNTIME)
+            print("Wi-Fi input configured. Run install, then check button_input.connected in status.")
+            return 0
         if args.command == "status":
             state = BusyAPI(read_token()).status()
             service = _service("print")

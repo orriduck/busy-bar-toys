@@ -60,3 +60,19 @@ class ViewMode:
             self._save()
             return True
         return False
+
+
+class StandbyTimer:
+    """Ten seconds of actually displayed standby, independent of clock changes."""
+    def __init__(self):
+        self._since = None
+
+    def shown(self, now):
+        if self._since is None:
+            self._since = now
+
+    def reset(self):
+        self._since = None
+
+    def expired(self, now):
+        return self._since is not None and now-self._since >= 10

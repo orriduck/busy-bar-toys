@@ -13,6 +13,8 @@ from busylib.state_stream_proto import state_pb2,input_pb2
 from google.protobuf.message import DecodeError
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus, WebSocketException
+from .api import AuthError
+from .credentials import read_input_token
 
 MAX_FRAME = 262144
 
@@ -46,24 +48,32 @@ def read_input_status(path, *, now=None):
         error=data.get('error')
         if error not in ('', 'unavailable','auth','protocol'):
             return unavailable
-        return {'connected':data.get('connected') is True,'error':error}
+        transport=data.get('transport','usb')
+        if transport not in ('usb','wifi'):
+            return unavailable
+        return {'connected':data.get('connected') is True,'error':error,'transport':transport}
     except (OSError,ValueError,TypeError,AttributeError):
         return unavailable
 
 
 class InputMonitor:
-    def __init__(self, *, addr='10.0.4.20', token=None):
+    def __init__(self, *, addr='10.0.4.20', token=None, enabled=True,
+                 transport='usb', error='unavailable'):
         parsed=urlsplit('//'+addr)
         if parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
             raise ValueError('Input address must be a local IP address')
         host=parsed.hostname or ''
         if not ipaddress.ip_address(host).is_private:
             raise ValueError('Input address must be a local IP address')
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError('Invalid local input port')
+        self.enabled=enabled
+        self.transport=transport
         self._url='ws://'+addr+'/api/status/ws'
         if token:
             self._url+='?'+urlencode({'x-api-token':token})
         self._connected=False
-        self._error='unavailable'
+        self._error=error
         self._pressed=threading.Event()
         self._pressed_lock=threading.Lock()
         self._stopping=threading.Event()
@@ -75,6 +85,7 @@ class InputMonitor:
     def connected(self): return self._connected
 
     def start(self):
+        if not self.enabled: return
         self._thread=threading.Thread(target=self._run,name='busy-bar-input',daemon=True)
         self._thread.start()
 
@@ -136,7 +147,8 @@ class InputMonitor:
             with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,delete=False) as stream:
                 temp=Path(stream.name)
                 try:
-                    json.dump({'connected':self.connected,'error':self._error,'timestamp':time.time()},stream)
+                    json.dump({'connected':self.connected,'error':self._error,
+                               'transport':self.transport,'timestamp':time.time()},stream)
                     stream.flush()
                     temp.replace(path)
                 finally:
@@ -155,3 +167,29 @@ class InputMonitor:
 
     def is_alive(self):
         return self._thread is not None and self._thread.is_alive()
+
+
+def configured_input_monitor(runtime):
+    """Use explicit private Wi-Fi configuration, otherwise retain USB input."""
+    try:
+        with (Path(runtime)/'input.json').open() as stream:
+            raw=stream.read(4097)
+        if len(raw)>4096:
+            raise ValueError('Input configuration is too large')
+        config=json.loads(raw)
+        if (not isinstance(config,dict) or 'addr' not in config
+                or set(config)-{'addr','device_id'}
+                or not isinstance(config['addr'],str)
+                or ('device_id' in config and not isinstance(config['device_id'],str))):
+            raise ValueError('Invalid input configuration')
+        # Validate the address before attempting any Keychain operation.
+        monitor=InputMonitor(addr=config['addr'],transport='wifi')
+    except FileNotFoundError:
+        return InputMonitor()
+    except (OSError,ValueError,TypeError,RecursionError):
+        return InputMonitor(enabled=False,transport='wifi',error='protocol')
+    try:
+        token=read_input_token()
+    except AuthError:
+        return InputMonitor(enabled=False,transport='wifi',error='auth')
+    return InputMonitor(addr=config['addr'],token=token,transport=monitor.transport)

@@ -10,6 +10,8 @@ from busylib.state_stream_proto import state_pb2,input_pb2
 from websockets.asyncio.server import serve
 
 from busybar_status.device_input import InputMonitor, start_pressed, read_input_status
+from busybar_status import device_input
+from busybar_status.api import AuthError
 
 
 def frame(button=input_pb2.START,action=input_pb2.PRESS):
@@ -51,6 +53,77 @@ class InputTests(unittest.TestCase):
             self.assertTrue(read_input_status(path,now=101)['connected'])
             path.write_text('broken')
             self.assertFalse(read_input_status(path,now=101)['connected'])
+
+
+class InputConfigTests(unittest.TestCase):
+    def factory(self):
+        factory=getattr(device_input,'configured_input_monitor',None)
+        self.assertIsNotNone(factory,'Configured Wi-Fi input must not block the cloud observer')
+        return factory
+
+    def test_absent_config_keeps_usb_without_reading_a_local_token(self):
+        factory=self.factory()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(device_input,'read_input_token',create=True) as read:
+            monitor=factory(Path(directory))
+        self.assertTrue(monitor.enabled)
+        self.assertEqual(monitor.transport,'usb')
+        read.assert_not_called()
+
+    def test_private_wifi_config_loads_token_only_from_keychain(self):
+        factory=self.factory()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'input.json').write_text(json.dumps({'addr':'192.168.99.189',
+                                                      'device_id':'synthetic-device'}))
+            with patch.object(device_input,'read_input_token',return_value='synthetic-secret',
+                              create=True) as read:
+                monitor=factory(root)
+            self.assertTrue(monitor.enabled)
+            self.assertEqual(monitor.transport,'wifi')
+            self.assertIn('192.168.99.189/api/status/ws?',monitor._url)
+            self.assertIn('x-api-token=synthetic-secret',monitor._url)
+            self.assertNotIn('synthetic-secret',(root/'input.json').read_text())
+            read.assert_called_once_with()
+
+    def test_invalid_config_disables_input_without_reading_credentials_or_connecting(self):
+        factory=self.factory()
+        invalid=['broken','[]',json.dumps({'addr':'8.8.8.8'}),
+                 json.dumps({'addr':'192.168.1.2:wrong'}),
+                 json.dumps({'addr':'192.168.1.2','token':'must-not-be-in-config'}),
+                 json.dumps({'addr':'192.168.1.2','device_id':[]})]
+        for raw in invalid:
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                (root/'input.json').write_text(raw)
+                with patch.object(device_input,'read_input_token',create=True) as read, \
+                     patch.object(threading.Thread,'start') as start:
+                    monitor=factory(root)
+                    monitor.start()
+                    self.assertFalse(monitor.enabled)
+                    self.assertEqual(monitor.transport,'wifi')
+                    monitor.write_status(root/'status.json')
+                    self.assertEqual(read_input_status(root/'status.json')['error'],'protocol')
+                read.assert_not_called()
+                start.assert_not_called()
+
+    def test_keychain_failure_is_disabled_auth_and_diagnostics_include_transport(self):
+        factory=self.factory()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'input.json').write_text(json.dumps({'addr':'192.168.1.2'}))
+            with patch.object(device_input,'read_input_token',side_effect=AuthError('unavailable'),
+                              create=True) as read, \
+                 patch.object(threading.Thread,'start') as start:
+                monitor=factory(root)
+                monitor.start()
+                monitor.write_status(root/'status.json')
+                self.assertFalse(monitor.enabled)
+                self.assertEqual(read_input_status(root/'status.json'),
+                                 {'connected':False,'error':'auth','transport':'wifi'})
+                self.assertNotIn('synthetic-secret',(root/'status.json').read_text())
+            read.assert_called_once_with()
+            start.assert_not_called()
 
 
 class StreamTests(unittest.IsolatedAsyncioTestCase):
