@@ -16,7 +16,7 @@
 | 组件 | 显示内容 | App |
 |---|---|---|
 | [Agent checker](agent-checker/README.md) | 任务状态、来源图标、时钟、网络速度。 | Codex、Your dot、Claude Code |
-| [Notifier](notifier/README.md) | 带翻牌入场动画的简短通知。 | ADSBao、Datadog、GitHub、Jira、Metaflow、Terminal、Credentials、Calendar |
+| [Notifier](notifier/README.md) | 带逐字滚动入场动画的简短通知。 | ADSBao、Datadog、GitHub、Jira、Metaflow、Terminal、Credentials、Calendar |
 
 见[全部 app 及其要求](apps/README.md)。
 

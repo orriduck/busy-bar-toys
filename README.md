@@ -16,7 +16,7 @@ See the [actual device capture](docs/images/actual-staggered-intro.png) for comp
 | Component | Display | Apps |
 |---|---|---|
 | [Agent checker](agent-checker/README.md) | Task status, source icon, clock, and network rate. | Codex, Your dot, Claude Code |
-| [Notifier](notifier/README.md) | Short alerts with a split-flap entrance. | ADSBao, Datadog, GitHub, Jira, Metaflow, Terminal, Credentials, Calendar |
+| [Notifier](notifier/README.md) | Short alerts with staggered character rolls. | ADSBao, Datadog, GitHub, Jira, Metaflow, Terminal, Credentials, Calendar |
 
 See [all apps and their requirements](apps/README.md).
 
