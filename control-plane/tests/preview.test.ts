@@ -778,3 +778,117 @@ it("drops a completed in-flight frame after demand stops without losing the publ
   await view.cancel();
   socket.close();
 });
+
+it.each([
+  "revoke",
+  "credential",
+  "capability",
+  "disabled",
+  "epoch",
+  "disconnect",
+])(
+  "aborts a backpressured frame before publisher %s can deliver it",
+  async (operation) => {
+    const s = await setup(),
+      hash = await digest(s.credential.split(".")[2]);
+    await runInDurableObject(
+      env.DEVICES.getByName(s.deviceId),
+      async (instance, ctx) => {
+        if (operation === "epoch") {
+          const store = new StateStore(ctx.storage),
+            state = store.load()!;
+          state.services.bridge.epochExpiresAt = Date.now() + 300;
+          store.save(state);
+        }
+        const auth = {
+          kind: "session" as const,
+          id: s.id,
+          expiresAt: Date.now() + 60000,
+        };
+        const internal = (
+          path: string,
+          role: unknown,
+          extra: Record<string, string> = {},
+        ) =>
+          instance.fetch(
+            new Request("https://device.internal" + path, {
+              headers: {
+                "X-Busy-Internal-Auth": JSON.stringify(role),
+                ...extra,
+              },
+            }),
+          );
+        const response = await internal(
+          "/api/preview/publish",
+          { kind: "publisher", serviceId: "bridge", hash },
+          {
+            Upgrade: "websocket",
+            "X-Busy-Instance": "mac",
+            "X-Busy-Epoch": s.epoch,
+          },
+        );
+        expect(response.status).toBe(101);
+        const socket = response.webSocket!,
+          events = messages(socket);
+        await waitMessage(events, "demand");
+        const viewer = await internal(
+            "/api/preview/frames/" + s.deviceId,
+            auth,
+          ),
+          reader = viewer.body!.getReader();
+        await readEvent(reader, "preview");
+        await waitMessage(events, "demand", (v) => v.enabled);
+        socket.send(
+          JSON.stringify({
+            type: "frame",
+            sequence: 1,
+            capturedAt: Date.now(),
+            pixels,
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const accepted = await internal("/api/preview/status", auth);
+        expect(((await accepted.json()) as any).lastSequence).toBe(1);
+        if (operation === "epoch")
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        else if (operation === "disconnect") {
+          socket.close();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        } else {
+          const path =
+            operation === "revoke" || operation === "credential"
+              ? "/api/services/bridge/" + operation
+              : "/api/services/bridge";
+          const body =
+            operation === "capability"
+              ? { expectedRevision: 1, config: { allowPreview: false } }
+              : operation === "disabled"
+                ? { expectedRevision: 1, config: { enabled: false } }
+                : { expectedRevision: 1 };
+          const result = await instance.handle(
+            auth,
+            path,
+            operation === "capability" || operation === "disabled"
+              ? "PATCH"
+              : "POST",
+            body,
+          );
+          expect(result.status).toBe(200);
+        }
+        const next = await reader.read().then(
+          (result) => (result.done ? "closed" : "event"),
+          (error) => String(error.message),
+        );
+        expect(next).toBe("PREVIEW_VIEWER_CLOSED");
+        const status = await internal("/api/preview/status", auth);
+        expect(await status.json()).toMatchObject({
+          connected: false,
+          lastFrameAt: null,
+          lastSequence: null,
+          viewers: 0,
+        });
+        socket.close();
+      },
+    );
+  },
+);

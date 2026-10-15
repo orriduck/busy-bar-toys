@@ -505,6 +505,11 @@ export class PreviewRelay {
     this.publisher = null;
     clearTimeout(p.timer);
     this.clearFrame();
+    // A backpressured writer owns an already encoded event, independently of
+    // latest/framePending. Abort that transport before invalidation returns so
+    // it cannot deliver a frame from the disconnected publisher afterwards.
+    for (const [id, viewer] of this.viewers)
+      if (viewer.writing) this.removeViewer(id, true, false);
     try {
       p.socket.close(1008, code);
     } catch {}
