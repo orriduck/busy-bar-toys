@@ -458,6 +458,8 @@ class PreviewBridge:
                 if client is None:
                     self._update(connected=False,demand=False)
                     await asyncio.sleep(.05); continue
+                session_started=None
+                with self._diag_lock: sent_before=self._diag['sent']
                 try:
                     url,headers,device_id=client.http._preview_connection(client.config)
                     with client._snapshot_lock:
@@ -465,7 +467,7 @@ class PreviewBridge:
                     async with NoRedirectConnect(url,additional_headers=headers,proxy=None,compression=None,
                             open_timeout=3,close_timeout=.3,ping_interval=10,ping_timeout=10,
                             max_size=MAX_MESSAGE,max_queue=4,logger=_QUIET) as ws:
-                        backoff=1
+                        session_started=time.monotonic()
                         await self._session(ws,client,device_id)
                 except InvalidStatus as error:
                     status=error.response.status_code
@@ -489,6 +491,11 @@ class PreviewBridge:
                 except (OSError,TimeoutError,asyncio.TimeoutError,ValueError): self._update(status='unavailable')
                 finally:
                     self._invalidate(); self._update(connected=False)
+                    with self._diag_lock: delivered=self._diag['sent']>sent_before
+                    # A handshake alone doesn't prove LAN capture or sustained
+                    # socket health. Preserve retries across immediate failures.
+                    if delivered or (session_started is not None and time.monotonic()-session_started>=15):
+                        backoff=1
                 self.write_status()
                 if self._eligible(client) and id(client) not in self._blocked:
                     # Interruptible backoff also observes capability revocation.

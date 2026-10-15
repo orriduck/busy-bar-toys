@@ -600,4 +600,47 @@ class PreviewReviewRegressionTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(task,return_exceptions=True)
 
 
+class PreviewBackoffTest(unittest.IsolatedAsyncioTestCase):
+    async def run_sessions(self,*,healthy=None):
+        from types import SimpleNamespace
+        clock=[100.0]; attempts=[]; ended=[]
+        client=client_for('http://localhost:1234')
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        real_sleep=asyncio.sleep
+        async def advance(delay):
+            clock[0]+=delay
+            await real_sleep(0)
+        class Connected:
+            def __init__(self,*args,**kwargs): pass
+            async def __aenter__(self): return object()
+            async def __aexit__(self,*args): pass
+        async def session(*args):
+            attempts.append(clock[0])
+            if len(attempts)==3:
+                if healthy=='frame': bridge._count('sent')
+                if healthy=='sustained': clock[0]+=15
+            if len(attempts)==4: bridge._stop.set()
+            ended.append(clock[0])
+            raise preview.PreviewError('unavailable')
+        fake_time=SimpleNamespace(monotonic=lambda:clock[0],time=time.time)
+        with patch.object(preview,'time',fake_time), patch.object(preview.asyncio,'sleep',advance), \
+             patch.object(preview,'NoRedirectConnect',Connected), patch.object(bridge,'_session',session):
+            await bridge.run()
+        return [attempts[i+1]-ended[i] for i in range(3)]
+
+    async def test_three_consecutive_capture_failures_keep_increasing_backoff(self):
+        delays=await self.run_sessions()
+        for actual,expected in zip(delays,(1,2,4)):
+            self.assertGreaterEqual(actual,expected-.001)
+            self.assertLess(actual,expected+.1)
+
+    async def test_frame_delivery_or_sustained_session_resets_backoff(self):
+        for healthy in ('frame','sustained'):
+            with self.subTest(healthy=healthy):
+                delays=await self.run_sessions(healthy=healthy)
+                for actual,expected in zip(delays,(1,2,1)):
+                    self.assertGreaterEqual(actual,expected-.001)
+                    self.assertLess(actual,expected+.1)
+
+
 if __name__=='__main__': unittest.main()
