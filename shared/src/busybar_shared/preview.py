@@ -486,7 +486,9 @@ class PreviewBridge:
                     received=getattr(error,'rcvd',None)
                     reason=getattr(received,'reason','')
                     if reason=='PREVIEW_CAPABILITY_REQUIRED': self._blocked[id(client)]='capability'
-                    elif getattr(received,'code',None)==1008: self._blocked[id(client)]='terminal'
+                    elif (getattr(received,'code',None)==1008
+                          and reason not in ('PREVIEW_PUBLISHER_IDLE','PREVIEW_DISCONNECTED')):
+                        self._blocked[id(client)]='terminal'
                     self._update(status='unavailable')
                 except (OSError,TimeoutError,asyncio.TimeoutError,ValueError): self._update(status='unavailable')
                 finally:

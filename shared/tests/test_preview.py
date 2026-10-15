@@ -643,4 +643,35 @@ class PreviewBackoffTest(unittest.IsolatedAsyncioTestCase):
                     self.assertLess(actual,expected+.1)
 
 
+class PreviewRelayCloseTest(unittest.IsolatedAsyncioTestCase):
+    wait_until=PreviewBridgeTest.wait_until
+
+    async def test_idle_and_disconnected_policy_closes_retry_but_auth_close_is_terminal(self):
+        from websockets.asyncio.server import serve
+        for reason in ('PREVIEW_PUBLISHER_IDLE','PREVIEW_DISCONNECTED','UNAUTHORIZED'):
+            with self.subTest(reason=reason):
+                attempts=[]; factories=[]
+                async def handler(ws):
+                    attempts.append(time.monotonic())
+                    if len(attempts)==1: await ws.close(code=1008,reason=reason)
+                    else: await ws.wait_closed()
+                async with serve(handler,'127.0.0.1',0) as server:
+                    url='http://127.0.0.1:'+str(server.sockets[0].getsockname()[1])
+                    bridge=preview.PreviewBridge('.',{'agent':client_for(url)},status_path=None,
+                                                 device_factory=lambda _:factories.append(True) or FakeDevice())
+                    task=asyncio.create_task(bridge.run())
+                    try:
+                        await self.wait_until(lambda:len(attempts)>=1)
+                        if reason=='UNAUTHORIZED':
+                            await asyncio.sleep(1.2)
+                            self.assertEqual(len(attempts),1)
+                        else:
+                            await self.wait_until(lambda:len(attempts)==2 and bridge.diagnostics()['connected'])
+                            self.assertGreaterEqual(attempts[1]-attempts[0],.9)
+                        self.assertEqual(factories,[])
+                    finally:
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError): await task
+
+
 if __name__=='__main__': unittest.main()
