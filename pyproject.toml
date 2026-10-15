@@ -14,12 +14,12 @@ Repository = "https://github.com/orriduck/busy-bar-toys"
 Documentation = "https://github.com/orriduck/busy-bar-toys#readme"
 
 [project.scripts]
-busy-bar = "busybar_status.cli:main"
+busy-bar = "busybar_service.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["codex-checker/src", "adsbao-checker/src", "shared/src"]
+where = ["shared/src", "agent-checker/src", "notifier/src", "apps/src", "service/src"]
 
 [tool.setuptools.package-data]
-busybar_status = ["assets/*"]
+busybar_agents = ["assets/*"]
 busybar_shared = ["assets/*"]
 

@@ -15,8 +15,8 @@ See the [actual device capture](docs/images/actual-staggered-intro.png) for comp
 
 | Toy | Display |
 |---|---|
-| [Codex checker](codex-checker/README.md) | Task status, ChatGPT or Your dot icon, clock, and network rate. |
-| [ADSBao checker](adsbao-checker/README.md) | An alert for an aircraft within three statute miles. |
+| [Codex checker](agent-checker/README.md) | Task status, ChatGPT or Your dot icon, clock, and network rate. |
+| [ADSBao checker](apps/src/busybar_apps/adsbao/README.md) | An alert for an aircraft within three statute miles. |
 
 ### Codex status
 
@@ -161,7 +161,7 @@ Press Start/Pause to dismiss either toy and show the calendar.
 
 An ADSBao API key is not required.
 The checker rejects old locations, inaccurate locations, stale aircraft positions, and aircraft on the ground.
-See [aircraft setup and encounter rules](adsbao-checker/README.md) for details.
+See [aircraft setup and encounter rules](apps/src/busybar_apps/adsbao/README.md) for details.
 
 ## Check or stop the service
 
@@ -245,13 +245,13 @@ CI runs the suite on Python 3.10 and 3.14.
 Add focused tests for code changes and run this suite before a pull request.
 Keep mock data clearly identified in previews and demonstrations.
 
-See [Codex events and hooks](codex-checker/README.md), [shared components](shared/README.md), and [motion verification](docs/weighted-motion.md).
+See [Codex events and hooks](agent-checker/README.md), [shared components](shared/README.md), and [motion verification](docs/weighted-motion.md).
 
 ## Sources
 
 - [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api).
 - [Native font source and license](shared/src/busybar_shared/assets/font-source.txt).
-- [Icon notices](codex-checker/src/busybar_status/assets/NOTICE.md).
+- [Icon notices](agent-checker/src/busybar_agents/assets/NOTICE.md).
 - Writing principles: [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/).
 
 This project is independent of BUSY, OpenAI, and ADSBao.

@@ -13,7 +13,7 @@ import tempfile
 def build(repo: Path, output: Path) -> Path:
     if sys.platform != 'darwin':
         raise RuntimeError('The location helper can only be built on macOS.')
-    source = repo / 'adsbao-checker/macos'
+    source = repo / 'apps/src/busybar_apps/adsbao/macos'
     metadata = plistlib.loads((source / 'Info.plist').read_bytes())
     if metadata.get('CFBundleIdentifier') != 'app.busybar.location':
         raise RuntimeError('Unexpected location helper application identity.')

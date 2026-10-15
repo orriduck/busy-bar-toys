@@ -15,8 +15,8 @@
 
 | 小工具 | 显示内容 |
 |---|---|
-| [Codex checker](codex-checker/README.md) | 任务状态、ChatGPT 或 Your dot 图标、时钟、网络速度。 |
-| [ADSBao checker](adsbao-checker/README.md) | 飞机进入三英里范围时的临时提示。 |
+| [Codex checker](agent-checker/README.md) | 任务状态、ChatGPT 或 Your dot 图标、时钟、网络速度。 |
+| [ADSBao checker](apps/src/busybar_apps/adsbao/README.md) | 飞机进入三英里范围时的临时提示。 |
 
 ### Codex 状态
 
@@ -161,7 +161,7 @@ Wi-Fi 按键功能要求 Mac 与 Bar 在局域网内互通。
 
 此功能无需 ADSBao API key。
 服务会过滤过期或精度不足的定位、过期飞机位置，以及地面飞机。
-详细设置与去重规则见[飞机功能说明](adsbao-checker/README.md)。
+详细设置与去重规则见[飞机功能说明](apps/src/busybar_apps/adsbao/README.md)。
 
 ## 检查或停止服务
 
@@ -245,13 +245,13 @@ CI 使用 Python 3.10 和 3.14 运行测试。
 修改代码时，添加有针对性的测试，并在提交拉取请求前运行全部测试。
 预览和设备演示须明确标记模拟数据。
 
-更多资料见 [Codex 事件与 hooks](codex-checker/README.md)、[共享组件](shared/README.md)和[动效验证](docs/weighted-motion.md)。
+更多资料见 [Codex 事件与 hooks](agent-checker/README.md)、[共享组件](shared/README.md)和[动效验证](docs/weighted-motion.md)。
 
 ## 资料来源
 
 - [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api)。
 - [原生字体来源与许可证](shared/src/busybar_shared/assets/font-source.txt)。
-- [图标说明](codex-checker/src/busybar_status/assets/NOTICE.md)。
+- [图标说明](agent-checker/src/busybar_agents/assets/NOTICE.md)。
 - 英文写作原则：[ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/)。
 
 中文说明沿用英文版的短句、明确术语和单步操作结构。
