@@ -1,4 +1,5 @@
 /** Fence asynchronous work to the verified device and the login that started it. */
+export { PreviewFence, FramePacer, frameIsFresh } from "./preview-session";
 export class SessionFence {
   generation = 0;
   deviceId: string | null = null;

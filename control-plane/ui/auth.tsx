@@ -30,13 +30,8 @@ export function SignIn({
     }
   };
   return (
-    <main className="signin">
-      <div className="signin-rule" />
-      <h1>
-        One display.
-        <br />
-        Everything in order.
-      </h1>
+    <section className="signin">
+      <h1>Connect your BUSY Bar</h1>
       <p>
         Connect your BUSY Bar to manage display services and see what is next.
       </p>
@@ -66,7 +61,7 @@ export function SignIn({
           to real hardware.
         </p>
       )}
-    </main>
+    </section>
   );
 }
 export function Credential({
@@ -92,7 +87,17 @@ export function Credential({
     const prior = document.activeElement;
     closeRef.current?.focus();
     return () => {
-      if (prior instanceof HTMLElement) prior.focus();
+      if (
+        prior instanceof HTMLElement &&
+        prior !== document.body &&
+        prior.isConnected &&
+        !prior.closest("[hidden]")
+      )
+        prior.focus();
+      else
+        document
+          .querySelector<HTMLButtonElement>('nav button[aria-current="page"]')
+          ?.focus();
     };
   }, []);
   const copy = async () => {
@@ -116,7 +121,7 @@ export function Credential({
           if (event.key === "Escape") onClose();
           if (event.key === "Tab") {
             const nodes = event.currentTarget.querySelectorAll<HTMLElement>(
-              "button,textarea,input",
+              'button:not(:disabled),textarea:not(:disabled),input:not(:disabled),a[href],select:not(:disabled),[tabindex="0"]',
             );
             const first = nodes[0],
               last = nodes[nodes.length - 1];
@@ -181,7 +186,7 @@ export function Credential({
           <p>
             Use the{" "}
             <a
-              href="https://github.com/orriduck/busy-bar-toys/blob/feat/control-plane/control-plane/PROTOCOL.md"
+              href="https://github.com/orriduck/busy-bar-toys/blob/main/control-plane/PROTOCOL.md"
               target="_blank"
               rel="noreferrer"
             >
