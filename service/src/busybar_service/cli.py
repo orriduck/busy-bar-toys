@@ -15,8 +15,12 @@ import time
 from busybar_shared.api import BusyAPI, APIError, AuthError, ConnectionError
 from busybar_shared.credentials import read_token
 from busybar_agents.display import make_payload, render, source_icon
-from busybar_agents.events import Task, TaskRegistry, RolloutWatcher, load_dot_thread_ids
-from busybar_agents.runtime import RUNTIME, SPOOL, hook_event, write_event, read_spool
+from busybar_agents.events import Task
+from busybar_agents import profiles
+from busybar_apps import load_agents
+from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry, RolloutWatcher
+from busybar_apps.dots.orbit import load_dot_thread_ids
+from busybar_agents.runtime import RUNTIME, SPOOL, hook_event, read_event, write_event, read_spool
 from busybar_shared.frames import decode_frame
 from busybar_agents.animation import ANIMATION_FILE, thinking_animation
 from busybar_agents.network import NetworkSampler, NetworkRates
@@ -30,6 +34,7 @@ LABEL = "app.busybar.ai-status"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
 REPO = Path(__file__).resolve().parents[3]
 LOG = logging.getLogger("busy-bar")
+load_agents()
 
 
 def _service(action, *, check=False):
@@ -339,7 +344,7 @@ def main(argv=None):
         command = sub.add_parser(name)
         command.add_argument("--output", default=".local/"+name)
     command = sub.add_parser("demo", help="Show a finite, explicitly labeled demo")
-    command.add_argument("--source", choices=("chatgpt", "dots"), default="chatgpt")
+    command.add_argument("--source", choices=sorted(profiles.sources()), default="chatgpt")
     command.add_argument("--state", choices=("working", "waiting", "done", "error", "stopped"), default="working")
     command.add_argument("--seconds", type=int, choices=range(1,61), default=5, metavar="1..60")
     command=sub.add_parser('motion-demo',help='Show finite DEMO transitions with synthetic clock and rates')
@@ -347,12 +352,12 @@ def main(argv=None):
     command.add_argument('--reduced-motion',action='store_true')
     command = sub.add_parser("emit", help="Emit a real lifecycle state from an external tool")
     command.add_argument("state", choices=("working", "waiting", "done", "error", "stopped"))
-    command.add_argument("--source", choices=("chatgpt", "dots"), default="chatgpt")
+    command.add_argument("--source", choices=sorted(profiles.sources()), default="chatgpt")
     command.add_argument("--session-id", required=True)
     command.add_argument("--turn-id", required=True)
     command.add_argument("--project", default="AI task")
     command = sub.add_parser("hook", help="Consume structured hook JSON on stdin")
-    command.add_argument("--source", choices=("chatgpt", "dots"), default="chatgpt")
+    command.add_argument("--source", choices=sorted(profiles.sources()), default="chatgpt")
     from busybar_apps.adsbao.commands import register as register_aircraft_commands
     register_aircraft_commands(sub)
     args = parser.parse_args(argv)
@@ -406,7 +411,11 @@ def main(argv=None):
         elif args.command == "hook":
             raw = sys.stdin.buffer.read(1_048_577)
             if len(raw) > 1_048_576: return 0
-            try: event = hook_event(json.loads(raw), source=args.source)
+            try:
+                payload = json.loads(raw)
+                previous = read_event(SPOOL, payload.get("session_id")) if isinstance(payload, dict) else None
+                event = hook_event(payload, source=args.source,
+                                   previous_turn=previous.get("turn_id") if previous else None)
             except (ValueError, UnicodeError): return 0
             if event: write_event(SPOOL, event)
         return 0

@@ -36,7 +36,7 @@ if __name__=='__main__': unittest.main()
 
 class ButtonWatchTests(unittest.TestCase):
     def test_start_blocks_stale_turn_heartbeat_until_a_new_turn(self):
-        from busybar_agents.events import TaskRegistry
+        from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
         registry=TaskRegistry()
         registry.ingest({'session_id':'one','turn_id':'old','state':'working','timestamp':100})
         def poll(now):
@@ -68,7 +68,7 @@ class ButtonWatchTests(unittest.TestCase):
             self.assertEqual(api.clear.call_count,2)
 
     def test_start_holds_native_calendar_through_old_turn_updates_and_resumes_new_turn(self):
-        from busybar_agents.events import TaskRegistry
+        from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
         registry=TaskRegistry()
         poll_count=0
         def poll(now):
@@ -104,7 +104,7 @@ class ButtonWatchTests(unittest.TestCase):
 
 class StandbyWatchTests(unittest.TestCase):
     def test_ten_second_standby_returns_calendar_without_refresh_reset_and_next_turn_resumes(self):
-        from busybar_agents.events import TaskRegistry
+        from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
         registry=TaskRegistry()
         times=iter([100,101,107,110.999,111,116,117])
         current={'now':100}
@@ -143,7 +143,7 @@ class StandbyWatchTests(unittest.TestCase):
 
 class MotionWatchTests(unittest.TestCase):
     def test_real_motion_controller_keeps_timer_and_next_turn_semantics(self):
-        from busybar_agents.events import TaskRegistry
+        from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
         registry=TaskRegistry();current={'now':100}
         times=iter([100,100.5,101,101.3,101.6,111.59,111.61,111.9,112,113])
         def wall_time():

@@ -4,6 +4,9 @@ from types import SimpleNamespace
 from busybar_agents.display import render, make_payload, to_xpm, clock_text, thinking_offset
 from datetime import datetime, timezone
 from busybar_agents.network import NetworkRates
+from busybar_apps import load_agents
+
+load_agents()
 
 
 class DisplayTests(unittest.TestCase):
