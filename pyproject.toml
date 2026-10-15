@@ -13,8 +13,9 @@ dependencies = ["Pillow>=10.1,<13", "busylib==2.6.0", "websockets>=15,<18"]
 busy-bar = "busybar_status.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["codex-checker/src", "adsbao-checker/src", "shared/src"]
 
 [tool.setuptools.package-data]
 busybar_status = ["assets/*"]
+busybar_shared = ["assets/*"]
 

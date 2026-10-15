@@ -12,21 +12,21 @@ import subprocess
 import sys
 import time
 
-from .api import BusyAPI, APIError, AuthError, ConnectionError
-from .credentials import read_token
+from busybar_shared.api import BusyAPI, APIError, AuthError, ConnectionError
+from busybar_shared.credentials import read_token
 from .display import make_payload, render, source_icon
 from .events import Task, TaskRegistry, RolloutWatcher, load_dot_thread_ids
 from .runtime import RUNTIME, SPOOL, hook_event, write_event, read_spool
-from .frames import decode_frame
+from busybar_shared.frames import decode_frame
 from .animation import ANIMATION_FILE, thinking_animation
 from .network import NetworkSampler, NetworkRates
 from .view import ViewMode, StandbyTimer
-from .device_input import configured_input_monitor, read_input_status
+from busybar_shared.device_input import configured_input_monitor, read_input_status
 from .motion import MotionDirector
 
 LABEL = "app.busybar.ai-status"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 LOG = logging.getLogger("busy-bar")
 
 
@@ -317,8 +317,8 @@ def main(argv=None):
         if args.command == 'motion-demo': return motion_demo(args)
         if args.command == "clear": return BusyAPI(read_token()).clear() and 0
         if args.command == "input-wifi":
-            from .credentials import INPUT_HELPER
-            from .wifi_setup import configure_wifi
+            from busybar_shared.credentials import INPUT_HELPER
+            from busybar_shared.wifi_setup import configure_wifi
             if not INPUT_HELPER.exists():
                 raise RuntimeError("Compile scripts/input-keychain.swift first; see README.")
             configure_wifi(BusyAPI(read_token()), RUNTIME)

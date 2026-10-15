@@ -1,7 +1,7 @@
 import base64
 import unittest
 
-from busybar_status.frames import decode_frame
+from busybar_shared.frames import decode_frame
 
 
 class FrameTests(unittest.TestCase):

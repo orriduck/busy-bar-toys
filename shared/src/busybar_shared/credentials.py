@@ -5,7 +5,7 @@ from .api import AuthError
 
 SERVICE = "app.busybar.ai-status"
 ACCOUNT = "busy-bar"
-INPUT_HELPER = Path(__file__).resolve().parents[2] / ".venv/bin/busy-input-keychain"
+INPUT_HELPER = Path(__file__).resolve().parents[3] / ".venv/bin/busy-input-keychain"
 
 
 class InputTokenMissing(AuthError):

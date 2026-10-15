@@ -3,7 +3,7 @@ import json
 import unittest
 from urllib.error import HTTPError, URLError
 
-from busybar_status.api import BusyAPI, AuthError, ConnectionError
+from busybar_shared.api import BusyAPI, AuthError, ConnectionError
 
 
 class Response(io.BytesIO):
@@ -75,7 +75,7 @@ class APITests(unittest.TestCase):
         self.assertNotIn("private-secret", str(caught.exception))
 
     def test_redirect_cannot_forward_credentials(self):
-        from busybar_status.api import NoRedirect
+        from busybar_shared.api import NoRedirect
         from urllib.request import Request
         self.assertIsNone(NoRedirect().redirect_request(
             Request("https://api.busy.app/busybar/status"), None, 302,

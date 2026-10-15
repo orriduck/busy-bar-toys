@@ -182,7 +182,7 @@ class MotionWatchTests(unittest.TestCase):
                                 for t,p in draws))
 
     def test_asset_auth_failure_stops_the_observer_without_a_retry(self):
-        from busybar_status.api import AuthError
+        from busybar_shared.api import AuthError
         with tempfile.TemporaryDirectory() as directory:
             api=Mock();api.upload_asset.side_effect=AuthError('rejected')
             with patch('busybar_status.cli.RUNTIME',Path(directory)), \

@@ -109,7 +109,7 @@ class MotionTests(unittest.TestCase):
         self.assertEqual([e['id'] for e in self.api.draws[-1]['elements']],['motion-rate'])
 
     def test_asset_retry_keeps_completed_uploads(self):
-        from busybar_status.api import ConnectionError
+        from busybar_shared.api import ConnectionError
         original=self.api.upload_asset
         calls=[]
         def upload(name,data):

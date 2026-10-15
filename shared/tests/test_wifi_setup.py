@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from busybar_status.api import AuthError, APIError
-from busybar_status.credentials import InputTokenMissing
+from busybar_shared.api import AuthError, APIError
+from busybar_shared.credentials import InputTokenMissing
 
 
 WIFI={'state':'connected','ip_config':{'address':'192.168.99.189','ip_type':'ipv4'}}
@@ -16,7 +16,7 @@ TOKEN={'short_id':'Abcd1234','token':'Abcd1234synthetic-secret'}
 class WifiSetupTests(unittest.TestCase):
     def setUp(self):
         try:
-            self.setup=importlib.import_module('busybar_status.wifi_setup')
+            self.setup=importlib.import_module('busybar_shared.wifi_setup')
         except ModuleNotFoundError:
             self.fail('Reusable Wi-Fi setup must be available before CLI wiring')
 

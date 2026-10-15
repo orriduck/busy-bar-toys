@@ -9,9 +9,9 @@ from unittest.mock import patch
 from busylib.state_stream_proto import state_pb2,input_pb2
 from websockets.asyncio.server import serve
 
-from busybar_status.device_input import InputMonitor, start_pressed, read_input_status
-from busybar_status import device_input
-from busybar_status.api import AuthError
+from busybar_shared.device_input import InputMonitor, start_pressed, read_input_status
+from busybar_shared import device_input
+from busybar_shared.api import AuthError
 
 
 def frame(button=input_pb2.START,action=input_pb2.PRESS):
