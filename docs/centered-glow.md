@@ -1,5 +1,13 @@
 # Centered clock and vertical glow — 2026-10-14
 
+## Follow-up: align with the native calendar
+
+Reserving the left status gutter for centering shifted the main group three pixels to the right of the native calendar. The 45-pixel icon/clock group now centers on the full 72-pixel display, rounding its half-pixel origin to match native glyph alignment: icon x=14, clock panel x=29. The status light remains an edge overlay. The total-rate line moves with the clock. The existing display-centering check now targets the full screen instead of the remaining area after the gutter; all 102 tests pass.
+
+Actual device captures of the native calendar and the updated, explicitly labeled Codex DEMO confirmed identical horizontal clock bounds. Visual inspection confirmed that the main group no longer shifts right relative to the calendar; the one-column icon/text gap and compact traffic line remain intact.
+
+![Actual native calendar and aligned Codex DEMO](images/actual-calendar-alignment.png)
+
 ## Follow-up: native-calendar icon spacing
 
 The initial 40-pixel text panel centered a 30-pixel clock, adding five invisible columns to the intended icon/text gap. The visible clock and icon now form a centered 45-pixel group, with one empty column between them, matching the native calendar. The icon remains 14×14 and the clock retains its original glyphs. Short traffic lines center under the clock; longer lines use up to ten spare columns on the right without overlapping the icon or moving the clock.

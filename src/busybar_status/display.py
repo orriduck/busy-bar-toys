@@ -112,17 +112,20 @@ def render(task, now, count=1, rates=None):
     upload = rates.upload if rates else None
     download = rates.download if rates else None
     front = Image.new("RGB", (72, 16), "black")
-    # Center the visible 45px icon/clock group after the status gutter.
-    # Match the native calendar's single empty column between icon and text.
-    front.paste(source_icon(source, 14), (17, 1))
+    # Center on the full display, like the native calendar. The status light
+    # is an edge overlay and must not push the main content to the right.
+    icon_size, text_width, gap = 14, 30, 1
+    icon_x = round((front.width-icon_size-gap-text_width)/2)
+    text_x = icon_x+icon_size+gap
+    front.paste(source_icon(source, icon_size), (icon_x, 1))
     draw = ImageDraw.Draw(front)
     value = clock_text(now)
     clock_width = round(clock_font().getlength(value))
-    draw_clock(draw, (32 + (30-clock_width)//2, 1), value)
+    draw_clock(draw, (text_x + (text_width-clock_width)//2, 1), value)
     total = compact_rate(upload+download if upload is not None and download is not None else None)
     # Two activity indicators and a single aggregate rate fit under the clock.
     line_width = 10 + len(total)*4-1
-    left = 32 + (30-line_width)//2
+    left = text_x + (text_width-line_width)//2
     tiny_text(draw, (left, 10), "↑", "#FFBE45" if upload is not None and upload>0 else "#303030")
     tiny_text(draw, (left+4, 10), "↓", "#45D7FF" if download is not None and download>0 else "#303030")
     tiny_text(draw, (left+10, 10), total, "#505050")
