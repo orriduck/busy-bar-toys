@@ -48,6 +48,14 @@ swiftc scripts/cloud-keychain.swift -o .venv/bin/busy-cloud-keychain
 
 `--instance` 可省略；省略时保留原名称或生成稳定名称。重启后保留 instance 和签发的 epoch。可只配置一个角色；两个角色都配置后会同时运行两个采集器。
 
+本地 urgent 兜底默认等待 10 秒。每个角色都可以设置 1 到 300 的整数秒数：
+
+```sh
+.venv/bin/busy-bar cloud-setup --url http://localhost:8787 --role notifier --fallback-seconds 17
+```
+
+该值作为非秘密 `fallbackSeconds` 元数据保存，重启后仍然有效。旧元数据没有该字段时使用 10 秒。修改配置不会重置现有 occurrence 的期限。
+
 URL 必须是 origin，不能含路径、用户信息、query 或 fragment；禁止重定向。只有 loopback 本地开发地址可以使用 HTTP。
 
 ## 4. 前台运行
@@ -107,7 +115,7 @@ Notifier 发布所有来源的原始项。State 来源对应 condition，event �
 
 客户端复用现有 native renderer。通知场景包括完整入场、0.3 秒时出现的 detail 和最终画面。动画按内容哈希以 `anim` 类型上传。超出单元素大小限制的背屏 bitmap 无损转为 PNG 资产。Agent 的时钟和网络更新使用 native update，并保留完整恢复场景。
 
-Urgent watchdog 独立于 HTTP、SSE 和来源轮询运行。默认从本地首次识别起计时 10 秒。匹配的设备确认、有效 queue proof，或精确匹配已接纳成员版本的 coverage proof，可以推迟本地 macOS 通知。证明有效期有限，重复快照不会重置失败期限。证明过期或所有者退出后，最多再过 10 秒触发兜底。Pause 和 disable 会抑制兜底。首次识别时间、期限和通知去重状态在重启后保留。运行时采用单调时钟，并持久化其 UTC 映射；系统时钟回拨不会重置期限。Mac 睡眠后还会使用当前 UTC 推进有效时间，防止过期证明跨睡眠继续有效。设备确认只代表 API 写入被确认，不代表实体像素验收。
+Urgent watchdog 独立于 HTTP、SSE 和来源轮询运行。默认从本地首次识别起计时 10 秒。匹配的设备确认、有效 queue proof，或精确匹配已接纳成员版本的 coverage proof，可以推迟本地 macOS 通知。证明有效期有限，重复快照不会重置失败期限。证明过期或所有者退出后，最多再过一个配置的等待周期触发兜底，默认 10 秒。Pause 和 disable 会抑制兜底。首次识别时间、期限和通知去重状态在重启后保留。运行时采用单调时钟，并持久化其 UTC 映射；系统时钟回拨不会重置期限。Mac 睡眠后还会使用当前 UTC 推进有效时间，防止过期证明跨睡眠继续有效。设备确认只代表 API 写入被确认，不代表实体像素验收。
 
 ## 排错
 

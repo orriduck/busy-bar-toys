@@ -15,6 +15,16 @@ class CloudCLITest(unittest.TestCase):
                 self.assertEqual(cli.watch(SimpleNamespace(mode='cloud')),0)
                 cloud_watch.assert_called_once()
 
+    def test_cli_sends_bounded_fallback_setting_to_setup(self):
+        with patch('busybar_shared.cloud.HELPER') as helper, patch('busybar_shared.cloud.setup') as setup, \
+             patch('busybar_service.cli.getpass.getpass',return_value='private'):
+            helper.exists.return_value=True
+            self.assertEqual(cli.main(['cloud-setup','--url','http://localhost:8787','--role','notifier','--fallback-seconds','17']),0)
+            self.assertEqual(setup.call_args.kwargs['fallback_seconds'],17)
+        for value in ('0','301'):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                cli.main(['cloud-setup','--url','http://localhost:8787','--role','notifier','--fallback-seconds',value])
+
     def test_cloud_install_uses_only_cloud_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); plist=root/'agent.plist'

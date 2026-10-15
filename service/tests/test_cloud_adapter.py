@@ -62,6 +62,28 @@ class AdapterTest(unittest.TestCase):
             self.assertTrue(record['sourceUnknown'])
             self.assertFalse(record.get('cleared'))
 
+    def test_urgent_render_failure_keeps_deadline_and_later_recovers_same_identity(self):
+        from unittest.mock import patch
+        from busybar_shared.cloud import CloudError
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory); queue=CloudQueue(producer,reduced=True); notices=[]
+            producer.guard.notify=lambda *args:notices.append(args)
+            item=Notification('x','urgent','app','APP','Urgent','Detail',source='source')
+            with patch('busybar_service.cloud_adapter.notification_scene',side_effect=CloudError('local_asset_capacity')):
+                with self.assertRaises(CloudError): queue.set_state('source',[item])
+            record=producer.state.records['source:x']; ident=record['itemId']; deadline=record['deadline']
+            self.assertTrue(record['renderPending'])
+            producer.flush()
+            self.assertFalse(any(path=='/api/publish' for _,path,_ in producer.http.calls))
+            producer.guard.clock=lambda:111; producer.guard.monotonic=lambda:111
+            producer.guard.check(); self.assertEqual(notices,[('Urgent','Detail')])
+            queue.set_state('source',[item])
+            self.assertEqual(producer.state.records['source:x']['itemId'],ident)
+            self.assertEqual(producer.state.records['source:x']['deadline'],deadline)
+            self.assertFalse(producer.state.records['source:x']['renderPending'])
+            producer.flush()
+            self.assertTrue(any(path=='/api/publish' for _,path,_ in producer.http.calls))
+
     def test_notification_recovery_has_entry_detail_at_300ms_and_final(self):
         with tempfile.TemporaryDirectory() as directory:
             producer=self.producer(directory)
@@ -175,8 +197,8 @@ class AdapterTest(unittest.TestCase):
             item=Notification('x','info','app','APP','Title',source='source')
             queue.push([item]); ident=next(iter(producer.state.records.values()))['itemId']
             key=json.dumps(['notifier','mac',ident],separators=(',',':'))
-            snap={'protocol':1,'revision':1,'generation':1,'services':[], 'items':[{'itemId':ident,'itemKey':key,'instanceId':'mac','version':1}], 'displaying':None}
+            snap={'protocol':1,'revision':1,'generation':1,'services':[], 'items':[{'itemId':ident,'itemKey':key,'instanceId':'mac','version':producer.state.records['source:x']['version']}], 'displaying':None}
             producer.accept(snap); self.assertEqual(shown,[])
             snap.update(revision=2,health={'status':'healthy'},displaying={'itemKey':key,'generation':1,'confirmedValidUntil':110000})
-            snap['items'][0]['coverageProof']={'revision':2,'version':1,'itemKey':key,'controller':{'itemKey':key,'generation':1},'validUntil':110000}
+            snap['items'][0]['coverageProof']={'revision':2,'version':snap['items'][0]['version'],'itemKey':key,'controller':{'itemKey':key,'generation':1},'validUntil':110000}
             producer.accept(snap); self.assertEqual(shown,[item])

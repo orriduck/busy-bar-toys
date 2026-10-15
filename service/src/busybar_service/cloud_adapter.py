@@ -96,10 +96,16 @@ class CloudQueue:
         if item.group: content['groupKey']=item.group[:128]
         # A source callback object can change without a visual change.
         fingerprint=json.dumps(content,sort_keys=True)
-        if existing and existing.get('localFingerprint')==fingerprint and not existing.get('cleared'):
+        if (existing and existing.get('localFingerprint')==fingerprint and not existing.get('cleared')
+                and not existing.get('renderPending')):
             scene=existing['scene']
-        else: scene=notification_scene(self.producer,item,reduced=self.reduced)
-        record=self.producer.state.recognize(key,scene=scene,**content)
+        else:
+            # Recognition and the urgent deadline must survive rendering or
+            # asset-capacity failure. This placeholder is never sent to cloud.
+            pending=self.producer.state.recognize(key,scene=None,renderPending=True,**content)
+            if pending is None: return
+            scene=notification_scene(self.producer,item,reduced=self.reduced)
+        record=self.producer.state.recognize(key,scene=scene,renderPending=False,**content)
         if record:
             with self.producer.state.lock:
                 self.producer.state.records[key]['localFingerprint']=fingerprint; self.producer.state.save()

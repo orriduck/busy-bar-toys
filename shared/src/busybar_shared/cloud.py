@@ -6,6 +6,7 @@ separate execution paths. Durable state contains presentation data, never secret
 import base64
 import copy
 import hashlib
+from http.client import HTTPException
 import ipaddress
 import json
 import math
@@ -78,26 +79,49 @@ class Transport:
         try:
             return self._opener.open(Request(self.url+path,data=data,headers=headers,method=method), timeout=self.timeout)
         except HTTPError as error:
-            # Deliberately discard all remote text. Authentication errors terminate retries.
-            raise CloudError('unauthorized' if error.code in (401,403) else 'http_' + str(error.code),error.code) from None
-        except (URLError, OSError, TimeoutError, ValueError):
+            code='unauthorized' if error.code in (401,403) else 'http_' + str(error.code)
+            try:
+                if error.code==403:
+                    # Only these fixed protocol codes can change retry policy.
+                    # Never expose arbitrary remote bodies, even on failures.
+                    raw=error.read(2049)
+                    if len(raw)<=2048:
+                        try: remote=json.loads(raw)
+                        except (ValueError,UnicodeError,RecursionError): remote={}
+                        if isinstance(remote,dict):
+                            if remote.get('error')=='ASSET_NOT_AUTHORIZED': code='asset_not_authorized'
+                            elif path=='/api/input' and remote.get('error')=='FORBIDDEN': code='input_forbidden'
+            except (OSError,HTTPException):
+                raise CloudError('unavailable') from None
+            finally: error.close()
+            raise CloudError(code,error.code) from None
+        except (URLError, OSError, TimeoutError, HTTPException, ValueError):
             raise CloudError('unavailable') from None
 
     def request(self, method, path, body=None):
-        with self._open(method,path,body) as response:
-            try:
+        try:
+            with self._open(method,path,body) as response:
+                expected=response.headers.get('Content-Length')
                 raw=response.read(MAX_RESPONSE+1)
                 if len(raw)>MAX_RESPONSE: raise CloudError('response_too_large')
-                value=json.loads(raw)
-                if not isinstance(value,dict): raise ValueError()
-                return value
-            except (ValueError, UnicodeError, RecursionError):
-                raise CloudError('invalid_response') from None
+                if isinstance(expected,str) and expected.isdigit() and int(expected)!=len(raw):
+                    raise CloudError('incomplete_response')
+                try:
+                    value=json.loads(raw)
+                    if not isinstance(value,dict): raise ValueError()
+                    return value
+                except (ValueError, UnicodeError, RecursionError):
+                    raise CloudError('invalid_response') from None
+        except (OSError,HTTPException):
+            raise CloudError('unavailable') from None
 
     def events(self):
-        with self._open('GET','/api/events') as response:
-            # readline's explicit limit also bounds a peer that never sends a newline.
-            yield from parse_sse(iter(lambda:response.readline(MAX_RESPONSE+1),b''))
+        try:
+            with self._open('GET','/api/events') as response:
+                # readline's explicit limit bounds a peer with no newline.
+                yield from parse_sse(iter(lambda:response.readline(MAX_RESPONSE+1),b''))
+        except (OSError,HTTPException):
+            raise CloudError('sse_unavailable') from None
 
 
 def parse_sse(lines):
@@ -143,6 +167,12 @@ def keychain(role, value=None):
         return secret
 
 
+def validated_fallback(value):
+    if type(value) is not int or not 1<=value<=300:
+        raise ValueError('Fallback seconds must be an integer from 1 to 300.')
+    return value
+
+
 def load_config(runtime, role):
     try:
         path=Path(runtime)/('cloud-'+role+'.json')
@@ -153,12 +183,14 @@ def load_config(runtime, role):
             raise ValueError()
         base_url(value['url'])
         if not isinstance(value['epoch'],str) or not value['epoch']: raise ValueError()
+        value['fallbackSeconds']=validated_fallback(value.get('fallbackSeconds',10))
         return value
     except (OSError, ValueError, KeyError, TypeError): raise CloudError('setup_required_'+role) from None
 
 
-def setup(runtime, url, role, *, instance=None, secret, store=keychain, transport=Transport):
+def setup(runtime, url, role, *, instance=None, secret, fallback_seconds=10, store=keychain, transport=Transport):
     url=base_url(url)
+    fallback_seconds=validated_fallback(fallback_seconds)
     if role not in ('agent','notifier') or instance is not None and not IDENTIFIER.fullmatch(instance):
         raise ValueError('Use role agent or notifier and a 1..64 character instance name (letters, digits, _ or -).')
     snapshot=transport(url,secret).request('GET','/api/snapshot')
@@ -170,7 +202,7 @@ def setup(runtime, url, role, *, instance=None, secret, store=keychain, transpor
     try: previous=load_config(runtime,role)
     except CloudError: previous={}
     config={'url':url,'role':role,'serviceId':service['id'],'epoch':service['epoch'],
-            'epochExpiresAt':service.get('epochExpiresAt'),
+            'epochExpiresAt':service.get('epochExpiresAt'),'fallbackSeconds':fallback_seconds,
             'instanceId':instance or previous.get('instanceId') or 'mac-'+uuid.uuid4().hex[:16]}
     store(role,secret)
     atomic_json(Path(runtime)/('cloud-'+role+'.json'),config)
@@ -179,7 +211,8 @@ def setup(runtime, url, role, *, instance=None, secret, store=keychain, transpor
 
 class State:
     """Atomic durable producer outbox and occurrence ledger, shared by local threads."""
-    def __init__(self,path,*,clock=None):
+    def __init__(self,path,*,clock=None,fallback_seconds=10):
+        self.fallback_ms=validated_fallback(fallback_seconds)*1000
         self.path=Path(path); self.clock=clock or time.time; self.lock=threading.RLock()
         try:
             raw=self.path.read_bytes()
@@ -228,7 +261,7 @@ class State:
                 if rec is None and len(self.records)>=LOCAL_RECORDS: raise CloudError('local_occurrence_capacity')
                 now=int(self.clock()*1000)
                 rec={'itemId':str(uuid.uuid4()),'firstRecognizedAt':now,'version':0,'acked':0,
-                     'deadline':self.data.get('watchClock',{}).get('utc',now)+10000,'notified':False,'lastSourceAt':now}
+                     'deadline':self.data.get('watchClock',{}).get('utc',now)+self.fallback_ms,'notified':False,'lastSourceAt':now}
                 self.records[key]=rec
             signature=json.dumps(content,sort_keys=True,separators=(',',':'),allow_nan=False)
             if signature != rec.get('signature'):
@@ -430,12 +463,13 @@ class Producer:
     """Background worker with durable retries; sampling methods never perform HTTP."""
     def __init__(self,runtime,config,transport,*,clock=None,notify=None):
         self.config=config; self.http=transport; self.clock=clock or time.time
-        self.state=State(Path(runtime)/('cloud-'+config['role']+'-state.json'),clock=self.clock)
+        fallback=validated_fallback(config.get('fallbackSeconds',10))
+        self.state=State(Path(runtime)/('cloud-'+config['role']+'-state.json'),clock=self.clock,fallback_seconds=fallback)
         with self.state.lock:
             if self.state.data.get('epoch',config['epoch'])!=config['epoch']:
                 self.state.records.clear(); self.state.data['ends']={}; self.state.data['actions']={}; self.state.data['inputs']={}
             self.state.data['epoch']=config['epoch']; self.state.save()
-        self.guard=Watchdog(self.state,config,clock=self.clock,monotonic=time.monotonic if clock is None else clock,notify=notify)
+        self.guard=Watchdog(self.state,config,clock=self.clock,monotonic=time.monotonic if clock is None else clock,notify=notify,delay=fallback)
         self.actions=Actions(self.state,config,clock=self.clock)
         self.snapshot={}; self._snapshot_lock=threading.Lock(); self._stop=threading.Event()
         self._threads=[]; self._assets={}; self._heart=0; self.error=None; self.on_admitted=None; self.on_tombstone=None
@@ -494,6 +528,7 @@ class Producer:
             try: self.state.trim_assets(protect=digest)
             except CloudError:
                 self.state.data['assets'].pop(digest,None); raise
+            for old in set(self._assets)-self.state.data['assets'].keys(): self._assets.pop(old,None)
             self.state.save()
         return digest
 
@@ -529,7 +564,7 @@ class Producer:
                     self.accept(snapshot); backoff=1
             except CloudError as error:
                 self.error=error.code
-                if error.status in (401,403): return
+                if error.code=='unauthorized' and error.status in (401,403): return
             except (OSError,ValueError): self.error='sse_unavailable'
             if self._stop.wait(backoff): return
             backoff=min(backoff*2,30)
@@ -539,6 +574,26 @@ class Producer:
         snapshot=response.get('snapshot',response)
         if snapshot.get('protocol')==1: self.accept(snapshot)
         return response
+
+    def _upload_assets(self,hashes,*,force=False):
+        for digest in hashes:
+            if not force and self.clock()-self._assets.get(digest,-float('inf'))<1800: continue
+            asset=self.state.data['assets'][digest]
+            result=self.http.request('POST','/api/assets',{k:asset[k] for k in ('hash','type','data')})
+            if result.get('hash')!=digest: raise CloudError('asset_hash_mismatch')
+            self._assets[digest]=self.clock()
+            if len(self._assets)>LOCAL_ASSET_COUNT:
+                del self._assets[min(self._assets,key=self._assets.get)]
+
+    def _content(self,path,body,hashes):
+        try: return self._response('POST',path,body)
+        except CloudError as error:
+            if error.code!='asset_not_authorized': raise
+            for digest in hashes: self._assets.pop(digest,None)
+            self._upload_assets(hashes,force=True)
+            # At most one immediate repair. Another eviction goes through the
+            # normal bounded worker backoff, with the exact frozen body retained.
+            return self._response('POST',path,body)
 
     def flush(self):
         identity={'instanceId':self.config['instanceId'],'epoch':self.config['epoch']}
@@ -551,7 +606,7 @@ class Producer:
             with self.state.lock: self.state.data['ends'].pop(ident,None); self.state.save()
         for rec in records:
             if rec.get('tombstone'): continue
-            if rec.get('cleared') or rec['acked']>=rec['version']: continue
+            if rec.get('cleared') or rec.get('renderPending') or not isinstance(rec.get('scene'),dict) or rec['acked']>=rec['version']: continue
             frozen=rec.get('publishBody')
             if frozen and frozen['validUntil']<=self.clock()*1000:
                 with self._snapshot_lock:
@@ -569,14 +624,7 @@ class Producer:
             scene=rec['scene']
             hashes={e['assetHash'] for c in scene.get('commands',[]) for e in c['elements'] if 'assetHash' in e}
             hashes|={e['assetHash'] for e in rec.get('update',[]) if 'assetHash' in e}
-            for digest in hashes:
-                if self.clock()-self._assets.get(digest,-float('inf'))<1800: continue
-                asset=self.state.data['assets'][digest]
-                result=self.http.request('POST','/api/assets',{k:asset[k] for k in ('hash','type','data')})
-                if result.get('hash')!=digest: raise CloudError('asset_hash_mismatch')
-                self._assets[digest]=self.clock()
-                if len(self._assets)>LOCAL_ASSET_COUNT:
-                    del self._assets[min(self._assets,key=self._assets.get)]
+            self._upload_assets(hashes)
             body={**identity,**{k:rec[k] for k in ('itemId','version','firstRecognizedAt','kind','level','title','detail','scene')}}
             for field in ('groupKey','actionKeys','businessId'):
                 if field in rec: body[field]=rec[field]
@@ -600,10 +648,10 @@ class Producer:
                         self.state.save()
                     update=copy.deepcopy(live['updateBody'])
                 if update['generation']!=snap['generation']:
-                    response=self._response('POST','/api/publish',body)
+                    response=self._content('/api/publish',body,hashes)
                 else:
-                    response=self._response('POST','/api/update',update)
-            else: response=self._response('POST','/api/publish',body)
+                    response=self._content('/api/update',update,hashes)
+            else: response=self._content('/api/publish',body,hashes)
             with self.state.lock:
                 live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
                 if live:
@@ -640,7 +688,7 @@ class Producer:
         for ident,body in inputs.items():
             try: self._response('POST','/api/input',body)
             except CloudError as error:
-                if error.status!=409: raise
+                if error.status!=409 and error.code!='input_forbidden': raise
             with self.state.lock: self.state.data['inputs'].pop(ident,None); self.state.save()
 
     def _run(self):
@@ -652,7 +700,7 @@ class Producer:
                 self.error=None; backoff=1
             except CloudError as error:
                 self.error=error.code
-                if error.status in (401,403): return
+                if error.code=='unauthorized' and error.status in (401,403): return
                 if error.status==409:
                     # Snapshot refresh resolves stale generations. A rejected
                     # publish remains durable until its authoritative tombstone.

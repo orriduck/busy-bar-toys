@@ -48,6 +48,14 @@ Enter the matching publisher credential at the hidden prompt. Setup validates a 
 
 The instance name is optional. Without `--instance`, setup retains the previous name or creates a stable name. Keep the name and issued epoch across restarts. One role can run alone. Configure both roles to run both collectors.
 
+The local urgent fallback delay is 10 seconds by default. Set a whole number from 1 to 300 seconds for either role:
+
+```sh
+.venv/bin/busy-bar cloud-setup --url http://localhost:8787 --role notifier --fallback-seconds 17
+```
+
+This value is saved as nonsecret `fallbackSeconds` metadata and survives restart. Existing metadata without this field uses 10 seconds. Changing the setting does not reset an existing occurrence deadline.
+
 URLs must be origins. Paths, user information, query strings, fragments, and redirects are refused. HTTP is allowed only for loopback development.
 
 ## 4. Run in the foreground
@@ -107,7 +115,7 @@ A failed source poll retains the last condition as uncertain and stops its renew
 
 The client captures the existing native renderers. Notification scenes contain the complete entrance, detail at 0.3 seconds, and the final view. Animation files upload as content-hash `anim` assets. Oversized back bitmaps use lossless PNG assets. Agent clock and network changes use native updates and keep a complete recovery scene.
 
-The urgent watchdog runs separately from HTTP, SSE, and source polling. Its default deadline is 10 seconds from local recognition. Matching device confirmation, a valid queue proof, or exact admitted membership coverage can defer a local macOS notification. Proofs have finite expiry. Repeated copies do not reset the deadline. On proof expiry or owner exit, the fallback deadline is at most another 10 seconds. Pause and disable suppress fallback. Recognition time, deadline, and notification dedupe survive restart. Runtime timing uses a monotonic clock with a persisted UTC mapping; a backward wall-clock change cannot reset the deadline. Current UTC also advances effective time after Mac sleep, so expired proofs cannot survive suspend. The confirmation means an acknowledged API write; it is not a physical pixel check.
+The urgent watchdog runs separately from HTTP, SSE, and source polling. Its default deadline is 10 seconds from local recognition. Matching device confirmation, a valid queue proof, or exact admitted membership coverage can defer a local macOS notification. Proofs have finite expiry. Repeated copies do not reset the deadline. On proof expiry or owner exit, the fallback deadline is at most another configured delay (10 seconds by default). Pause and disable suppress fallback. Recognition time, deadline, and notification dedupe survive restart. Runtime timing uses a monotonic clock with a persisted UTC mapping; a backward wall-clock change cannot reset the deadline. Current UTC also advances effective time after Mac sleep, so expired proofs cannot survive suspend. The confirmation means an acknowledged API write; it is not a physical pixel check.
 
 ## Troubleshooting
 

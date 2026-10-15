@@ -474,6 +474,12 @@ def capture(args):
     print("Device framebuffers saved to", out)
 
 
+def _fallback_seconds(value):
+    from busybar_shared.cloud import validated_fallback
+    try: return validated_fallback(int(value))
+    except ValueError: raise argparse.ArgumentTypeError('Use whole seconds from 1 to 300.') from None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -490,6 +496,8 @@ def main(argv=None):
     cloud_parser.add_argument("--url", required=True)
     cloud_parser.add_argument("--role", required=True, choices=("agent", "notifier"))
     cloud_parser.add_argument("--instance")
+    cloud_parser.add_argument("--fallback-seconds",type=_fallback_seconds,default=10,metavar="1..300",
+                              help="Local urgent fallback delay in seconds (default: 10)")
     for name in ("uninstall", "clear", "token-set", "input-wifi"):
         sub.add_parser(name)
     for name in ("preview", "capture"):
@@ -531,7 +539,7 @@ def main(argv=None):
             from busybar_shared.cloud import setup as configure_cloud, HELPER
             if not HELPER.exists():
                 raise RuntimeError("Build scripts/cloud-keychain.swift first; see docs/cloud-mode.md.")
-            configure_cloud(RUNTIME, args.url, args.role, instance=args.instance, secret=getpass.getpass("Publisher credential: "))
+            configure_cloud(RUNTIME, args.url, args.role, instance=args.instance, secret=getpass.getpass("Publisher credential: "),fallback_seconds=args.fallback_seconds)
             print("Cloud role configured. Run watch --mode cloud when ready.")
             return 0
         if args.command == "watch": return watch(args)

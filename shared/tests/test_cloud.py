@@ -26,6 +26,39 @@ class CloudTest(unittest.TestCase):
             self.assertEqual((Path(directory)/'cloud-agent.json').stat().st_mode & 0o777,0o600)
             self.assertEqual(again['epoch'],'stable')
 
+    def test_configured_fallback_survives_setup_and_producer_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            now=[100.0]; notices=[]
+            class HTTP:
+                def __init__(self,*args): pass
+                def request(self,*args): return {'protocol':1,'services':[{'id':'notifier','template':'notifier','epoch':'e'}]}
+            config=cloud.setup(directory,'http://localhost:8787','notifier',secret='private',fallback_seconds=17,store=lambda *a:None,transport=HTTP)
+            self.assertEqual(cloud.load_config(directory,'notifier')['fallbackSeconds'],17)
+            producer=cloud.Producer(directory,config,HTTP(),clock=lambda:now[0],notify=lambda *a:notices.append(a))
+            record=producer.state.recognize('u',kind='condition',level='urgent',title='A',detail='',scene={})
+            self.assertEqual(record['deadline'],117000)
+            now[0]=110
+            recovered=cloud.Producer(directory,cloud.load_config(directory,'notifier'),HTTP(),clock=lambda:now[0],notify=lambda *a:notices.append(a))
+            now[0]=116; recovered.guard.check(); self.assertEqual(notices,[])
+            now[0]=117; recovered.guard.check(); self.assertEqual(len(notices),1)
+
+    def test_fallback_bounds_and_old_metadata_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            class HTTP:
+                def __init__(self,*args): pass
+                def request(self,*args): return {'protocol':1,'services':[{'id':'agent','template':'agent','epoch':'e'}]}
+            for value in (0,301,-1,True,1.5,'17'):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    cloud.setup(directory,'http://localhost:8787','agent',secret='private',fallback_seconds=value,store=lambda *a:None,transport=HTTP)
+            config=cloud.setup(directory,'http://localhost:8787','agent',secret='private',store=lambda *a:None,transport=HTTP)
+            self.assertEqual(config['fallbackSeconds'],10)
+            path=Path(directory)/'cloud-agent.json'
+            config.pop('fallbackSeconds'); cloud.atomic_json(path,config)
+            self.assertEqual(cloud.load_config(directory,'agent')['fallbackSeconds'],10)
+            for value in (0,301,True,'17'):
+                config['fallbackSeconds']=value; cloud.atomic_json(path,config)
+                with self.subTest(saved=value), self.assertRaises(cloud.CloudError): cloud.load_config(directory,'agent')
+
     def test_occurrences_survive_restart_and_tombstones_do_not_revive(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'state.json'
