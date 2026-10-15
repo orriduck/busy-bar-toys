@@ -6,10 +6,43 @@
 一个后台服务运行所有 app。
 设备原生日历是默认界面。
 
-![使用模拟航班数据的动画预览](docs/images/staggered-flight-preview.gif)
+## 看演示
 
-此预览使用模拟航班数据。
-可对照查看[设备实测截图](docs/images/actual-staggered-intro.png)。
+这些循环短片使用模拟事件与项目现有的绘制代码。
+生成演示无需设备、凭据或已启用的集成。
+每段都有 `DEMO / OFFLINE RENDER` 标记。
+日历为示意图，原生文字的滚动为近似模拟。
+需要暂停或重播时，可下载 MP4 在本地播放。
+
+| | |
+|---|---|
+| **Codex：运行 → 批准 → 待机 → 日历** · [MP4](docs/demos/codex-cycle.mp4)<br>![Codex：运行 → 批准 → 待机 → 日历; offline DEMO](docs/demos/codex-cycle.gif) | **ADSBao：飞机提示 → 恢复当前 Codex** · [MP4](docs/demos/adsbao.mp4)<br>![ADSBao：飞机提示 → 恢复当前 Codex; offline DEMO](docs/demos/adsbao.gif) |
+| **Your dot：独立来源图标** · [MP4](docs/demos/your-dot.mp4)<br>![Your dot：独立来源图标; offline DEMO](docs/demos/your-dot.gif) | **Start/Pause → 日历 → 新一轮任务** · [MP4](docs/demos/start-pause.mp4)<br>![Start/Pause → 日历 → 新一轮任务; offline DEMO](docs/demos/start-pause.gif) |
+| **时钟与上下行流量** · [MP4](docs/demos/clock-network.mp4)<br>![时钟与上下行流量; offline DEMO](docs/demos/clock-network.gif) | **运行、批准、错误、过期、待机** · [MP4](docs/demos/state-colors.mp4)<br>![运行、批准、错误、过期、待机; offline DEMO](docs/demos/state-colors.gif) |
+
+Codex 短片保留完整的十秒待机。
+飞机短片保留完整的十秒航班显示。
+其他通知的停留缩短为三秒。
+紧急演示条件在三秒后解除；真实紧急通知会持续显示到解决。
+
+<details>
+<summary>更多演示：所有可选 app、静态模式与共享显示</summary>
+
+| | |
+|---|---|
+| **Claude Code：可选 hooks** · [MP4](docs/demos/claude.mp4)<br>![Claude Code：可选 hooks; offline DEMO](docs/demos/claude.gif) | **减少动态效果：静态状态** · [MP4](docs/demos/reduced-motion.mp4)<br>![减少动态效果：静态状态; offline DEMO](docs/demos/reduced-motion.gif) |
+| **Datadog：紧急 page 与监控告警** · [MP4](docs/demos/datadog.mp4)<br>![Datadog：紧急 page 与监控告警; offline DEMO](docs/demos/datadog.gif) | **GitHub：评审、CI、修改要求与 PR 动态** · [MP4](docs/demos/github.mp4)<br>![GitHub：评审、CI、修改要求与 PR 动态; offline DEMO](docs/demos/github.gif) |
+| **Jira：新分配的工单** · [MP4](docs/demos/jira.mp4)<br>![Jira：新分配的工单; offline DEMO](docs/demos/jira.gif) | **Metaflow：运行失败** · [MP4](docs/demos/metaflow.mp4)<br>![Metaflow：运行失败; offline DEMO](docs/demos/metaflow.gif) |
+| **Terminal：命令成功或失败** · [MP4](docs/demos/terminal.mp4)<br>![Terminal：命令成功或失败; offline DEMO](docs/demos/terminal.gif) | **Credentials：登录需要续期** · [MP4](docs/demos/credentials.mp4)<br>![Credentials：登录需要续期; offline DEMO](docs/demos/credentials.gif) |
+| **Calendar app：即将开始的会议** · [MP4](docs/demos/calendar.mp4)<br>![Calendar app：即将开始的会议; offline DEMO](docs/demos/calendar.gif) | **共享 Bar：紧急通知占用，另一主机等待** · [MP4](docs/demos/shared-display.mp4)<br>![共享 Bar：紧急通知占用，另一主机等待; offline DEMO](docs/demos/shared-display.gif) |
+
+</details>
+
+可选 app 的演示不会在你的 Mac 上启用这些 app。
+只有选择使用 Claude Code 时，才需要配置它的 hooks。
+共享显示短片使用脚本序列说明所有权规则，不代表两台 Mac 的实测。
+见[演示索引、限制与重新生成命令](docs/demos/README.md#简体中文)。
+另有[设备实测的模拟航班截图](docs/images/actual-staggered-intro.png)，可单独对照硬件效果。
 
 ## 组件与 app
 
@@ -60,7 +93,7 @@ Mac 提供系统定位。
 所有通知都使用飞机的入场动画，并显示 app 图标。
 图标底色表示级别：红色为紧急，琥珀色为需要处理，app 颜色为一般信息。
 其他通知十秒后自动恢复 agent 界面或日历。
-紧急通知一直显示，直到情况解除。
+紧急通知一直显示，直到情况解除或其动作成功。
 按 Start/Pause 会执行紧急通知的动作，例如确认 Datadog page。
 其他通知上按 Start/Pause，会清除全部通知并显示日历。
 见 [notifier 规则](notifier/README.md)。
@@ -153,7 +186,8 @@ Wi-Fi 按键功能要求 Mac 与 Bar 在局域网内互通。
    ```
 
 配置命令读取设备地址，并将本地 token 存入钥匙串。
-按 Start/Pause 可关闭任一小工具的界面，并显示日历。
+在 agent 或飞机界面，按 Start/Pause 可显示日历。
+紧急通知的按键规则见上文。
 
 ## 启用飞机提示
 
@@ -201,7 +235,8 @@ Wi-Fi 按键功能要求 Mac 与 Bar 在局域网内互通。
 多台 Mac 可以为同一个 Bar 运行此服务。
 设备存储中的显示租约保证同一时间只显示一条通知。
 另一台 Mac 显示通知时，非紧急通知排队等待。
-紧急通知立即接管显示。
+紧急通知可以接管较低级别通知的显示。
+已有紧急通知的主机会保留显示权，直到释放。
 每台 Mac 都须运行相同版本。
 
 ## 检查或停止服务

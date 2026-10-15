@@ -6,10 +6,44 @@ Show local AI agent status and short notifications on a BUSY Bar.
 One background service controls every app.
 The device calendar is the default view.
 
-![Aircraft animation with mock data](docs/images/staggered-flight-preview.gif)
+## Watch the use cases
 
-This rendered preview uses mock flight data.
-See the [actual device capture](docs/images/actual-staggered-intro.png) for comparison.
+These looping clips use synthetic events and the production renderers.
+They do not need a device, credentials, or enabled integrations.
+Each clip has a `DEMO / OFFLINE RENDER` label.
+The calendar is an illustration. Native text scrolling is approximate.
+Download an MP4 to pause or replay a clip locally.
+
+| | |
+|---|---|
+| **Codex: run → approval → standby → calendar** · [MP4](docs/demos/codex-cycle.mp4)<br>![Codex: run → approval → standby → calendar; offline DEMO](docs/demos/codex-cycle.gif) | **ADSBao: aircraft → current Codex task** · [MP4](docs/demos/adsbao.mp4)<br>![ADSBao: aircraft → current Codex task; offline DEMO](docs/demos/adsbao.gif) |
+| **Your dot: dedicated source icon** · [MP4](docs/demos/your-dot.mp4)<br>![Your dot: dedicated source icon; offline DEMO](docs/demos/your-dot.gif) | **Start/Pause → calendar → new task turn** · [MP4](docs/demos/start-pause.mp4)<br>![Start/Pause → calendar → new task turn; offline DEMO](docs/demos/start-pause.gif) |
+| **Clock and upload/download activity** · [MP4](docs/demos/clock-network.mp4)<br>![Clock and upload/download activity; offline DEMO](docs/demos/clock-network.gif) | **Running, approval, error, stale, standby** · [MP4](docs/demos/state-colors.mp4)<br>![Running, approval, error, stale, standby; offline DEMO](docs/demos/state-colors.gif) |
+
+The Codex clip includes the full ten-second standby period.
+The aircraft clip includes the full ten-second flight display.
+Other notification holds are shortened to three seconds.
+Urgent demo conditions clear after three seconds; real urgent items stay until resolved.
+
+<details>
+<summary>More demos: every optional app, static mode, and shared display</summary>
+
+| | |
+|---|---|
+| **Claude Code: optional hooks** · [MP4](docs/demos/claude.mp4)<br>![Claude Code: optional hooks; offline DEMO](docs/demos/claude.gif) | **Reduced motion: static states** · [MP4](docs/demos/reduced-motion.mp4)<br>![Reduced motion: static states; offline DEMO](docs/demos/reduced-motion.gif) |
+| **Datadog: urgent page and monitor alert** · [MP4](docs/demos/datadog.mp4)<br>![Datadog: urgent page and monitor alert; offline DEMO](docs/demos/datadog.gif) | **GitHub: review, CI, changes and PR activity** · [MP4](docs/demos/github.mp4)<br>![GitHub: review, CI, changes and PR activity; offline DEMO](docs/demos/github.gif) |
+| **Jira: newly assigned ticket** · [MP4](docs/demos/jira.mp4)<br>![Jira: newly assigned ticket; offline DEMO](docs/demos/jira.gif) | **Metaflow: failed run** · [MP4](docs/demos/metaflow.mp4)<br>![Metaflow: failed run; offline DEMO](docs/demos/metaflow.gif) |
+| **Terminal: command succeeds or fails** · [MP4](docs/demos/terminal.mp4)<br>![Terminal: command succeeds or fails; offline DEMO](docs/demos/terminal.gif) | **Credentials: login needs renewal** · [MP4](docs/demos/credentials.mp4)<br>![Credentials: login needs renewal; offline DEMO](docs/demos/credentials.gif) |
+| **Calendar app: upcoming meeting** · [MP4](docs/demos/calendar.mp4)<br>![Calendar app: upcoming meeting; offline DEMO](docs/demos/calendar.gif) | **Shared Bar: urgent owner and waiting host** · [MP4](docs/demos/shared-display.mp4)<br>![Shared Bar: urgent owner and waiting host; offline DEMO](docs/demos/shared-display.gif) |
+
+</details>
+
+Optional app demos do not enable those apps on your Mac.
+Claude Code requires its hooks only if you choose to use it.
+The shared-display clip illustrates the ownership rule with a scripted sequence.
+It does not test a second Mac.
+See the [demo index, limits, and regeneration command](docs/demos/README.md).
+See the [actual-device mock capture](docs/images/actual-staggered-intro.png) for separate hardware evidence.
 
 ## Components and apps
 
@@ -60,7 +94,7 @@ Each aircraft alerts once per encounter.
 Every notification uses the aircraft entrance with an app icon.
 The icon background shows the level: red is urgent, amber needs attention, and the app color is information.
 Other items return to the agent view or the calendar after ten seconds.
-Urgent items stay until their condition clears.
+Urgent items stay until their condition clears or their action succeeds.
 Start/Pause runs the action of an urgent item, for example a Datadog page acknowledgement.
 On other items, Start/Pause dismisses all notifications and shows the calendar.
 See the [notifier rules](notifier/README.md).
@@ -153,7 +187,8 @@ After a directory move, repeat the editable installation and service installatio
    ```
 
 The setup command reads the device address and stores the local token in Keychain.
-Press Start/Pause to dismiss either toy and show the calendar.
+On an agent or aircraft view, press Start/Pause to show the calendar.
+For urgent notifications, see the action rule above.
 
 ## Enable aircraft alerts
 
@@ -201,7 +236,8 @@ Run `.venv/bin/busy-bar notify-demo` to see each notification type. Stop the ser
 Several Macs can run this service for one Bar.
 A display lease in device storage keeps one notification visible at a time.
 Non-urgent items wait while another Mac shows a notification.
-Urgent items take the display at once.
+Urgent items can take the display from a lower-level notification.
+An active urgent owner keeps its display until release.
 Every Mac must run the same version.
 
 ## Check or stop the service
