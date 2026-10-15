@@ -68,6 +68,7 @@ export function SignIn({
 }
 export function Credential({
   value,
+  template,
   onClose,
 }: {
   value: {
@@ -76,6 +77,7 @@ export function Credential({
     epochExpiresAt: number;
     id: string;
   };
+  template?: string;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -146,10 +148,32 @@ export function Credential({
           Expires {new Date(value.epochExpiresAt).toLocaleString()}. Keep this
           credential in your local Keychain. It cannot access the BUSY token.
         </p>
-        <p>
-          Use the repository’s cloud setup command for this service. Give it the
-          control plane URL, this credential and epoch.
-        </p>
+        {template === "agent" || template === "notifier" ? (
+          <>
+            <p>
+              Run this command on the source Mac. Paste the credential at the
+              hidden prompt. The client reads its epoch automatically.
+            </p>
+            <pre className="setup-command">{`busy-bar cloud-setup --url ${location.origin} --role ${template}`}</pre>
+            <p className="muted">
+              Setup saves this connection. It does not replace the running
+              standalone service.
+            </p>
+          </>
+        ) : (
+          <p>
+            Use the{" "}
+            <a
+              href="https://github.com/orriduck/busy-bar-toys/blob/feat/control-plane/control-plane/PROTOCOL.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              publisher protocol
+            </a>{" "}
+            to connect a custom service. Keep the credential in your local
+            secret store.
+          </p>
+        )}
         <button ref={closeRef} className="primary" onClick={onClose}>
           I saved it
         </button>

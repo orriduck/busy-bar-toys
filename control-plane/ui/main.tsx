@@ -106,6 +106,21 @@ function App() {
     (i) => i.itemKey === snapshot.displaying?.itemKey,
   );
   const selected = snapshot?.items.find((i) => i.itemKey === snapshot.selected);
+  const cardItem =
+    snapshot?.health.status === "healthy" && owner ? owner : selected;
+  const cardStatus = !snapshot
+    ? "Unknown"
+    : snapshot.health.status === "blocked"
+      ? "Blocked by device"
+      : snapshot.health.status === "offline"
+        ? "Device offline · unconfirmed"
+        : owner && snapshot.health.status === "healthy"
+          ? "Displaying · API confirmed"
+          : snapshot.applying
+            ? "Applying · awaiting confirmation"
+            : selected
+              ? "Selected · awaiting dispatch"
+              : "Native calendar";
   return (
     <>
       {demo && (
@@ -187,45 +202,49 @@ function App() {
                     : "idle")
                 }
               >
-                <span className="eyeline">
-                  {owner && snapshot.health.status === "healthy"
-                    ? "Displaying · API confirmed"
-                    : selected
-                      ? snapshot.health.status === "blocked"
-                        ? "Blocked by device"
-                        : "Applying · awaiting confirmation"
-                      : "Native calendar"}
-                </span>
-                <h2>
-                  {owner && snapshot.health.status === "healthy"
-                    ? owner.title
-                    : selected?.title || "Nothing needs the display"}
-                </h2>
+                <span className="eyeline">{cardStatus}</span>
+                <h2>{cardItem?.title || "Nothing needs the display"}</h2>
                 <div className="owner-bottom">
                   <div className="owner-details">
                     <Meta label="Status">
-                      <span className={"badge " + (owner?.level || "")}>
-                        {owner?.level || snapshot.health.status}
+                      <span className={"badge " + (cardItem?.level || "")}>
+                        {cardItem?.level || snapshot.health.status}
                       </span>
                     </Meta>
                     <Meta label="Source">
-                      {owner
-                        ? serviceName(snapshot, owner.serviceId)
+                      {cardItem
+                        ? serviceName(snapshot, cardItem.serviceId)
                         : "BUSY Bar"}
-                      <small>{owner?.instanceId}</small>
+                      <small>
+                        {cardItem?.instanceId}
+                        {cardItem && !cardItem.source.connected
+                          ? " · Source offline"
+                          : ""}
+                      </small>
+                    </Meta>
+                    <Meta label="Exit">
+                      {cardItem
+                        ? cardItem.remainingMs === null
+                          ? "Source ends"
+                          : "Fixed visible time"
+                        : "Calendar fallback"}
                     </Meta>
                     <Meta label="Time">
-                      {owner
-                        ? owner.remainingMs === null
+                      {cardItem
+                        ? cardItem.remainingMs === null
                           ? "Until resolved"
-                          : `${Math.ceil(owner.remainingMs / 1000)} seconds remaining`
-                        : "Calendar fallback"}
+                          : `${Math.ceil(cardItem.remainingMs / 1000)} seconds remaining`
+                        : "—"}
                     </Meta>
                   </div>
                   {owner?.actionKeys.includes("primary") && (
                     <button
                       className="accent"
-                      disabled={pending || !owner.actionAvailable}
+                      disabled={
+                        pending ||
+                        !owner.actionAvailable ||
+                        snapshot.health.status !== "healthy"
+                      }
                       onClick={() =>
                         void mutate("/actions", {
                           requestId: crypto.randomUUID(),
@@ -240,8 +259,8 @@ function App() {
                     </button>
                   )}
                 </div>
-                {owner?.detail && (
-                  <p className="owner-detail">{owner.detail}</p>
+                {cardItem?.detail && (
+                  <p className="owner-detail">{cardItem.detail}</p>
                 )}
                 {snapshot.actions
                   .filter((a) => a.itemKey === owner?.itemKey)
@@ -345,7 +364,14 @@ function App() {
             </span>
           </footer>
           {secret && (
-            <Credential value={secret} onClose={() => setSecret(null)} />
+            <Credential
+              value={secret}
+              template={
+                snapshot.services.find((service) => service.id === secret.id)
+                  ?.template
+              }
+              onClose={() => setSecret(null)}
+            />
           )}
         </>
       )}

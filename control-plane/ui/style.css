@@ -895,7 +895,7 @@ footer svg {
     min-width: 0;
   }
 }
-@media (max-width: 850px) {
+@media (max-width: 900px) {
   .dashboard {
     display: block;
   }
@@ -1073,4 +1073,57 @@ details:not([open]) > .access {
 }
 .access button {
   white-space: normal;
+}
+
+/* Consistent keyboard and touch hit areas. The switch track remains compact. */
+button,
+input,
+select,
+.service-fields input,
+.service-fields select,
+.row-actions button,
+.service-bottom button,
+.expand,
+footer button,
+summary {
+  min-height: 40px;
+}
+.expand,
+footer button {
+  min-width: 40px;
+}
+.switch {
+  width: 44px;
+  min-width: 44px;
+  height: 40px;
+}
+.switch input {
+  width: 44px;
+  height: 40px;
+}
+.switch span {
+  position: absolute;
+  left: 5px;
+  top: 10px;
+  width: 34px;
+}
+.signout {
+  min-height: 40px;
+}
+
+.error button {
+  min-height: 40px;
+  min-width: 40px;
+}
+.checkbox {
+  min-height: 40px;
+}
+
+.setup-command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f2f4f7;
+  padding: 12px;
+  font-size: 12px;
+  border-radius: 4px;
 }

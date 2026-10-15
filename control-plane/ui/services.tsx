@@ -115,7 +115,8 @@ export function ServiceEditor({
           <input
             type="number"
             required
-            min="0"
+            min="0.016666666666666666"
+            step="any"
             max="1440"
             value={config.snoozeMs / 60000}
             onChange={(event) =>
@@ -128,8 +129,8 @@ export function ServiceEditor({
           <input
             type="number"
             required
-            min="10"
-            max="3600"
+            min="5"
+            max="300"
             value={config.heartbeatMs / 1000}
             onChange={(event) =>
               edit("heartbeatMs", Number(event.target.value) * 1000)
@@ -241,6 +242,7 @@ export function Register({
       name,
       template,
       expectedRevision: revision,
+      config: { priority: template === "agent" ? 10 : 50 },
     });
     if (result)
       onCreated({

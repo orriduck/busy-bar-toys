@@ -29,10 +29,14 @@ export function Queue({
       operation,
       expectedRevision: snapshot.revision,
     });
-  function cells(item: QueueItem, order: ReactNode) {
+  function cells(item: QueueItem, order: ReactNode, child = false) {
     return (
       <>
-        <td className="order">{order}</td>
+        <td className="order">
+          {child && (item.state === "paused" || item.state === "snoozed")
+            ? "—"
+            : order}
+        </td>
         <td>
           <strong>{item.title}</strong>
           <span className="row-detail">
@@ -45,6 +49,7 @@ export function Queue({
             <b className={item.level}>{item.level}</b> · First seen{" "}
             {time(item.firstRecognizedAt)}
             {!item.timeReliable && " · Source clock uncertain"}
+            {!item.source.connected && " · Source offline"}
           </span>
         </td>
         <td>
@@ -101,7 +106,11 @@ export function Queue({
                   {cells(
                     item,
                     <span>
-                      {group.order < 0 ? "—" : group.order + 1}
+                      {group.order < 0 ||
+                      item.state === "paused" ||
+                      item.state === "snoozed"
+                        ? "—"
+                        : group.order + 1}
                       {multiple && (
                         <button
                           className={"expand " + (open ? "open" : "")}
@@ -143,6 +152,7 @@ export function Queue({
                             group.order < 0
                               ? "—"
                               : `${group.order + 1}.${index + 1}`,
+                            true,
                           )}
                         </tr>
                       )
