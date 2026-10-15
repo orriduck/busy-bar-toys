@@ -20,8 +20,8 @@ class DisplayTests(unittest.TestCase):
     def test_dots_has_distinct_source_icon(self):
         front, _ = render(self.task("chatgpt"), 100, 1)
         dots, _ = render(self.task("dots"), 100, 1)
-        self.assertNotEqual(front.crop((11, 1, 25, 15)).tobytes(),
-                            dots.crop((11, 1, 25, 15)).tobytes())
+        self.assertNotEqual(front.crop((17, 1, 31, 15)).tobytes(),
+                            dots.crop((17, 1, 31, 15)).tobytes())
 
     def test_xpm_is_ascii_and_has_complete_rows(self):
         for screen in render(self.task(), 120, 1):
@@ -53,8 +53,8 @@ class DisplayTests(unittest.TestCase):
         now = datetime(2026,10,14,22,34,tzinfo=timezone.utc).timestamp()
         work, _ = render(self.task(state="working"), now, 1)
         wait, _ = render(self.task(state="waiting"), now, 1)
-        clock = work.crop((33,1,63,8))
-        self.assertEqual(clock.tobytes(), wait.crop((33,1,63,8)).tobytes())
+        clock = work.crop((32,1,62,8))
+        self.assertEqual(clock.tobytes(), wait.crop((32,1,62,8)).tobytes())
         self.assertIsNotNone(clock.getbbox())
 
     def test_centered_clock_and_compact_rates_have_distinct_colored_arrows(self):
@@ -76,9 +76,9 @@ class DisplayTests(unittest.TestCase):
                             for r,g,b in colors))
         for value in (slow,fast):
             im=render(self.task(),now,1,value)[0]
-            self.assertEqual(im.crop((11,1,25,15)).tobytes(),
-                             front.crop((11,1,25,15)).tobytes())
-        bounds=updated.crop((7,0,72,16)).getbbox()
+            self.assertEqual(im.crop((17,1,31,15)).tobytes(),
+                             front.crop((17,1,31,15)).tobytes())
+        bounds=updated.crop((7,0,72,9)).getbbox()
         self.assertLessEqual(abs((bounds[0]+bounds[2])/2-32.5),1)
         xpm=make_payload(self.task(),now,1,slow)['elements'][0]['data']
         self.assertIn('#FFBE45',xpm)

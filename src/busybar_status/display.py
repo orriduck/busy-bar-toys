@@ -112,16 +112,18 @@ def render(task, now, count=1, rates=None):
     upload = rates.upload if rates else None
     download = rates.download if rates else None
     front = Image.new("RGB", (72, 16), "black")
-    # Center the fixed 57px group inside the area to the right of the 4px
-    # status effect and its 3px gutter. Keep the icon/clock stable as rates vary.
-    front.paste(source_icon(source, 14), (11, 1))
+    # Center the visible 45px icon/clock group after the status gutter.
+    # Match the native calendar's single empty column between icon and text.
+    front.paste(source_icon(source, 14), (17, 1))
     draw = ImageDraw.Draw(front)
     value = clock_text(now)
     clock_width = round(clock_font().getlength(value))
-    draw_clock(draw, (28 + (40-clock_width)//2, 1), value)
+    draw_clock(draw, (32 + (30-clock_width)//2, 1), value)
     up, down = compact_rate(upload), compact_rate(download)
     up_width, down_width = (len(up)+1)*4-1, (len(down)+1)*4-1
-    left = 28 + (40-up_width-2-down_width)//2
+    # Center short rates under the clock; long readings can use the ten spare
+    # columns on the right without pushing the icon away or overlapping it.
+    left = 32 + max(0, (30-up_width-2-down_width)//2)
     tiny_text(draw, (left, 10), "↑", "#FFBE45")
     tiny_text(draw, (left+4, 10), up, "#505050")
     left += up_width + 2

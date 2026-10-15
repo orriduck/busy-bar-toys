@@ -1,5 +1,15 @@
 # Centered clock and vertical glow — 2026-10-14
 
+## Follow-up: native-calendar icon spacing
+
+The initial 40-pixel text panel centered a 30-pixel clock, adding five invisible columns to the intended icon/text gap. The visible clock and icon now form a centered 45-pixel group, with one empty column between them, matching the native calendar. The icon remains 14×14 and the clock retains its original glyphs. Short traffic lines center under the clock; longer lines use up to ten spare columns on the right without overlapping the icon or moving the clock.
+
+The deployed observer's actual framebuffer was captured before and after the change. Visual inspection confirmed the tighter spacing, readable rates, and clear separation from the left status glow. All 100 existing tests pass, with their icon/clock crop regions updated to the new layout.
+
+![Actual device before and after spacing adjustment](images/actual-icon-gap.png)
+
+## Initial layout and glow verification
+
 Follow-up: [button/calendar and standby](button-calendar.md) changes approval to yellow and standby to a full-height white light.
 
 User direction: follow the calendar's centered layout, compact the traffic display, use different arrow colors, and move the state bar to the far-left columns with vertical motion and light falloff.
