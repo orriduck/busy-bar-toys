@@ -12,7 +12,8 @@ from busybar_shared.credentials import read_token
 from .checker import read_status,write_private
 from .display import ENTRANCE_FRAMES,render
 from .location import read_location,location_status,start_location_helper,stop_location_helper
-from .presenter import AircraftPresenter
+from busybar_notifier.presenter import NotificationPresenter
+from .display import notification
 from .proximity import EncounterTracker
 from .traffic import parse_envelope,coordinate_channel
 
@@ -76,11 +77,15 @@ def demo(args,runtime):
     try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close();raise RuntimeError('Stop the observer before the aircraft demo; reinstall it afterward.') from None
-    client=BusyAPI(read_token());presenter=AircraftPresenter(client,reduced=args.reduced_motion)
+    client=BusyAPI(read_token());presenter=NotificationPresenter(client,reduced=args.reduced_motion)
     try:
-        if not presenter.start(mock_aircraft(),demo=True):
+        item=notification(mock_aircraft())
+        if not presenter.start(item,demo=True):
             print('Device focus mode suppressed the mock demo.');return 0
-        while presenter.active:presenter.advance();time.sleep(.05)
+        end=time.monotonic()+item.event_hold()
+        while presenter.active:
+            if time.monotonic()>=end:presenter.dismiss()
+            presenter.advance();time.sleep(.05)
     finally:
         client.clear();lock.close()
     return 0

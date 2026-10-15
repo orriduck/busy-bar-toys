@@ -103,3 +103,9 @@ class BusyAPI:
             raise ValueError("Invalid asset filename.")
         query = urlencode({"application_name": APP_NAME, "file": filename})
         return self.request("/assets/upload?"+query, "POST", data)
+
+    def read_file(self, path):
+        return self.request("/storage/read?" + urlencode({"path": path}), raw=True)
+
+    def write_file(self, path, data):
+        return self.request("/storage/write?" + urlencode({"path": path}), "POST", data)

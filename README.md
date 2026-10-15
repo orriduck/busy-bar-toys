@@ -2,8 +2,8 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Show local Codex task status and nearby aircraft on a BUSY Bar.
-One background service controls both toys.
+Show local AI agent status and short notifications on a BUSY Bar.
+One background service controls every app.
 The device calendar is the default view.
 
 ![Aircraft animation with mock data](docs/images/staggered-flight-preview.gif)
@@ -11,16 +11,18 @@ The device calendar is the default view.
 This rendered preview uses mock flight data.
 See the [actual device capture](docs/images/actual-staggered-intro.png) for comparison.
 
-## Toys
+## Components and apps
 
-| Toy | Display |
-|---|---|
-| [Codex checker](agent-checker/README.md) | Task status, ChatGPT or Your dot icon, clock, and network rate. |
-| [ADSBao checker](apps/src/busybar_apps/adsbao/README.md) | An alert for an aircraft within three statute miles. |
+| Component | Display | Apps |
+|---|---|---|
+| [Agent checker](agent-checker/README.md) | Task status, source icon, clock, and network rate. | Codex, Your dot, Claude Code |
+| [Notifier](notifier/README.md) | Short alerts with a split-flap entrance. | ADSBao, Datadog, GitHub, Jira, Metaflow, Terminal, Credentials, Calendar |
 
-### Codex status
+See [all apps and their requirements](apps/README.md).
 
-Start a local Codex task to show its status.
+### Agent status
+
+Start a task in a configured agent app to show its status.
 The clock uses New York time in 24-hour format.
 Colored arrows show upload and download activity.
 The number shows their combined rate on the Mac's default network interface.
@@ -35,7 +37,7 @@ The number shows their combined rate on the Mac's default network interface.
 
 After ten seconds in standby, the service restores the calendar.
 Press Start/Pause to restore the calendar immediately.
-The next task turn restores the Codex display.
+The next task turn restores the agent display.
 
 ### Nearby aircraft
 
@@ -50,8 +52,18 @@ The lower line shows only the aircraft type, such as `A320`.
 
 The full introduction takes about 1.77 seconds.
 The flight identity then stays visible for ten seconds.
-The service restores the current Codex display or the calendar.
+The service restores the current agent display or the calendar.
 Each aircraft alerts once per encounter.
+
+### Notifications
+
+Every notification uses the aircraft entrance with an app icon.
+The icon background shows the level: red is urgent, amber needs attention, and the app color is information.
+Other items return to the agent view or the calendar after ten seconds.
+Urgent items stay until their condition clears.
+Start/Pause runs the action of an urgent item, for example a Datadog page acknowledgement.
+On other items, Start/Pause dismisses all notifications and shows the calendar.
+See the [notifier rules](notifier/README.md).
 
 ## Requirements
 
@@ -163,6 +175,35 @@ An ADSBao API key is not required.
 The checker rejects old locations, inaccurate locations, stale aircraft positions, and aircraft on the ground.
 See [aircraft setup and encounter rules](apps/src/busybar_apps/adsbao/README.md) for details.
 
+## Enable notifications
+
+1. Read the README of each [notifier app](apps/README.md) and install its tools.
+
+2. Create the private configuration file.
+
+   ```sh
+   ${EDITOR:-vi} ~/Library/Application\ Support/BusyBarAI/notifier.json
+   ```
+
+3. Add one key for each app, for example `{"github": {}, "terminal": {}}`.
+
+4. Restart the background service.
+
+   ```sh
+   .venv/bin/busy-bar install
+   ```
+
+Check the `notifier` key in `.venv/bin/busy-bar status`.
+Run `.venv/bin/busy-bar notify-demo` to see each notification type. Stop the service first.
+
+## Share one Bar between Macs
+
+Several Macs can run this service for one Bar.
+A display lease in device storage keeps one notification visible at a time.
+Non-urgent items wait while another Mac shows a notification.
+Urgent items take the display at once.
+Every Mac must run the same version.
+
 ## Check or stop the service
 
 | Action | Command |
@@ -207,7 +248,7 @@ To create a preview without device access, run this command:
 
 ## Data and credentials
 
-The service reads local Codex event metadata.
+The service reads local agent event metadata.
 BUSY cloud requests carry display images, animations, and device commands.
 The aircraft connection sends rounded coordinates to ADSBao.
 The exact location stays in a private local file.
@@ -229,9 +270,11 @@ Device focus modes retain their higher priority.
 
 | Directory | Purpose |
 |---|---|
-| `codex-checker` | Codex events, display state, clock, and network rate. |
-| `adsbao-checker` | Location, traffic, encounters, and aircraft display. |
-| `shared` | Device API, Keychain, button input, text, and animation components. |
+| `shared` | Device API, Keychain, button input, display lease, text, and animation components. |
+| `agent-checker` | Agent task registry, event spool, status display, and transitions. |
+| `notifier` | Notification queue, background sources, entrance, and presenter. |
+| `apps` | Agent apps and notifier apps. |
+| `service` | Command line, launchd service, and display coordinator. |
 | `scripts` | Native helper builds, tests, and previews. |
 | `docs` | Design records and device captures. |
 
@@ -245,13 +288,13 @@ CI runs the suite on Python 3.10 and 3.14.
 Add focused tests for code changes and run this suite before a pull request.
 Keep mock data clearly identified in previews and demonstrations.
 
-See [Codex events and hooks](agent-checker/README.md), [shared components](shared/README.md), and [motion verification](docs/weighted-motion.md).
+See the [agent checker](agent-checker/README.md), the [notifier](notifier/README.md), the [apps](apps/README.md), [shared components](shared/README.md), and [motion verification](docs/weighted-motion.md).
 
 ## Sources
 
 - [BUSY HTTP API](https://docs.busy.app/bar/dev/http-api).
 - [Native font source and license](shared/src/busybar_shared/assets/font-source.txt).
-- [Icon notices](agent-checker/src/busybar_agents/assets/NOTICE.md).
+- [Icon notices](apps/src/busybar_apps/NOTICE.md).
 - Writing principles: [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/).
 
 This project is independent of BUSY, OpenAI, and ADSBao.
