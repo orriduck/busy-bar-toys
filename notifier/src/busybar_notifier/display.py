@@ -137,6 +137,10 @@ def payload(notification, *, demo=False, reduced=False, path=None, settled=False
     """Draw the final view. Unsettled animated views also start the entrance on top."""
     native_text = reduced or settled
     front, back = render(notification, demo=demo, settled=native_text)
+    if not native_text:
+        # Firmware can paint the bitmap before it loads the animation widget.
+        # Keep the base blank until the entrance has revealed the final title.
+        front = Image.new("RGB", (72, 16), "black")
     elements = [{"id": name, "type": "xpmbitmap", "display": name, "x": 0, "y": 0, "timeout": 15,
                  "z_index": 2 if name == "front" else 0, "data": to_xpm(image)}
                 for name, image in (("front", front), ("back", back))]

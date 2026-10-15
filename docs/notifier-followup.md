@@ -21,14 +21,18 @@ commit `cf1cbd1`. Its 213 tests passed before this review.
 - A failed lease read looked like an absent lease. Only the documented missing
   storage responses, HTTP 400 and 404, permit missing-file recovery. Transport,
   authentication, and unexpected server errors now prevent an action or clear.
+- Actual-device capture showed the final title before the entrance loaded.
+  The initial bitmap now stays blank. The settled view supplies the final title
+  after the animation ends. Reduced motion keeps its immediate static view.
 
 ## Verification
 
-All 222 tests passed. The added service tests use the production coordinator,
+All 223 tests passed. The added service tests use the production coordinator,
 queue, presenter, and lease with fake clocks and device storage. They cover agent
 hosts without sources, takeover before a press, takeover before shutdown,
 failed and successful actions, equal urgent contention, and failed ownership
-verification. Presenter tests cover static text cleanup.
+verification. Presenter tests cover static text cleanup and the initial blank
+bitmap followed by the settled title.
 
 The original 213 tests continue to cover agent status, Claude hooks, native
 animations, aircraft filtering and restoration, notification adapters, queueing,
