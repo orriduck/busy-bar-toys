@@ -4,7 +4,7 @@ from functools import lru_cache
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from .animation import ANIMATION_FILE, thinking_offset, glow_frame, WIDTH, HEIGHT
+from .animation import ANIMATION_FILE, thinking_offset, glow_frame, standby_glow, WIDTH, HEIGHT
 from .network import compact_rate
 
 ASSETS = Path(__file__).parent / "assets"
@@ -119,20 +119,16 @@ def render(task, now, count=1, rates=None):
     value = clock_text(now)
     clock_width = round(clock_font().getlength(value))
     draw_clock(draw, (32 + (30-clock_width)//2, 1), value)
-    up, down = compact_rate(upload), compact_rate(download)
-    up_width, down_width = (len(up)+1)*4-1, (len(down)+1)*4-1
-    # Center short rates under the clock; long readings can use the ten spare
-    # columns on the right without pushing the icon away or overlapping it.
-    left = 32 + max(0, (30-up_width-2-down_width)//2)
-    tiny_text(draw, (left, 10), "↑", "#FFBE45")
-    tiny_text(draw, (left+4, 10), up, "#505050")
-    left += up_width + 2
-    tiny_text(draw, (left, 10), "↓", "#45D7FF")
-    tiny_text(draw, (left+4, 10), down, "#505050")
+    total = compact_rate(upload+download if upload is not None and download is not None else None)
+    # Two activity indicators and a single aggregate rate fit under the clock.
+    line_width = 10 + len(total)*4-1
+    left = 32 + (30-line_width)//2
+    tiny_text(draw, (left, 10), "↑", "#FFBE45" if upload is not None and upload>0 else "#303030")
+    tiny_text(draw, (left+4, 10), "↓", "#45D7FF" if download is not None and download>0 else "#303030")
+    tiny_text(draw, (left+10, 10), total, "#505050")
     color = tuple(bytes.fromhex(COLORS.get(state, "#28313C")[1:]))
     if state in {"idle", "done", "stopped"}:
-        # Standby: a continuous white core spanning the full physical height.
-        light = bytes((255,255,255,255,255,255,80,80,80,24,24,24)) * HEIGHT
+        light = standby_glow()
     else:
         light = glow_frame(now, color, moving=state == "working")
     front.paste(Image.frombytes("RGB", (WIDTH,HEIGHT), light), (0,0))

@@ -35,6 +35,17 @@ def glow_frame(now, color=(69,154,255), *, moving=True, intensity=1):
     return bytes(pixels)
 
 
+def standby_glow():
+    """A quiet full-height white hairline, with soft caps and a faint halo."""
+    pixels = bytearray()
+    for y in range(HEIGHT):
+        edge = min(y, HEIGHT-1-y)
+        cap = (.55, .8, .95, 1)[min(edge, 3)]
+        for level in (208, 44, 10, 0):
+            pixels.extend((round(level*cap),) * 3)
+    return bytes(pixels)
+
+
 def thinking_animation():
     frames = []
     for number in range(FRAME_COUNT):

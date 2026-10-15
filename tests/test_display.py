@@ -91,6 +91,27 @@ class DisplayTests(unittest.TestCase):
                          wait.crop((4,0,72,16)).tobytes())
         self.assertEqual(back.tobytes(),waiting_back.tobytes())
 
+    def test_front_shows_one_combined_rate_and_back_keeps_directional_detail(self):
+        from unittest.mock import patch
+        from busybar_status.display import tiny_text
+        with patch('busybar_status.display.tiny_text',wraps=tiny_text) as text:
+            front,back=render(self.task(),100,1,NetworkRates(1024,2048,'en0'))
+        values=[call.args[2] for call in text.call_args_list if call.args[2] not in ('↑','↓')]
+        self.assertEqual(values,['3.0K'])
+        swapped,swapped_back=render(self.task(),100,1,NetworkRates(2048,1024,'en0'))
+        self.assertEqual(front.tobytes(),swapped.tobytes())
+        self.assertNotEqual(back.tobytes(),swapped_back.tobytes())
+
+    def test_network_arrows_only_light_for_measured_activity(self):
+        for rates,up,down in ((NetworkRates(1024,0,'en0'),True,False),
+                              (NetworkRates(0,1024,'en0'),False,True),
+                              (None,False,False)):
+            front,_=render(self.task(),100,1,rates)
+            raw=front.crop((32,10,72,15)).tobytes()
+            colors=set(zip(raw[0::3],raw[1::3],raw[2::3]))
+            self.assertEqual((255,190,69) in colors,up)
+            self.assertEqual((69,215,255) in colors,down)
+
     def test_idle_keeps_clock_and_network_without_a_working_animation(self):
         front, back=render(None,100,0,NetworkRates(100,200,'en0'))
         self.assertIsNotNone(front.crop((20,0,72,14)).getbbox())
@@ -101,10 +122,11 @@ class DisplayTests(unittest.TestCase):
     def test_standby_is_full_height_white_and_approval_is_yellow(self):
         for task in (None,self.task(state='done'),self.task(state='stopped')):
             front,_=render(task,100,0)
-            self.assertTrue(all(front.getpixel((0,y))==(255,255,255) for y in range(16)))
-            self.assertTrue(all(front.getpixel((1,y))==(255,255,255) for y in range(16)))
-            self.assertTrue(all(r==g==b for y in range(16)
-                                for r,g,b in [front.getpixel((3,y))]))
+            self.assertTrue(all(r==g==b and r>100 for y in range(16)
+                                for r,g,b in [front.getpixel((0,y))]))
+            self.assertLess(front.getpixel((0,0))[0],front.getpixel((0,7))[0])
+            self.assertTrue(all(front.getpixel((0,y))[0]>front.getpixel((1,y))[0]
+                                >front.getpixel((2,y))[0] for y in range(16)))
         waiting,_=render(self.task(state='waiting'),100)
         r,g,b=waiting.getpixel((0,7))
         self.assertGreater(g,200)
