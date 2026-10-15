@@ -7,8 +7,10 @@ export function ServiceEditor({
   mutate,
   pending,
   onCredential,
+  mode = "policy",
 }: {
   service: Service;
+  mode?: "policy" | "access";
   configRevision: number;
   mutate: Mutate;
   pending: boolean;
@@ -66,6 +68,61 @@ export function ServiceEditor({
         id: service.id,
       });
   };
+  if (mode === "access")
+    return (
+      <section className="service service-access">
+        <div className="service-top">
+          <div>
+            <h3>{service.name}</h3>
+            <span className="muted">
+              {service.template} · {service.id}
+            </span>
+          </div>
+        </div>
+        <p className="muted">
+          Publisher expires{" "}
+          {new Date(service.epochExpiresAt).toLocaleDateString()}.
+        </p>
+        <div className="access-actions">
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => void rotate()}
+          >
+            Replace credential
+          </button>
+          {confirmRevoke ? (
+            <>
+              <span>End this service’s queued items and revoke access?</span>
+              <button
+                type="button"
+                className="danger"
+                disabled={pending}
+                onClick={() =>
+                  void mutate(
+                    `/services/${encodeURIComponent(service.id)}/revoke`,
+                    { expectedRevision: configRevision },
+                  )
+                }
+              >
+                Confirm revoke
+              </button>
+              <button type="button" onClick={() => setConfirmRevoke(false)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setConfirmRevoke(true)}
+            >
+              Revoke service
+            </button>
+          )}
+        </div>
+      </section>
+    );
   return (
     <form className="service" onSubmit={(event) => void save(event)}>
       <div className="service-top">
@@ -159,6 +216,17 @@ export function ServiceEditor({
         />
         Trusted device button bridge
       </label>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={config.allowPreview === true}
+          onChange={(event) => edit("allowPreview", event.target.checked)}
+        />
+        Live display preview bridge
+      </label>
+      <p className="field-hint">
+        Use one Mac with local Wi-Fi access to the Bar.
+      </p>
       {dirty && baseRevision !== configRevision && (
         <p className="inline-warning">
           Configuration changed elsewhere. Reload this form before saving.
@@ -180,51 +248,6 @@ export function ServiceEditor({
             Reload
           </button>
         )}
-        <details>
-          <summary>Access</summary>
-          <div className="access">
-            <p>
-              Publisher expires{" "}
-              {new Date(service.epochExpiresAt).toLocaleDateString()}.
-            </p>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => void rotate()}
-            >
-              Replace credential
-            </button>
-            <p className="muted">
-              Replacing stops this service until the local client receives the
-              new credential.
-            </p>
-            {confirmRevoke ? (
-              <>
-                <p>Revoke this service and end its queued items?</p>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={pending}
-                  onClick={() =>
-                    void mutate(
-                      `/services/${encodeURIComponent(service.id)}/revoke`,
-                      { expectedRevision: configRevision },
-                    )
-                  }
-                >
-                  Confirm revoke
-                </button>
-                <button type="button" onClick={() => setConfirmRevoke(false)}>
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button type="button" onClick={() => setConfirmRevoke(true)}>
-                Revoke service
-              </button>
-            )}
-          </div>
-        </details>
       </div>
     </form>
   );

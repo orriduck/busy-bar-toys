@@ -91,7 +91,7 @@ class CloudQueue:
         existing=self.producer.state.records.get(key)
         # A heartbeat never turns a tombstoned occurrence into a new event.
         if existing and existing.get('tombstone') and not existing.get('cleared'): return
-        content={'kind':kind,'level':item.level,'title':item.title[:256],'detail':item.detail[:2048],
+        content={'app':item.app,'kind':kind,'level':item.level,'title':item.title[:256],'detail':item.detail[:2048],
                  'businessId':item.id[:256],'actionKeys':['primary'] if item.primary else []}
         if item.group: content['groupKey']=item.group[:128]
         # A source callback object can change without a visual change.
@@ -159,7 +159,12 @@ class AgentRenderer:
     def pending(self): return self.motion.pending
 
     def _save(self):
-        if not self.capture.draws or self._args is None: return
+        if self._args is None: return
+        app=getattr(self._task,'source',None) or 'codex'
+        with self.producer.state.lock:
+            previous=copy.deepcopy(self.producer.state.records.get('agent') or {})
+        metadata_changed=bool(previous) and previous.get('app')!=app
+        if not self.capture.draws and not metadata_changed: return
         # Fresh director provides a complete recovery entrance even when the
         # ongoing director emitted only a mask or numeric roll.
         complete=Capture(self.producer)
@@ -171,13 +176,11 @@ class AgentRenderer:
         self.capture.draws.clear()
         changed={key:value for key,value in elements.items() if self._last_elements.get(key)!=value}
         self._last_elements.update(elements)
-        if not changed: return
+        if not changed and not metadata_changed: return
         state=visual_state(self._task)
-        content={'kind':'event' if state=='standby' else 'agent','level':'info',
+        content={'app':app,'kind':'event' if state=='standby' else 'agent','level':'info',
                  'title':'Agent '+state,'detail':getattr(self._task,'project','')[:2048],
                  'scene':scene,'actionKeys':[], 'frameSignature':json.dumps(changed,sort_keys=True), 'agentTurn':self._turn}
-        with self.producer.state.lock:
-            previous=copy.deepcopy(self.producer.state.records.get('agent') or {})
         record=self.producer.state.recognize('agent',**content)
         if record:
             with self.producer.state.lock:

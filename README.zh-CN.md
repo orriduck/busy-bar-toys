@@ -9,7 +9,10 @@
 ## 云端 control plane
 
 可选的 Cloudflare 后端统一协调多台 Mac 的显示服务。
-浏览器管理优先级、退出规则、开关和逐条事件队列。
+浏览器分为 Display、Services、Configuration 和 Device 四页。
+Display 只显示真实正面画面和 App / Sender / Received 三列队列。
+可选的本地 Wi-Fi 预览桥以 30 fps 为目标，Device 显示实际测量帧率。
+Configuration 管理优先级、退出规则和开关。
 本地采集器使用独立服务凭证发布画面，管理页通过 SSE 同步。
 
 打开[正式管理页](https://busy-bar-control-plane.orriduck.workers.dev)，用 BUSY 设备 API token 登录。每台 Mac 使用独立的发布凭据注册。

@@ -1,8 +1,7 @@
-import { useState } from "react";
-import type { ReactNode } from "react";
-import { etaText, time } from "./api";
+import { Fragment, useState } from "react";
+import { etaText, queueMetadata } from "./api";
 import type { Snapshot, QueueItem, Mutate } from "./api";
-import { Icon, serviceName } from "./common";
+import { AppIcon, Icon } from "./common";
 export function Queue({
   snapshot,
   mutate,
@@ -13,7 +12,7 @@ export function Queue({
   pending: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const rows = snapshot.groups
+  const groups = snapshot.groups
     .map((group) => ({
       ...group,
       representativeItem: snapshot.items.find(
@@ -21,158 +20,179 @@ export function Queue({
       ),
     }))
     .filter((group) => group.representativeItem);
-  const represented = new Set(rows.flatMap((g) => g.memberKeys));
-  const dormant = snapshot.items.filter((i) => !represented.has(i.itemKey));
+  const represented = new Set(groups.flatMap((group) => group.memberKeys));
+  const orphaned = snapshot.items
+    .filter((item) => !represented.has(item.itemKey))
+    .map((item) => ({
+      groupId: item.itemKey,
+      memberKeys: [item.itemKey],
+      representativeItem: item,
+    }));
   const operate = (item: QueueItem, operation: string) =>
     void mutate("/items", {
       itemKey: item.itemKey,
       operation,
       expectedRevision: snapshot.revision,
     });
-  function cells(item: QueueItem, order: ReactNode, child = false) {
+  const details = (item: QueueItem) => {
+    const meta = queueMetadata(item, snapshot);
     return (
-      <>
-        <td className="order">
-          {child && (item.state === "paused" || item.state === "snoozed")
-            ? "—"
-            : order}
-        </td>
-        <td>
+      <section
+        className="item-detail"
+        key={item.itemKey}
+        aria-label={`${meta.app} notification details`}
+      >
+        <div className="item-detail-heading">
+          <AppIcon app={meta.appId} />
           <strong>{item.title}</strong>
-          <span className="row-detail">
-            {serviceName(snapshot, item.serviceId)} · {item.instanceId}
-          </span>
-          {item.detail && (
-            <span className="row-detail item-detail">{item.detail}</span>
-          )}
-          <span className="row-meta">
-            <b className={item.level}>{item.level}</b> · First seen{" "}
-            {time(item.firstRecognizedAt)}
-            {!item.timeReliable && " · Source clock uncertain"}
-            {!item.source.connected && " · Source offline"}
-          </span>
-        </td>
-        <td>
-          <span className={"badge " + item.state}>
-            {item.state === "snoozed" ? "Later" : item.state}
-          </span>
-        </td>
-        <td className="eta">{etaText(item)}</td>
-        <td className="row-actions">
+          <span className={`badge ${item.level}`}>{item.level}</span>
+        </div>
+        <p className="muted">
+          {meta.sender} · {item.instanceId} ·{" "}
+          <time dateTime={new Date(meta.receivedAt).toISOString()}>
+            {new Date(meta.receivedAt).toLocaleString()}
+          </time>
+        </p>
+        {item.detail && <p>{item.detail}</p>}
+        <p className="muted">
+          {item.state === "snoozed" ? "Later" : item.state} · {etaText(item)}
+          {!item.source.connected ? " · Source offline" : ""}
+          {!item.timeReliable ? " · Source clock uncertain" : ""}
+        </p>
+        <div className="item-actions">
           <button
             disabled={pending}
-            title={item.state === "paused" ? "Resume item" : "Pause item"}
             onClick={() =>
               operate(item, item.state === "paused" ? "resume" : "pause")
             }
           >
             <Icon name={item.state === "paused" ? "play" : "pause"} />
-            <span>{item.state === "paused" ? "Resume" : "Pause"}</span>
+            {item.state === "paused" ? "Resume" : "Pause"}
           </button>
-          <button
-            disabled={pending}
-            title="End item"
-            onClick={() => operate(item, "end")}
-          >
+          <button disabled={pending} onClick={() => operate(item, "end")}>
             <Icon name="end" />
-            <span>End</span>
+            End
           </button>
-        </td>
-      </>
+          {item.actionKeys.includes("primary") && (
+            <button
+              disabled={
+                pending ||
+                !item.actionAvailable ||
+                snapshot.displaying?.itemKey !== item.itemKey ||
+                snapshot.health.status !== "healthy"
+              }
+              onClick={() =>
+                void mutate("/actions", {
+                  requestId: crypto.randomUUID(),
+                  itemKey: item.itemKey,
+                  generation: snapshot.generation,
+                  actionKey: "primary",
+                })
+              }
+            >
+              <Icon name="play" />
+              Run action
+            </button>
+          )}
+        </div>
+        {snapshot.actions
+          .filter((action) => action.itemKey === item.itemKey)
+          .slice(-1)
+          .map((action) => (
+            <p className="action-result" key={action.id}>
+              Action: {action.status}
+              {action.status === "unknown"
+                ? " · Check the source before retrying."
+                : ""}
+            </p>
+          ))}
+      </section>
     );
-  }
+  };
   return (
     <div className="queue-scroll">
-      <table className="queue-table">
+      <table className="queue-table" aria-label="Display queue">
         <thead>
           <tr>
-            <th scope="col">Order</th>
-            <th scope="col">Notification</th>
-            <th scope="col">State</th>
-            <th scope="col">Start</th>
-            <th scope="col">
-              <span className="sr-only">Actions</span>
-            </th>
+            <th scope="col">App</th>
+            <th scope="col">Sender</th>
+            <th scope="col">Received</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((group) => {
-            const item = group.representativeItem!;
-            const multiple = group.memberKeys.length > 1;
-            const open = expanded.has(group.groupId);
+          {[...groups, ...orphaned].map((group) => {
+            const item = group.representativeItem!,
+              meta = queueMetadata(item, snapshot),
+              open = expanded.has(group.groupId);
+            const current =
+              snapshot.health.status === "healthy" &&
+              group.memberKeys.includes(snapshot.displaying?.itemKey || "");
             return (
-              <QueueGroup key={group.groupId}>
-                <tr>
-                  {cells(
-                    item,
-                    <span>
-                      {group.order < 0 ||
-                      item.state === "paused" ||
-                      item.state === "snoozed"
-                        ? "—"
-                        : group.order + 1}
-                      {multiple && (
-                        <button
-                          className={"expand " + (open ? "open" : "")}
-                          aria-expanded={open}
-                          aria-label={`${open ? "Collapse" : "Expand"} ${group.memberKeys.length} grouped items`}
-                          onClick={() =>
-                            setExpanded((previous) => {
-                              const next = new Set(previous);
-                              next.has(group.groupId)
-                                ? next.delete(group.groupId)
-                                : next.add(group.groupId);
-                              return next;
-                            })
-                          }
-                        >
-                          <Icon name="chevron" />
-                        </button>
-                      )}
-                    </span>,
-                  )}{" "}
+              <Fragment key={group.groupId}>
+                <tr className={current ? "current-row" : ""}>
+                  <td>
+                    <button
+                      className="queue-open"
+                      aria-expanded={open}
+                      aria-controls={`details-${encodeURIComponent(group.groupId)}`}
+                      aria-label={`${open ? "Hide" : "Show"} ${meta.app} details from ${meta.sender}`}
+                      onClick={() =>
+                        setExpanded((previous) => {
+                          const next = new Set(previous);
+                          next.has(group.groupId)
+                            ? next.delete(group.groupId)
+                            : next.add(group.groupId);
+                          return next;
+                        })
+                      }
+                    >
+                      <AppIcon app={meta.appId} />
+                      <span>{meta.app}</span>
+                    </button>
+                  </td>
+                  <td title={item.instanceId}>
+                    <span className="sender">
+                      <Icon name="computer" />
+                      {meta.sender}
+                    </span>
+                  </td>
+                  <td>
+                    <time
+                      dateTime={new Date(meta.receivedAt).toISOString()}
+                      title={new Date(meta.receivedAt).toLocaleString()}
+                    >
+                      {new Date(meta.receivedAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: false,
+                      })}
+                    </time>
+                  </td>
                 </tr>
-                {multiple && (
-                  <tr className="group-count">
-                    <td />
-                    <td colSpan={4}>
-                      {group.memberKeys.length} grouped items ·{" "}
-                      {open ? "All members below" : "Expand to see every item"}
+                {open && (
+                  <tr className="details-row">
+                    <td
+                      colSpan={3}
+                      id={`details-${encodeURIComponent(group.groupId)}`}
+                    >
+                      {group.memberKeys
+                        .map((key) =>
+                          snapshot.items.find(
+                            (member) => member.itemKey === key,
+                          ),
+                        )
+                        .filter((member): member is QueueItem => !!member)
+                        .map(details)}
                     </td>
                   </tr>
                 )}
-                {open &&
-                  group.memberKeys.map((key, index) => {
-                    const child = snapshot.items.find((i) => i.itemKey === key);
-                    return (
-                      child && (
-                        <tr className="child" key={key}>
-                          {cells(
-                            child,
-                            group.order < 0
-                              ? "—"
-                              : `${group.order + 1}.${index + 1}`,
-                            true,
-                          )}
-                        </tr>
-                      )
-                    );
-                  })}
-              </QueueGroup>
+              </Fragment>
             );
           })}
-          {dormant.map((item) => (
-            <tr key={item.itemKey}>{cells(item, "—")}</tr>
-          ))}
-          {snapshot.items.length === 0 && (
+          {!snapshot.items.length && (
             <tr>
-              <td colSpan={5} className="empty">
-                <Icon name="device" />
-                <strong>Your queue is clear</strong>
-                <span>
-                  The native calendar stays on until a service has something to
-                  show.
-                </span>
+              <td colSpan={3} className="empty">
+                Your queue is clear
               </td>
             </tr>
           )}
@@ -180,7 +200,4 @@ export function Queue({
       </table>
     </div>
   );
-}
-function QueueGroup({ children }: { children: ReactNode }) {
-  return <>{children}</>;
 }

@@ -9,7 +9,10 @@ The device calendar is the default view.
 ## Cloud control plane
 
 An optional Cloudflare backend coordinates display services across Macs.
-The browser manages priorities, exit rules, switches and an event queue.
+The browser separates Display, Services, Configuration and Device pages.
+Display shows actual front-display pixels and a compact App / Sender / Received queue.
+An optional local Wi-Fi bridge targets 30 fps; Device reports the measured rate.
+Configuration manages priorities, exit rules and switches.
 Local collectors publish scenes with separate service credentials.
 SSE keeps management pages in sync.
 

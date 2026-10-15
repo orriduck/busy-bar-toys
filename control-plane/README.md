@@ -10,7 +10,7 @@ Open the [production management page](https://busy-bar-control-plane.orriduck.wo
 
 The local demo and shared cloud preview use a simulated BUSY API. They cannot control a real device. Use `demo-token` only with the preview.
 
-![Management demo with a grouped queue and service settings](../docs/images/control-plane-management.jpg)
+![Display page with synthetic device pixels and a compact queue](../docs/images/control-plane-display.png)
 
 ## Open the cloud preview
 
@@ -30,7 +30,7 @@ npm run dev:demo
 
 1. Open `http://localhost:8787`.
 2. Enter `demo-token` in the device token field.
-3. Select **Register**.
+3. Open **Services**, then select **Register**.
 4. Choose **Agent checker**, **Notifier** or **Custom publisher**.
 5. Save the publisher credential. The page shows it once.
 6. Connect a publisher with the command in the credential dialog.
@@ -52,12 +52,16 @@ A custom publisher follows [PROTOCOL.md](PROTOCOL.md). Registering a service doe
 
 ## Use the management page
 
-- **Services:** change enabled state, priority, exit rule, visible time, condition delay and heartbeat timeout. Select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
-- **Display queue:** inspect every event. Expand a group to see all its members. Pause, resume or end one item.
-- **Current owner:** distinguish selected, applying, API-confirmed, blocked and offline states. An API acknowledgment does not prove physical pixels.
-- **Actions:** run only an action advertised by the source. The original Mac executes it. Failed or unknown results keep the notification.
-- **Trusted device button bridge:** grant this only to the local input listener. This separate capability permits device-wide Start/Pause handling. An ordinary publisher cannot clear other services.
-- **Access:** replace or revoke a publisher credential. Replacement ends that service's old items. Update the local client before it can publish again.
+- **Display:** see current front-display pixels and the queue. Rows show App, Sender, and Received. Open an app to read details, expand grouped members, pause, resume, end, or run an advertised action.
+- **Services:** register collectors. Replace or revoke publisher credentials here. Replacement ends that service's old items. Update the local client before it can publish again.
+- **Configuration:** change enabled state, priority, exit rule, visible time, condition delay and heartbeat timeout. Select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
+- **Device:** inspect connection, current controller, API confirmation and preview diagnostics. Sign out here. An API acknowledgment does not prove physical pixels.
+
+Sender is the service name, with an instance when needed. It is not the notification's business author. Received is the occurrence's first server receipt time. Updates retain it. Open the row for full provenance and time.
+
+Enable **Live display preview bridge** in Configuration for one designated Mac service. Update that Mac and retain its existing local Wi-Fi input configuration. The bridge verifies the Bar identity and reads its actual front framebuffer. It sends pixels only while a signed-in Display page is visible. Capture targets 30 fps; Device reports actual rates. A missing bridge does not stop cloud scheduling. See [preview setup and limits](../docs/cloud-mode.md#management-pages-and-live-display).
+
+**Trusted device button bridge** is a separate capability. Grant it only to the local input listener. It permits device-wide Start/Pause handling. An ordinary publisher cannot clear other services. Primary actions run on the original Mac. Failed or unknown results keep the notification.
 
 Urgent groups use first-recognized order. They do not interrupt another urgent group. A normal wait behind a healthy urgent group does not trigger a system notification. The Mac watchdog still warns if display proof expires or the device fails.
 

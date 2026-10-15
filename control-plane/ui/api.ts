@@ -1,4 +1,5 @@
 import type { snapshot } from "../src/model";
+export { queueMetadata } from "./queue-metadata";
 export type Snapshot = ReturnType<typeof snapshot>;
 export type QueueItem = Snapshot["items"][number];
 export type Service = Snapshot["services"][number];

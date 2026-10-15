@@ -24,7 +24,7 @@ swiftc scripts/cloud-keychain.swift -o .venv/bin/busy-cloud-keychain
 
 ## 2. 创建服务
 
-打开控制面页面，分别添加一个 **agent** 服务和一个 **notifier** 服务。Notifier 的优先级应高于 agent。页面默认值分别为 agent 10、notifier 50。通常保留默认退出策略。
+在控制面的 **Services** 页分别注册一个 **agent** 服务和一个 **notifier** 服务。在 **Configuration** 页配置显示规则。Notifier 的优先级应高于 agent。页面默认值分别为 agent 10、notifier 50。通常保留默认退出策略。
 
 复制页面分别显示的 publisher credential。每份凭据只属于一个服务，页面仅显示一次。不要把它放入 shell 命令、环境变量、仓库文件或聊天。
 
@@ -101,9 +101,26 @@ URL 必须是 origin，不能含路径、用户信息、query 或 fragment；禁
 
 Standalone 需要原有 BUSY 设备 token。
 
+## 管理页面和实时画面
+
+- **Display：**显示当前正面画面和队列。每行只显示 App、Sender、Received；点击 app 可展开详情和队列操作。
+- **Services：**注册采集器，替换或撤销 publisher credential。
+- **Configuration：**开关服务，配置优先级、退出方式、停留时间、稍后提醒和 heartbeat。
+- **Device：**查看连接、当前控制者、API 确认和预览诊断。在这里退出登录。
+
+Sender 是注册服务的名称。多个 Mac 共用注册服务时，用 instance 区分；它不代表来源通知的作者。Received 是服务端首次收到该 occurrence 的时间，更新后保留。悬停时间可查看完整日期和时间。
+
+启用实时预览前，把指定 Mac 更新到当前版本并重启 cloud watch。在 **Configuration** 中，仅为这台 Mac 的一个服务打开 **Live display preview bridge**，优先使用 agent 服务。Mac 需要已配置的本地 Wi-Fi 输入信息和 Keychain helper。预览桥先核对 Bar 身份，再读取像素；它不写设备，也不把本地凭据传给浏览器或云端。
+
+预览以每秒 30 次新采集为目标，读取真实的 72 × 16 正面 framebuffer，不重放场景或生成动画。实际速率受局域网、互联网和浏览器调度影响。**Device** 显示近期接收帧率和最近一次浏览器采样；这些是测量值，不是固定的“30 fps”标签。浏览器延迟使用 Mac 与浏览器的时钟计算。
+
+只有通过认证、且可见的 **Display** 页面会触发采集。离开该页、隐藏标签页或关闭浏览器后停止需求；关闭信号丢失时，需求最多六秒过期。关闭浏览器不影响云端调度。Mac 预览桥不可用时，页面会明确显示预览不可用，云端仍可控制 Bar。
+
+预览桥把私有计数保存在 `~/Library/Application Support/BusyBarAI/preview-status.json`；其中采集和发送帧率是整个运行期间的平均值。文件不含像素、本地地址或凭据。画面只保留在内存，不写入云端持久存储。关闭预览桥不会关闭该服务的通知或设备按键输入。
+
 ## 输入和本地操作
 
-Cloud watch 可以读取已配置的 Wi-Fi 输入。如有需要，先在 standalone 模式配置它。Cloud watch 不执行输入配置，也不使用默认 USB endpoint。在控制面服务设置中，仅为一个本地监听者启用 **Allow input**。它的 service 和 instance 可以与当前显示所有者不同。Start/Pause 会向 `/api/input` 发送稳定 event ID 和当前 generation，由后端决定执行 urgent 主操作或清理当前非 urgent 项。
+Cloud watch 可以读取已配置的 Wi-Fi 输入。如有需要，先在 standalone 模式配置它。Cloud watch 不执行输入配置，也不使用默认 USB endpoint。在控制面服务设置中，仅为一个本地监听者启用 **Trusted device button bridge**。它的 service 和 instance 可以与当前显示所有者不同。Start/Pause 会向 `/api/input` 发送稳定 event ID 和当前 generation，由后端决定执行 urgent 主操作或清理当前非 urgent 项。
 
 主操作回调在提供该回调的 Mac 上执行。例如 Datadog 回调使用本地 `pup`。执行器核对 service、instance、item、generation 和已声明的 action key，并在产生副作用前保存 action ID。执行中断后，重启会标记 **unknown**，不会自动重试副作用。Running 和终态结果保留在 durable outbox，直到发送完成。不可用的回调报告失败，不会报告假成功。
 
