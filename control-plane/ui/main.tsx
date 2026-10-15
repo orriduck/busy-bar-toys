@@ -15,6 +15,7 @@ import type { Page } from "./pages";
 import { Preview } from "./preview";
 import type { PreviewStats } from "./preview";
 import { SessionFence, collectorSetupMode } from "./session";
+import { startEventStream } from "./event-stream";
 import "./style.css";
 function App() {
   const [session, setSession] = useState<boolean | null>(null);
@@ -34,12 +35,12 @@ function App() {
   } | null>(null);
   const fence = useRef(new SessionFence());
   const [sessionGeneration, setSessionGeneration] = useState(0);
-  const eventSource = useRef<EventSource | null>(null);
+  const eventStream = useRef<ReturnType<typeof startEventStream> | null>(null);
   const clearSession = useCallback((deviceId: string | null) => {
     const generation = fence.current.reset(deviceId);
     setSessionGeneration(generation);
-    eventSource.current?.close();
-    eventSource.current = null;
+    eventStream.current?.close();
+    eventStream.current = null;
     setSnapshot(null);
     setSecret(null);
     setPage("display");
@@ -121,47 +122,48 @@ function App() {
     if (!session) return;
     const generation = fence.current.generation;
     void refresh();
-    const events = new EventSource("/api/events");
-    eventSource.current = events;
-    events.onopen = () => {
-      if (fence.current.current(generation)) setStream("Live");
-    };
-    events.addEventListener("snapshot", (event) => {
-      if (!fence.current.current(generation)) return;
-      try {
-        apply(JSON.parse((event as MessageEvent<string>).data), generation);
-        if (fence.current.current(generation)) setStream("Live");
-      } catch {
-        setError("An update could not be read. Reload the latest state.");
-      }
+    const stream = startEventStream({
+      createSource: () => new EventSource("/api/events"),
+      isCurrent: () => fence.current.current(generation),
+      onOpen: () => setStream("Live"),
+      onSnapshot: (data) => {
+        try {
+          const accepted = apply(JSON.parse(data), generation);
+          if (accepted) setStream("Live");
+          return accepted;
+        } catch {
+          setError("An update could not be read. Reload the latest state.");
+          return false;
+        }
+      },
+      onError: () => {
+        setStream("Reconnecting");
+        void api<{ deviceId: string; demo?: boolean }>("/session")
+          .then((value) => {
+            if (
+              fence.current.current(generation) &&
+              value.deviceId !== fence.current.deviceId
+            ) {
+              invalidate();
+              setError(
+                "The device session changed in another page. Sign in again.",
+              );
+            }
+          })
+          .catch((e) => {
+            if (
+              fence.current.current(generation) &&
+              e instanceof APIError &&
+              e.status === 401
+            )
+              invalidate();
+          });
+      },
     });
-    events.onerror = () => {
-      if (!fence.current.current(generation)) return;
-      setStream("Reconnecting");
-      void api<{ deviceId: string; demo?: boolean }>("/session")
-        .then((value) => {
-          if (
-            fence.current.current(generation) &&
-            value.deviceId !== fence.current.deviceId
-          ) {
-            invalidate();
-            setError(
-              "The device session changed in another page. Sign in again.",
-            );
-          }
-        })
-        .catch((e) => {
-          if (
-            fence.current.current(generation) &&
-            e instanceof APIError &&
-            e.status === 401
-          )
-            invalidate();
-        });
-    };
+    eventStream.current = stream;
     return () => {
-      events.close();
-      if (eventSource.current === events) eventSource.current = null;
+      stream.close();
+      if (eventStream.current === stream) eventStream.current = null;
     };
   }, [session, sessionGeneration, refresh, apply, invalidate]);
   const mutate: Mutate = async (path, body, method) => {

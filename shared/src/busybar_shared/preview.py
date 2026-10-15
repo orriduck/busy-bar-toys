@@ -338,6 +338,7 @@ class PreviewBridge:
 
     async def _capture(self,client,device_id):
         device=None; verified=-1
+        loop=asyncio.get_running_loop(); period=1/FPS
         while True:
             if self._capture_error is not None: raise self._capture_error
             generation=self._generation
@@ -364,13 +365,17 @@ class PreviewBridge:
                 await self._offload(lambda:device.verify(device_id) if self._valid(client,generation) else None)
                 if not self._valid(client,generation): continue
                 verified=generation
+            next_tick=loop.time()+period
             self._update(status='capturing')
             try: slot=self._busy.index(False)
             except ValueError: self._count('busySkipped')
             else: self._submit_frame(device,slot,client,generation)
-            # One central tick starts at most one read. A slow tick never catches
-            # up by issuing a burst of requests after work or event-loop stalls.
-            await asyncio.sleep(1/FPS)
+            # Include bookkeeping in this actual tick's interval. A late wake
+            # starts a new tick instead of catching up to an earlier phase; an
+            # overrun waits a full interval. Submit at most one read per tick.
+            now=loop.time()
+            if next_tick<=now: next_tick=now+period
+            await asyncio.sleep(next_tick-now)
 
     async def _receive(self,ws,device_id):
         stream=None

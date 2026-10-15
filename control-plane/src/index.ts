@@ -78,6 +78,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       auth: Auth;
       controller: ReadableStreamDefaultController<Uint8Array>;
       timer: ReturnType<typeof setTimeout>;
+      heartbeat: ReturnType<typeof setInterval>;
     }
   >();
   constructor(ctx: DurableObjectState, env: RuntimeEnv) {
@@ -661,25 +662,29 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         const timer = setTimeout(
-          () => {
-            try {
-              controller.close();
-            } catch {}
-            this.streams.delete(id);
-          },
+          () => this.closeStream(id),
           Math.min(
             55000,
             auth.kind === "session" ? auth.expiresAt - Date.now() : 55000,
           ),
         );
-        this.streams.set(id, { auth, controller, timer });
+        const heartbeat = setInterval(() => {
+          try {
+            const current = this.load();
+            requireThat(current, "UNAUTHORIZED", 401);
+            this.authorize(current, auth);
+            requireThat((controller.desiredSize ?? 0) > 0, "SLOW_CONSUMER");
+            // Keep the producer's five-second socket read alive without
+            // inventing a revision or repeating its full snapshot.
+            controller.enqueue(new TextEncoder().encode(": heartbeat\n\n"));
+          } catch {
+            this.closeStream(id);
+          }
+        }, 2000);
+        this.streams.set(id, { auth, controller, timer, heartbeat });
         controller.enqueue(this.frame(s, auth));
       },
-      cancel: () => {
-        const entry = this.streams.get(id);
-        if (entry) clearTimeout(entry.timer);
-        this.streams.delete(id);
-      },
+      cancel: () => this.closeStream(id),
     });
     return new Response(stream, {
       headers: {
@@ -688,6 +693,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         Connection: "keep-alive",
       },
     });
+  }
+  private closeStream(id: string) {
+    const entry = this.streams.get(id);
+    if (!entry) return;
+    this.streams.delete(id);
+    clearTimeout(entry.timer);
+    clearInterval(entry.heartbeat);
+    try {
+      entry.controller.close();
+    } catch {}
   }
   private frame(s: State, auth: Auth) {
     const serviceId = this.authorize(s, auth);
@@ -708,11 +723,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         requireThat((entry.controller.desiredSize ?? 0) > 0, "SLOW_CONSUMER");
         entry.controller.enqueue(this.frame(s, entry.auth));
       } catch {
-        try {
-          entry.controller.close();
-        } catch {}
-        clearTimeout(entry.timer);
-        this.streams.delete(id);
+        this.closeStream(id);
       }
     }
   }

@@ -691,4 +691,53 @@ class PreviewRelayCloseTest(unittest.IsolatedAsyncioTestCase):
                         with self.assertRaises(asyncio.CancelledError): await task
 
 
+class PreviewCaptureClockTest(unittest.IsolatedAsyncioTestCase):
+    wait_until=PreviewBridgeTest.wait_until
+
+    async def scheduled_samples(self,*,bookkeeping=0,stall=False,partial_stall=False):
+        from concurrent.futures import ThreadPoolExecutor
+        loop=asyncio.get_running_loop(); started=[]
+        client=client_for('http://localhost:1234'); device=FakeDevice()
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None,device_factory=lambda _:device)
+        bridge._executor=ThreadPoolExecutor(max_workers=4)
+        bridge._client=client; bridge._demand=True
+        def submit(*args):
+            started.append(loop.time())
+            # Model synchronous scheduler/callback bookkeeping without replacing
+            # either global clock. The transport is outside this timing test.
+            if bookkeeping: time.sleep(bookkeeping)
+            if stall and len(started)==4: loop.call_later(.01,time.sleep,.12)
+            if partial_stall and len(started)==4: loop.call_later(.01,time.sleep,.04)
+        bridge._submit_frame=submit
+        old_warning=loop.slow_callback_duration; loop.slow_callback_duration=.5
+        task=asyncio.create_task(bridge._capture(client,DEVICE))
+        try:
+            await self.wait_until(lambda:len(started)>=12)
+        finally:
+            bridge._invalidate(); task.cancel()
+            with self.assertRaises(asyncio.CancelledError): await task
+            await bridge.aclose()
+            loop.slow_callback_duration=old_warning
+        return started
+
+    async def test_capture_deadline_absorbs_bookkeeping_instead_of_adding_a_full_sleep(self):
+        import statistics
+        started=await self.scheduled_samples(bookkeeping=.018)
+        intervals=[b-a for a,b in zip(started,started[1:])]
+        self.assertLess(statistics.median(intervals),1/preview.FPS+.009)
+        self.assertGreaterEqual(min(intervals),.025)
+
+    async def test_partial_tick_lateness_does_not_create_a_short_catchup_interval(self):
+        started=await self.scheduled_samples(partial_stall=True)
+        intervals=[b-a for a,b in zip(started,started[1:])]
+        self.assertGreater(intervals[3],.04)
+        self.assertGreaterEqual(intervals[4],.025)
+
+    async def test_stalled_event_loop_skips_missed_ticks_without_catchup_burst(self):
+        started=await self.scheduled_samples(stall=True)
+        intervals=[b-a for a,b in zip(started,started[1:])]
+        self.assertGreater(intervals[3],.1)
+        self.assertGreaterEqual(min(intervals[4:]),.025)
+
+
 if __name__=='__main__': unittest.main()
