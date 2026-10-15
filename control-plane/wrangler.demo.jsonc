@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "busy-bar-control-plane-local-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "DEVICES", "class_name": "DeviceControl" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DeviceControl"] }],
+  "services": [
+    { "binding": "BUSY_UPSTREAM", "service": "busy-bar-control-demo" },
+  ],
+  "vars": {
+    "PUBLIC_ORIGIN": "http://localhost:8787",
+    "TOKEN_ENCRYPTION_KEY": "0000000000000000000000000000000000000000000000000000000000000000",
+    "SESSION_SIGNING_KEY": "DEMO-ONLY-public-fake-signing-key-never-use-in-production",
+  },
+  "observability": { "enabled": false },
+  "dev": { "port": 8787, "local_protocol": "http" },
+}
