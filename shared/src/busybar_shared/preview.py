@@ -227,6 +227,7 @@ class PreviewBridge:
         self._stop=threading.Event(); self._thread=None; self._loop=None; self._task=None
         self._executor=None; self._pending=set(); self._busy=[False]*4; self._devices=[]; self._device_future=None
         self._blocked={}; self._generation=0; self._demand=False; self._client=None
+        self._capture_error=None; self._active_send=None
         self._latest=asyncio.Queue(maxsize=1); self._sequence=0; self._last_sent=0
         self._diag_lock=threading.Lock(); self._started=time.monotonic()
         self._diag={'status':'idle','connected':False,'demand':False,'captureRequested':0,
@@ -278,6 +279,8 @@ class PreviewBridge:
 
     def _invalidate(self):
         self._generation+=1; self._demand=False
+        if self._active_send is not None and not self._active_send.done():
+            self._active_send.cancel()
         while not self._latest.empty():
             self._latest.get_nowait(); self._count('dropped')
         self._update(demand=False)
@@ -293,6 +296,17 @@ class PreviewBridge:
         future.add_done_callback(complete)
         return await asyncio.shield(future)
 
+    def _capture_failed(self,client,generation,error):
+        self._count('captureErrors')
+        if not self._valid(client,generation): return
+        self._update(status=error.code)
+        if error.code in ('auth','device_mismatch','redirect_refused'):
+            self._blocked[id(client)]='terminal'
+        # End this generation before another scheduler tick or queued worker
+        # can start a LAN read. The supervisor owns the bounded retry delay.
+        self._capture_error=error
+        self._invalidate()
+
     def _submit_frame(self,device,slot,client,generation):
         self._busy[slot]=True; self._sequence+=1
         sequence=self._sequence; captured_at=int(time.time()*1000)
@@ -304,12 +318,9 @@ class PreviewBridge:
             self._pending.discard(done); self._busy[slot]=False
             try: pixels=done.result()
             except PreviewError as error:
-                self._count('captureErrors'); self._update(status=error.code)
-                if error.code in ('auth','device_mismatch','redirect_refused'):
-                    self._blocked[id(client)]='terminal'; self._invalidate()
-                return
+                self._capture_failed(client,generation,error); return
             except Exception:
-                self._count('captureErrors'); self._update(status='unavailable'); return
+                self._capture_failed(client,generation,PreviewError('unavailable')); return
             if pixels is None:
                 self._count('dropped'); return
             self._count('captured')
@@ -327,19 +338,23 @@ class PreviewBridge:
     async def _capture(self,client,device_id):
         device=None; verified=-1
         while True:
+            if self._capture_error is not None: raise self._capture_error
             generation=self._generation
             if not self._valid(client,generation):
                 await asyncio.sleep(.02); continue
             if device is None:
                 if self._device_future is None:
                     self._device_future=asyncio.get_running_loop().run_in_executor(
-                        self._executor,self.device_factory,self.runtime)
+                        self._executor,lambda:self.device_factory(self.runtime) if self._valid(client,generation) else None)
                     self._pending.add(self._device_future)
                     def remember(done):
                         self._pending.discard(done)
-                        if not done.cancelled() and done.exception() is None: self._devices.append(done.result())
+                        if not done.cancelled() and done.exception() is None:
+                            if done.result() is not None: self._devices.append(done.result())
+                            elif self._device_future is done: self._device_future=None
                     self._device_future.add_done_callback(remember)
                 device=await asyncio.shield(self._device_future)
+                if device is None: continue
             if not self._valid(client,generation): continue
             if verified!=generation:
                 # Slot 0 may still contain an old-generation request. Wait for
@@ -378,7 +393,23 @@ class PreviewBridge:
                 self._count('dropped'); continue
             raw=json.dumps(frame,separators=(',',':'),allow_nan=False)
             if len(raw.encode('utf-8'))>MAX_MESSAGE: raise PreviewError('frame')
-            await asyncio.wait_for(ws.send(raw),timeout=1)
+            sending=asyncio.create_task(ws.send(raw))
+            self._active_send=sending
+            try:
+                await asyncio.wait_for(sending,timeout=1)
+            except asyncio.CancelledError:
+                if not self._valid(client,generation):
+                    self._count('dropped')
+                    # A canceled partial socket write requires closing this
+                    # session before reconnecting; never reuse its stream.
+                    raise PreviewError('unavailable') from None
+                raise
+            finally:
+                if self._active_send is sending: self._active_send=None
+                if not sending.done(): sending.cancel()
+                await asyncio.gather(sending,return_exceptions=True)
+            if not self._valid(client,generation):
+                self._count('dropped'); continue
             self._last_sent=frame['sequence']; self._count('sent')
 
     async def _heartbeat(self,ws):
@@ -396,7 +427,8 @@ class PreviewBridge:
             await asyncio.sleep(.02)
 
     async def _session(self,ws,client,device_id):
-        self._invalidate(); self._client=client; self._sequence=0; self._last_sent=0
+        self._invalidate(); self._capture_error=None
+        self._client=client; self._sequence=0; self._last_sent=0
         self._update(connected=True,status='idle')
         tasks=[asyncio.create_task(work) for work in (self._receive(ws,device_id),self._send(ws,client),
                  self._capture(client,device_id),self._heartbeat(ws),self._permission(client),self._diagnose())]
@@ -454,7 +486,7 @@ class PreviewBridge:
                     if reason=='PREVIEW_CAPABILITY_REQUIRED': self._blocked[id(client)]='capability'
                     elif getattr(received,'code',None)==1008: self._blocked[id(client)]='terminal'
                     self._update(status='unavailable')
-                except (OSError,TimeoutError,ValueError): self._update(status='unavailable')
+                except (OSError,TimeoutError,asyncio.TimeoutError,ValueError): self._update(status='unavailable')
                 finally:
                     self._invalidate(); self._update(connected=False)
                 self.write_status()

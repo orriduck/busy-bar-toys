@@ -480,4 +480,109 @@ class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(bridge._latest.empty())
 
 
+class PreviewReviewRegressionTest(unittest.IsolatedAsyncioTestCase):
+    wait_until=PreviewBridgeTest.wait_until
+
+    async def test_frame_transport_failure_stops_capture_and_uses_supervisor_backoff(self):
+        from websockets.asyncio.server import serve
+        device=FakeDevice(); sockets=[]
+        def unavailable(slot):
+            device.calls.append(time.monotonic())
+            raise preview.PreviewError('unavailable')
+        device.frame=unavailable
+        async def handler(ws):
+            sockets.append(ws)
+            await ws.send(json.dumps({'type':'demand','enabled':True,'targetFps':30,'streamId':'s1','deviceId':DEVICE}))
+            await ws.wait_closed()
+        async with serve(handler,'127.0.0.1',0) as server:
+            url='http://127.0.0.1:'+str(server.sockets[0].getsockname()[1])
+            bridge=preview.PreviewBridge('.',{'agent':client_for(url)},status_path=None,device_factory=lambda _:device)
+            task=asyncio.create_task(bridge.run())
+            try:
+                await self.wait_until(lambda:bool(device.calls))
+                await asyncio.sleep(.45)
+                self.assertEqual(len(device.calls),1)
+                self.assertFalse(bridge.diagnostics()['demand'])
+                self.assertEqual(len(sockets),1)
+                await self.wait_until(lambda:len(device.calls)==2)
+                self.assertGreaterEqual(device.calls[1]-device.calls[0],.9)
+                self.assertEqual(len(sockets),2)
+            finally:
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError): await task
+
+    async def test_delayed_factory_worker_rechecks_demand_before_reading_credentials(self):
+        from concurrent.futures import ThreadPoolExecutor
+        started=threading.Event(); release=threading.Event(); factories=[]
+        client=client_for('http://localhost:1234')
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None,
+                                     device_factory=lambda _:factories.append(True) or FakeDevice())
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
+        def occupy(): started.set(); release.wait(timeout=2)
+        occupied=bridge._executor.submit(occupy)
+        await self.wait_until(started.is_set)
+        bridge._client=client; bridge._demand=True
+        task=asyncio.create_task(bridge._capture(client,DEVICE))
+        try:
+            await self.wait_until(lambda:bridge._device_future is not None)
+            bridge._invalidate(); release.set()
+            await asyncio.wrap_future(occupied)
+            await asyncio.gather(*list(bridge._pending))
+            await asyncio.sleep(.03)
+            self.assertEqual(factories,[])
+            bridge._demand=True
+            await self.wait_until(lambda:factories==[True])
+        finally:
+            release.set(); bridge._invalidate(); task.cancel()
+            with self.assertRaises(asyncio.CancelledError): await task
+            await bridge.aclose()
+
+    async def test_distinct_python310_asyncio_timeout_is_retried_by_supervisor(self):
+        # Python 3.10 has a separate asyncio.TimeoutError class. Simulate that
+        # distinction even when this suite runs on Python 3.11 or newer.
+        class LegacyAsyncioTimeout(Exception): pass
+        attempts=[]
+        class TimeoutConnect:
+            def __init__(self,*args,**kwargs): pass
+            async def __aenter__(self):
+                attempts.append(time.monotonic()); raise LegacyAsyncioTimeout()
+            async def __aexit__(self,*args): pass
+        client=client_for('http://localhost:1234')
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        with patch.object(preview.asyncio,'TimeoutError',LegacyAsyncioTimeout), \
+             patch.object(preview,'NoRedirectConnect',TimeoutConnect):
+            task=asyncio.create_task(bridge.run())
+            try:
+                await self.wait_until(lambda:bool(attempts))
+                await asyncio.sleep(.05)
+                self.assertFalse(task.done())
+                await self.wait_until(lambda:len(attempts)==2)
+                self.assertGreaterEqual(attempts[1]-attempts[0],.9)
+            finally:
+                task.cancel()
+                result=await asyncio.gather(task,return_exceptions=True)
+                self.assertIsInstance(result[0],asyncio.CancelledError)
+
+    async def test_invalidating_demand_cancels_blocked_frame_send_before_completion(self):
+        started=asyncio.Event(); release=asyncio.Event(); completed=[]
+        class BlockedSocket:
+            async def send(self,raw):
+                started.set(); await release.wait(); completed.append(raw)
+        client=client_for('http://localhost:1234')
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        bridge._client=client; bridge._demand=True
+        bridge._latest.put_nowait((0,{'type':'frame','sequence':1,'capturedAt':1,'pixels':'test'}))
+        task=asyncio.create_task(bridge._send(BlockedSocket(),client))
+        try:
+            await started.wait()
+            bridge._invalidate()
+            await asyncio.sleep(.02)
+            release.set(); await asyncio.sleep(.02)
+            self.assertEqual(completed,[])
+            self.assertEqual(bridge.diagnostics()['sent'],0)
+        finally:
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+
+
 if __name__=='__main__': unittest.main()
