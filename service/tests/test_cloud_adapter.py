@@ -109,7 +109,7 @@ class AdapterTest(unittest.TestCase):
             first=record['itemId']; initial=record['version']
             producer.flush()
             key=json.dumps(['agent','mac',first],separators=(',',':'))
-            producer.snapshot={'selected':key,'generation':1,'items':[{'itemId':first,'itemKey':key}]}
+            producer.snapshot={'selected':key,'generation':1,'items':[{'itemId':first,'itemKey':key,'app':'codex'}]}
             renderer.show(task,160,1,None); producer.flush()
             self.assertEqual(record['itemId'],first)
             self.assertGreater(record['version'],initial)
@@ -202,3 +202,59 @@ class AdapterTest(unittest.TestCase):
             snap.update(revision=2,health={'status':'healthy'},displaying={'itemKey':key,'generation':1,'confirmedValidUntil':110000})
             snap['items'][0]['coverageProof']={'revision':2,'version':snap['items'][0]['version'],'itemKey':key,'controller':{'itemKey':key,'generation':1},'validUntil':110000}
             producer.accept(snap); self.assertEqual(shown,[item])
+
+    def test_actual_source_app_survives_publish_and_changes_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory); queue=CloudQueue(producer,reduced=True)
+            item=Notification('x','info','first-app','APP','Title',source='source')
+            queue.push([item]); producer.flush()
+            record=producer.state.records['source:x']; version=record['version']; ident=record['itemId']
+            self.assertEqual([b for _,p,b in producer.http.calls if p=='/api/publish'][-1].get('app'),'first-app')
+            from dataclasses import replace
+            item=replace(item,app='next-app')
+            queue.push([item]); producer.flush()
+            self.assertEqual(record['itemId'],ident)
+            self.assertGreater(record['version'],version)
+            self.assertEqual([b for _,p,b in producer.http.calls if p=='/api/publish'][-1].get('app'),'next-app')
+
+    def test_agent_actual_source_app_is_published(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer,reduced=True)
+            renderer.show(Task('s','t','dots','project','working',90,100),100)
+            producer.flush()
+            self.assertEqual([b for _,p,b in producer.http.calls if p=='/api/publish'][-1].get('app'),'dots')
+
+    def test_selected_legacy_agent_upgrades_app_with_full_publish_then_resumes_deltas(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer,reduced=True)
+            task=Task('s','t','codex','project','working',90,100)
+            renderer.show(task,100); producer.flush()
+            record=producer.state.records['agent']; ident=record['itemId']
+            key=json.dumps(['agent','mac',ident],separators=(',',':'))
+            # Old durable and remote records can lack app. Keep occurrence and
+            # remaining time, while forcing new metadata through /publish.
+            producer.snapshot={'selected':key,'generation':1,'items':[{'itemId':ident,'itemKey':key}]}
+            producer.http.calls.clear()
+            renderer.show(task,160); producer.flush()
+            self.assertEqual(record['itemId'],ident)
+            published=[b for _,p,b in producer.http.calls if p=='/api/publish']
+            self.assertEqual(len(published),1)
+            self.assertEqual(published[0]['app'],'codex')
+            producer.snapshot['items'][0]['app']='codex'
+            producer.http.calls.clear()
+            renderer.show(task,220); producer.flush()
+            self.assertTrue(any(p=='/api/update' for _,p,_ in producer.http.calls))
+
+    def test_agent_app_metadata_change_survives_identical_rendered_pixels(self):
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer,reduced=True)
+            task=Task('s','t','custom-one','project','working',90,100)
+            renderer.show(task,100); producer.flush()
+            record=producer.state.records['agent']; ident=record['itemId']; version=record['version']
+            scene=record['scene']
+            renderer.show(replace(task,source='custom-two'),100); producer.flush()
+            self.assertEqual(record['itemId'],ident)
+            self.assertGreater(record['version'],version)
+            self.assertEqual(record['scene'],scene)
+            self.assertEqual([b for _,p,b in producer.http.calls if p=='/api/publish'][-1]['app'],'custom-two')

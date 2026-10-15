@@ -69,6 +69,23 @@ class Transport:
         self.timeout = timeout
         self._opener = opener or build_opener(NoRedirect())
 
+    def _preview_connection(self, config):
+        """Private in-memory handoff to the optional local preview bridge."""
+        parts=self._credential.split('.')
+        if len(parts)!=3 or not re.fullmatch(r'[a-f0-9]{64}',parts[0]):
+            raise CloudError('invalid_credential')
+        if parts[1]!=config.get('serviceId',parts[1]): raise CloudError('invalid_credential')
+        try:
+            if not IDENTIFIER.fullmatch(config['instanceId']): raise ValueError()
+            epoch=config['epoch']
+            if not isinstance(epoch,str) or not epoch or len(epoch)>256 or any(c.isspace() for c in epoch): raise ValueError()
+        except (KeyError,ValueError,TypeError): raise CloudError('invalid_config') from None
+        origin=urlsplit(self.url)
+        scheme='wss' if origin.scheme=='https' else 'ws'
+        return (scheme+'://'+origin.netloc+'/api/preview/publish',
+                {'Authorization':'Bearer '+self._credential,'X-Busy-Instance':config['instanceId'],
+                 'X-Busy-Epoch':epoch},parts[0])
+
     def _open(self, method, path, body=None):
         if not path.startswith('/api/') or '?' in path or '#' in path: raise CloudError('invalid_path')
         headers = {'Authorization':'Bearer ' + self._credential, 'Accept':'application/json',
@@ -636,7 +653,7 @@ class Producer:
             hashes|={e['assetHash'] for e in rec.get('update',[]) if 'assetHash' in e}
             self._upload_assets(hashes,asset_bodies)
             body={**identity,**{k:rec[k] for k in ('itemId','version','firstRecognizedAt','kind','level','title','detail','scene')}}
-            for field in ('groupKey','actionKeys','businessId'):
+            for field in ('groupKey','actionKeys','businessId','app'):
                 if field in rec: body[field]=rec[field]
             body['validUntil']=rec['lastSourceAt']+60000
             with self.state.lock:
@@ -649,7 +666,8 @@ class Producer:
             # publish remains the recovery route when it has been preempted.
             with self._snapshot_lock: snap=copy.deepcopy(self.snapshot)
             item=next((i for i in snap.get('items',[]) if i.get('itemId')==rec['itemId']),{})
-            if rec.get('update') and snap.get('selected')==item.get('itemKey') and item:
+            if (rec.get('update') and snap.get('selected')==item.get('itemKey') and item
+                    and rec.get('app')==item.get('app')):
                 with self.state.lock:
                     live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
                     if live is None or live['version']!=rec['version'] or live.get('cleared') or live.get('tombstone'): continue

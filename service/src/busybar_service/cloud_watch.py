@@ -9,6 +9,7 @@ from busybar_shared.cloud import CloudError, Producer, Transport, State, keychai
 from busybar_agents.network import NetworkSampler
 from busybar_agents.view import ViewMode
 from busybar_shared.device_input import configured_input_monitor, InputMonitor
+from busybar_shared.preview import PreviewBridge
 from busybar_apps.codex.records import CodexTaskRegistry, RolloutWatcher
 from busybar_apps.dots.orbit import load_dot_thread_ids
 from busybar_agents.runtime import read_spool
@@ -57,7 +58,7 @@ def watch(args,runtime,repo):
     try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close(); raise RuntimeError('The BUSY Bar observer is already running.') from None
-    clients={}; poller=None; monitor=None; stopping=False
+    clients={}; poller=None; monitor=None; preview=None; stopping=False
     def stop(*_):
         nonlocal stopping
         stopping=True
@@ -90,6 +91,7 @@ def watch(args,runtime,repo):
         monitor=configured_input_monitor(runtime) if (runtime/'input.json').exists() else InputMonitor(enabled=False)
         monitor.start()
         for client in clients.values(): client.start()
+        preview=PreviewBridge(runtime,clients); preview.start()
         last_scan=last_dot=next_draw=next_status=0; seen={}
         while not stopping:
             now=time.time()
@@ -122,6 +124,7 @@ def watch(args,runtime,repo):
                 monitor.write_status(runtime/'input-status.json'); next_status=now+5
             time.sleep(.05 if agent and agent.pending else .25)
     finally:
+        if preview: preview.stop()
         if poller: poller.stop()
         if monitor: monitor.stop(); monitor.write_status(runtime/'input-status.json')
         for client in clients.values(): client.stop()
