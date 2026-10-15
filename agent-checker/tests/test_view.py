@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 
 from busybar_agents.view import ViewMode
-from busybar_agents.events import TaskRegistry
+from busybar_apps.codex.records import CodexTaskRegistry as TaskRegistry
+from busybar_apps import load_agents
+
+load_agents()
 
 
 class ViewTests(unittest.TestCase):

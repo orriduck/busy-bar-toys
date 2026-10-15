@@ -1,21 +1,19 @@
-"""Observe task lifecycle records without retaining prompts or tool output."""
+"""Agent task lifecycle registry. Agent apps translate their own records into it."""
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from hashlib import sha256
-import json
 import math
 from pathlib import Path
-import re
 import time
+
+from . import profiles
 
 STALE_SECONDS = 1800
 FLASH_SECONDS = 12
-TAIL_BYTES = 1024 * 1024
 STATES = frozenset({"working", "waiting", "done", "error", "stopped", "unknown"})
 
 
-def _timestamp(value):
+def parse_timestamp(value):
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -51,68 +49,41 @@ class TaskRegistry:
         self._metadata: dict[str, dict] = {}
         self._ignored: set[str] = set()
         self._seen_turns: dict[str, set[str]] = {}
-        self._waiting_calls: dict[str, str] = {}
-        self._default_session = ""
+
+    def task(self, session: str) -> Task | None:
+        return self._tasks.get(session)
+
+    def ignore(self, session: str):
+        self._ignored.add(session)
+        self._tasks.pop(session, None)
+
+    def is_ignored(self, session: str) -> bool:
+        return session in self._ignored
+
+    def set_metadata(self, session: str, source: str, cwd, *, sticky=False):
+        self._metadata[session] = {"source": source, "cwd": cwd, "sticky": sticky}
+        current = self._tasks.get(session)
+        if current:
+            self._tasks[session] = replace(current, source=source, project=self._project(cwd))
 
     def ingest(self, record: dict, now: float | None = None) -> bool:
-        """Apply metadata or a lifecycle event; return whether a state was applied."""
+        """Apply one normalized lifecycle event; return whether a state was applied."""
         if not isinstance(record, dict):
             return False
-        payload = record.get("payload")
-        payload = payload if isinstance(payload, dict) else {}
-        if record.get("type") is not None and not isinstance(record["type"], str):
-            return False
-        if payload.get("type") is not None and not isinstance(payload["type"], str):
-            return False
-        if record.get("type") == "session_meta":
-            session = payload.get("id") or record.get("session_id")
-            if not isinstance(session, str) or not session:
-                return False
-            self._default_session = session
-            source = payload.get("source")
-            if isinstance(source, dict) and "subagent" in source:
-                self._ignored.add(session)
-                self._tasks.pop(session, None)
-                return False
-            originator = payload.get("originator", "")
-            client_meta = payload.get("responsesapi_client_metadata")
-            client_meta = client_meta if isinstance(client_meta, dict) else {}
-            is_dot = (isinstance(originator, str) and originator.startswith("orbit_cca")) or client_meta.get("aeon_kind") == "orbit"
-            self._metadata[session] = {
-                "source": "dots" if is_dot or record.get("source") == "dots" else "codex",
-                "cwd": payload.get("cwd", ""),
-            }
-            current = self._tasks.get(session)
-            if current:
-                self._tasks[session] = replace(current, source=self._metadata[session]["source"], project=self._project(self._metadata[session]["cwd"]))
-            return False
-
-        session = record.get("session_id") or self._default_session
+        session = record.get("session_id")
         if not isinstance(session, str) or not session or session in self._ignored:
             return False
-        current = self._tasks.get(session)
-        state = record.get("state")
-        kind = payload.get("type")
-        if state is None and record.get("type") == "event_msg":
-            state = {"task_started": "working", "task_complete": "done", "turn_aborted": "stopped", "error": "error"}.get(kind)
-            if state is None and current and current.state in {"working", "waiting"} and kind in {"agent_message", "agent_reasoning", "token_count"}:
-                state = current.state
-        elif state is None and record.get("type") == "response_item":
-            name = payload.get("name", "")
-            name = name.rsplit(".", 1)[-1] if isinstance(name, str) else ""
-            if kind == "function_call" and name in {"request_user_input", "request_user_input_async"}:
-                state = "waiting" if not current or current.state in {"working", "waiting"} else None
-            elif kind == "function_call_output" and current and current.state == "waiting":
-                waiting_call = self._waiting_calls.get(session)
-                state = "working" if waiting_call is None or payload.get("call_id") == waiting_call else "waiting"
-            elif kind in {"function_call", "function_call_output", "message", "reasoning", "custom_tool_call", "custom_tool_call_output"} and current and current.state in {"working", "waiting"}:
-                state = current.state
+        return self._apply(session, record.get("state"), record, now)
+
+    def _apply(self, session, state, record, now, *, payload=None, event_time=None,
+               started_at=None, default_source=""):
+        payload = payload or {}
         if not isinstance(state, str) or state not in STATES:
             return False
-        event_time = payload.get("started_at") if kind == "task_started" else payload.get("completed_at")
-        timestamp = _timestamp(record.get("timestamp"))
+        current = self._tasks.get(session)
+        timestamp = parse_timestamp(record.get("timestamp"))
         if timestamp is None:
-            timestamp = _timestamp(event_time)
+            timestamp = parse_timestamp(event_time)
         if timestamp is None:
             if event_time is not None or record.get("timestamp") is not None:
                 return False
@@ -127,20 +98,17 @@ class TaskRegistry:
                 return False
         meta = self._metadata.get(session, {})
         source = record.get("source")
-        source = source if isinstance(source, str) and source in {"codex", "chatgpt", "dots"} else meta.get("source", "codex")
-        if meta.get("source") == "dots":
-            source = "dots"
+        if not (isinstance(source, str) and source in profiles.sources()):
+            source = meta.get("source", default_source)
+        if meta.get("sticky"):
+            source = meta["source"]
         cwd = record.get("cwd") or meta.get("cwd")
         project = self._project(cwd) if cwd else (current.project if current else "")
         started = current.started_at if current and current.turn_id == turn else timestamp
-        if kind == "task_started" and (event_started := _timestamp(payload.get("started_at"))) is not None:
-            started = event_started
+        if started_at is not None:
+            started = started_at
         self._tasks[session] = Task(session, turn, source, project, state, started, timestamp)
         self._seen_turns.setdefault(session, set()).add(turn)
-        if state != "waiting" or (current and current.turn_id != turn):
-            self._waiting_calls.pop(session, None)
-        if state == "waiting" and kind == "function_call" and isinstance(payload.get("call_id"), str):
-            self._waiting_calls[session] = payload["call_id"]
         return True
 
     @staticmethod
@@ -174,179 +142,3 @@ class TaskRegistry:
 
     def active_count(self, now: float) -> int:
         return sum(task.state in {"working", "waiting"} and now - task.updated_at <= STALE_SECONDS for task in self._tasks.values())
-
-
-class RolloutWatcher:
-    def __init__(self, sessions_dir: Path, registry: TaskRegistry, dot_thread_ids: set[str] | None = None):
-        self.sessions_dir = Path(sessions_dir)
-        self.registry = registry
-        self.dot_thread_ids = set(dot_thread_ids or ())
-        self._files: dict[Path, dict] = {}
-
-    @staticmethod
-    def _filename_id(path: Path) -> str:
-        match = re.search(r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$", path.stem)
-        return match.group(1) if match else path.stem
-
-    @staticmethod
-    def _tail_fingerprint(stream, offset: int) -> bytes:
-        start = max(0, offset - 256)
-        stream.seek(start)
-        return sha256(stream.read(offset - start)).digest()
-
-    @staticmethod
-    def _is_boundary(record: dict) -> bool:
-        payload = record.get("payload")
-        payload = payload if isinstance(payload, dict) else {}
-        if isinstance(record.get("state"), str) and record["state"] in STATES:
-            return True
-        if record.get("type") == "event_msg":
-            return isinstance(payload.get("type"), str) and payload["type"] in {"task_started", "task_complete", "turn_aborted", "error"}
-        name = payload.get("name", "")
-        return (record.get("type") == "response_item" and payload.get("type") == "function_call"
-                and isinstance(name, str) and name.rsplit(".",1)[-1] in {"request_user_input", "request_user_input_async"})
-
-    @classmethod
-    def _last_boundary(cls, stream, before: int) -> bytes | None:
-        """Scan backwards in bounded chunks, skipping oversized non-lifecycle lines."""
-        position = before
-        buffer = b""
-        skip_partial = True
-        while position:
-            size = min(position, 65536)
-            position -= size
-            stream.seek(position)
-            pieces = (stream.read(size) + buffer).split(b"\n")
-            buffer = pieces[0]
-            for line in reversed(pieces[1:]):
-                if skip_partial:
-                    skip_partial = False
-                    continue
-                try:
-                    record = json.loads(line)
-                except (ValueError, UnicodeDecodeError):
-                    continue
-                if isinstance(record, dict) and cls._is_boundary(record):
-                    return line
-            if len(buffer) > TAIL_BYTES:
-                buffer = b""
-                skip_partial = True
-        if buffer and not skip_partial:
-            try:
-                record = json.loads(buffer)
-            except (ValueError, UnicodeDecodeError):
-                return None
-            if isinstance(record, dict) and cls._is_boundary(record):
-                return buffer
-        return None
-
-    def _apply(self, line: bytes, info: dict, now: float, boot: bool) -> bool:
-        try:
-            record = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
-            return False
-        if not isinstance(record, dict):
-            return False
-        payload = record.get("payload")
-        payload = payload if isinstance(payload, dict) else {}
-        if record.get("type") == "session_meta":
-            session = payload.get("id")
-            if isinstance(session, str) and session:
-                info["session"] = session
-            source = payload.get("source")
-            if isinstance(source, dict) and "subagent" in source:
-                info["ignored"] = True
-        if info["ignored"] and record.get("type") != "session_meta":
-            return False
-        record["session_id"] = info["session"]
-        if info["session"] in self.dot_thread_ids:
-            record["source"] = "dots"
-        if boot and record.get("type") != "session_meta" and not self._is_boundary(record):
-            timestamp = _timestamp(record.get("timestamp"))
-            if timestamp is None:
-                timestamp = _timestamp(payload.get("started_at"))
-            if timestamp is None:
-                timestamp = _timestamp(payload.get("completed_at"))
-            if timestamp is None or now - timestamp > STALE_SECONDS + FLASH_SECONDS:
-                return False
-        return self.registry.ingest(record, now=now)
-
-    def poll(self, now: float) -> int:
-        """Read complete newly appended lines; return applied lifecycle event count."""
-        count = 0
-        for path in sorted(self.sessions_dir.glob("**/*.jsonl")):
-            try:
-                stat = path.stat()
-                info = self._files.get(path)
-                if info is None and now - stat.st_mtime > STALE_SECONDS:
-                    continue
-                boot = info is None or stat.st_size < info["offset"] or stat.st_ino != info["inode"]
-                if not boot and (stat.st_mtime_ns != info.get("mtime_ns") or stat.st_ctime_ns != info.get("ctime_ns")):
-                    with path.open("rb") as stream:
-                        boot = self._tail_fingerprint(stream, info["offset"]) != info.get("fingerprint")
-                if boot:
-                    info = {"offset": max(0, stat.st_size - TAIL_BYTES), "buffer": b"", "session": self._filename_id(path), "ignored": False, "inode": stat.st_ino}
-                    self._files[path] = info
-                with path.open("rb") as stream:
-                    if boot and info["offset"]:
-                        header = stream.readline(65536)
-                        if header.endswith(b"\n"):
-                            self._apply(header, info, now, True)
-                    if boot and info["offset"]:
-                        stream.seek(info["offset"] - 1)
-                        at_boundary = stream.read(1) == b"\n"
-                        if not at_boundary:
-                            stream.readline()  # The first tail line begins inside JSON.
-                        tail_start = stream.tell()
-                        if not info["ignored"]:
-                            boundary = self._last_boundary(stream, tail_start)
-                            if boundary:
-                                count += bool(self._apply(boundary, info, now, True))
-                        stream.seek(tail_start)
-                    else:
-                        stream.seek(info["offset"])
-                    data = stream.read()
-                    info["offset"] = stream.tell()
-                    info["fingerprint"] = self._tail_fingerprint(stream, info["offset"])
-                    info["mtime_ns"] = stat.st_mtime_ns
-                    info["ctime_ns"] = stat.st_ctime_ns
-                lines = (info["buffer"] + data).split(b"\n")
-                info["buffer"] = lines.pop()
-                for line in lines:
-                    count += bool(self._apply(line, info, now, boot))
-            except OSError:
-                continue
-        return count
-
-
-def load_dot_thread_ids(state_path: Path) -> set[str]:
-    """Read only explicit Orbit identity metadata, never cached task status."""
-    try:
-        state = json.loads(Path(state_path).read_text())
-    except (OSError, ValueError, UnicodeDecodeError):
-        return set()
-    if not isinstance(state, dict):
-        return set()
-    atoms = state.get("electron-persisted-atom-state", {})
-    if not isinstance(atoms, dict):
-        return set()
-    ids = set()
-    selected = atoms.get("primary-aeon-selection-v1", {})
-    response = selected.get("response", {}) if isinstance(selected, dict) else {}
-    profile = response.get("profile", {}) if isinstance(response, dict) else {}
-    selection = response.get("selection", {}) if isinstance(response, dict) else {}
-    if isinstance(profile, dict) and profile.get("aeon_kind") == "orbit" and isinstance(selection, dict):
-        thread = selection.get("thread_id")
-        if isinstance(thread, str) and thread:
-            ids.add(thread)
-    cache = atoms.get("cloud-aeon-sidebar-cache-v1", {})
-    profiles = cache.get("profilesByThreadId", {}) if isinstance(cache, dict) else {}
-    if isinstance(profiles, dict):
-        for thread, profile in profiles.items():
-            if isinstance(profile, dict) and profile.get("aeon_kind") == "orbit":
-                if isinstance(thread, str) and thread:
-                    ids.add(thread)
-                root = profile.get("active_root_thread_id")
-                if isinstance(root, str) and root:
-                    ids.add(root)
-    return ids

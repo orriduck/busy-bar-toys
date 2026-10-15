@@ -2,6 +2,9 @@ import struct
 import unittest
 from PIL import Image
 from busybar_agents import motion_assets as assets
+from busybar_apps import load_agents
+
+load_agents()
 
 
 def decode(data):

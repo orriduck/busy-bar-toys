@@ -4,6 +4,9 @@ import tempfile
 import unittest
 
 from busybar_agents.runtime import hook_event, write_event, read_spool
+from busybar_apps import load_agents
+
+load_agents()
 
 
 class RuntimeTests(unittest.TestCase):

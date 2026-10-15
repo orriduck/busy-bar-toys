@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import time
 from PIL import Image
 
+from . import profiles
 from .animation import glow_frame
 from .display import (ICON_X, TEXT_X, COLORS, clock_font, clock_text, make_payload,
                       rate_left, to_xpm, total_rate_text)
@@ -24,7 +25,7 @@ class Presentation:
     @property
     def state(self):return visual_state(self.task)
     @property
-    def source(self):return 'dots' if self.task and self.task.source=='dots' else 'chatgpt'
+    def source(self):return profiles.profile(self.task.source if self.task else None).source
     @property
     def clock(self):return clock_text(self.now)
     @property

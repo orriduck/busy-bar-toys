@@ -2,6 +2,9 @@ import unittest
 from unittest.mock import Mock
 
 from busybar_agents.network import NetworkSampler, parse_counters, compact_rate
+from busybar_apps import load_agents
+
+load_agents()
 
 
 class NetworkTests(unittest.TestCase):
