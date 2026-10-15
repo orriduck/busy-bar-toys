@@ -364,6 +364,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                 oldElements.has(e.id) && oldElements.get(e.id)!.type !== e.type,
             )
             .map((e) => e.id);
+          const replacementBatch = s.commandSeq + 1;
           if (removed.length || transitioned.length)
             enqueue(s, {
               generation: s.generation,
@@ -371,18 +372,17 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               dueAt: now,
               elementIds: [...removed, ...transitioned],
               refresh: true,
+              itemKey: item.itemKey,
+              itemVersion: item.version,
+              refreshBatch: replacementBatch,
             });
           if (changed.length)
             this.queueRefresh(s, changed, now, {
               itemKey: item.itemKey,
               itemVersion: item.version,
+              refreshBatch: replacementBatch,
             });
-          else if (s.displaying?.itemKey === item.itemKey) {
-            const admission = s.admission.find(
-              (a) => a.itemKey === item.itemKey,
-            );
-            if (admission) admission.version = item.version;
-          }
+          else this.bindContentAcknowledgement(s, item);
         }
         response = json({
           itemKey: item.itemKey,
@@ -520,10 +520,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             itemKey: item.itemKey,
             itemVersion: version,
           });
-        else if (s.displaying?.itemKey === item.itemKey) {
-          const admission = s.admission.find((a) => a.itemKey === item.itemKey);
-          if (admission) admission.version = version;
-        }
+        else this.bindContentAcknowledgement(s, item);
         s.revision++;
         response = json({ snapshot: snapshot(s, now, id) });
       } else if (path === "/api/items" && method === "POST") {
@@ -731,6 +728,86 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     this.save(s);
     await this.dispatch();
     await this.arm();
+  }
+  private bindContentAcknowledgement(s: State, item: Item) {
+    const pending = s.commands.filter(
+      (command) =>
+        command.generation === s.generation &&
+        (command.kind === "draw" || command.kind === "clear"),
+    );
+    if (pending.length) {
+      const batch = ++s.commandSeq;
+      for (const command of pending) {
+        command.itemKey = item.itemKey;
+        command.itemVersion = item.version;
+        command.refreshBatch = batch;
+      }
+    } else if (s.displaying?.itemKey === item.itemKey) {
+      const admission = s.admission.find((a) => a.itemKey === item.itemKey);
+      if (admission) admission.version = item.version;
+    }
+  }
+  private acknowledgeNativeContent(
+    live: State,
+    cmd: Command,
+    acceptedAt: number,
+  ) {
+    if (
+      cmd.itemKey === live.selected &&
+      cmd.itemVersion &&
+      live.items[cmd.itemKey]?.version === cmd.itemVersion &&
+      !live.commands.some(
+        (c) => c.itemKey === cmd.itemKey && c.itemVersion === cmd.itemVersion,
+      )
+    ) {
+      const admission = live.admission.find((a) => a.itemKey === cmd.itemKey);
+      if (admission) admission.version = cmd.itemVersion;
+    }
+    const futureEntrance = live.commands.some(
+      (c) =>
+        c.generation === live.generation && !c.refresh && c.kind === "draw",
+    );
+    const batchComplete =
+      cmd.refreshBatch === undefined ||
+      !live.commands.some(
+        (c) =>
+          c.generation === live.generation &&
+          c.refreshBatch === cmd.refreshBatch,
+      );
+    if (!futureEntrance && batchComplete && live.selected) {
+      const item = live.items[live.selected];
+      const validUntil = Math.min(
+        ...this.latestElements(item).map(
+          (e) => live.elementExpiries[e.id]?.expiresAt ?? 0,
+        ),
+      );
+      if (validUntil > acceptedAt) {
+        if (live.applying || live.visibleSince === null)
+          acceptDisplay(live, live.generation, acceptedAt);
+        else if (cmd.refresh) live.revision++;
+        live.health = {
+          status: "healthy",
+          confirmedValidUntil: validUntil,
+          lastSuccessAt: acceptedAt,
+        };
+        live.displaying = {
+          itemKey: live.selected,
+          generation: live.generation,
+          confirmedAt: acceptedAt,
+          confirmedValidUntil: validUntil,
+        };
+      } else {
+        // A slow or failed suffix can outlive a successful prefix. Only
+        // a new complete renewal can establish another finite proof.
+        live.health.status = "offline";
+        live.health.confirmedValidUntil = 0;
+        live.displaying = null;
+        live.applying = null;
+        live.visibleSince = null;
+        live.revision++;
+      }
+    }
+    this.renewalDeadlines(live, acceptedAt);
   }
   private projectedNativeElements(s: State): Map<string, Element> {
     const elements = new Map(Object.entries(s.nativeElements));
@@ -999,21 +1076,6 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                 )
                   following.dueAt += delay;
             }
-            if (
-              cmd.itemKey === live.selected &&
-              cmd.itemVersion &&
-              live.items[cmd.itemKey]?.version === cmd.itemVersion &&
-              !live.commands.some(
-                (c) =>
-                  c.itemKey === cmd.itemKey &&
-                  c.itemVersion === cmd.itemVersion,
-              )
-            ) {
-              const admission = live.admission.find(
-                (a) => a.itemKey === cmd.itemKey,
-              );
-              if (admission) admission.version = cmd.itemVersion;
-            }
             if (drawExpiresAt !== undefined && drawSentAt !== undefined)
               for (const element of cmd.elements ?? []) {
                 const expiresAt =
@@ -1024,53 +1086,6 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                 };
                 live.nativeElements[element.id] = element;
               }
-            const futureEntrance = live.commands.some(
-              (c) =>
-                c.generation === live.generation &&
-                !c.refresh &&
-                c.kind === "draw",
-            );
-            const batchComplete =
-              cmd.refreshBatch === undefined ||
-              !live.commands.some(
-                (c) =>
-                  c.generation === live.generation &&
-                  c.refreshBatch === cmd.refreshBatch,
-              );
-            if (!futureEntrance && batchComplete && live.selected) {
-              const item = live.items[live.selected];
-              const validUntil = Math.min(
-                ...this.latestElements(item).map(
-                  (e) => live.elementExpiries[e.id]?.expiresAt ?? 0,
-                ),
-              );
-              if (validUntil > acceptedAt) {
-                if (live.applying || live.visibleSince === null)
-                  acceptDisplay(live, live.generation, acceptedAt);
-                else if (cmd.refresh) live.revision++;
-                live.health = {
-                  status: "healthy",
-                  confirmedValidUntil: validUntil,
-                  lastSuccessAt: acceptedAt,
-                };
-                live.displaying = {
-                  itemKey: live.selected,
-                  generation: live.generation,
-                  confirmedAt: acceptedAt,
-                  confirmedValidUntil: validUntil,
-                };
-              } else {
-                // A slow or failed suffix can outlive a successful prefix. Only
-                // a new complete renewal can establish another finite proof.
-                live.health.status = "offline";
-                live.health.confirmedValidUntil = 0;
-                live.displaying = null;
-                live.applying = null;
-                live.visibleSince = null;
-                live.revision++;
-              }
-            }
-            this.renewalDeadlines(live, acceptedAt);
           }
           if (cmd.kind === "clear") {
             if (cmd.elementIds)
@@ -1083,6 +1098,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               live.nativeElements = {};
             }
           }
+          if (
+            cmd.kind === "draw" ||
+            (cmd.kind === "clear" && currentCommand.itemKey)
+          )
+            this.acknowledgeNativeContent(live, currentCommand, acceptedAt);
           if (cmd.kind === "clear" && !live.selected) {
             live.health = {
               status: "healthy",

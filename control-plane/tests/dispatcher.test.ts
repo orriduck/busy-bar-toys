@@ -14,10 +14,26 @@ let calls: {
   body: Record<string, unknown> | null;
 }[] = [];
 let blocked = false;
+let fixtureToken = "";
+const createdDevices = new Set<string>();
+let foreignRequests = 0;
+function setUpstream(handler: (request: Request) => Promise<Response>) {
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.headers.get("Authorization") !== "Bearer " + fixtureToken) {
+      foreignRequests++;
+      throw new Error("Unexpected previous fixture request");
+    }
+    return handler(request);
+  });
+}
 beforeEach(() => {
   calls = [];
   blocked = false;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  foreignRequests = 0;
+  fixtureToken = "fixture-" + crypto.randomUUID();
+  vi.spyOn(globalThis, "fetch");
+  setUpstream(async (input) => {
     const r = input instanceof Request ? input : new Request(input);
     const path = new URL(r.url).pathname;
     if (path === "/busybar/status")
@@ -33,7 +49,34 @@ beforeEach(() => {
     return Response.json({ ok: true }, { status: blocked ? 409 : 200 });
   });
 });
-afterEach(() => {
+afterEach(async () => {
+  // Quiesce every fixture before removing HTTP interception: a previous blocked
+  // command's retry alarm must never reach a later recorder or the real network.
+  for (const deviceId of createdDevices)
+    await runInDurableObject(
+      env.DEVICES.getByName(deviceId),
+      async (_instance, state) => {
+        state.storage.transactionSync(() => {
+          for (const table of [
+            "control",
+            "audit",
+            "state_items",
+            "state_assets",
+            "state_tombstones",
+            "state_actions",
+            "state_inputs",
+            "state_commands",
+          ])
+            state.storage.sql.exec(`DELETE FROM ${table}`);
+        });
+        // Clear state synchronously first, so a pending dispatch's finally path
+        // cannot read an old command and reinstall an alarm after this delete.
+        await state.storage.deleteAlarm();
+        expect(await state.storage.getAlarm()).toBeNull();
+      },
+    );
+  createdDevices.clear();
+  expect(foreignRequests).toBe(0);
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -54,11 +97,12 @@ async function setup() {
         Origin: "https://control.test",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ token: "fake" }),
+      body: JSON.stringify({ token: fixtureToken }),
     },
   );
   expect(login.status).toBe(200);
   const { deviceId } = (await login.json()) as { deviceId: string };
+  createdDevices.add(deviceId);
   const cookie = login.headers.get("Set-Cookie")!.split(";")[0];
   const admin = (path: string, body?: unknown) =>
     drain(
@@ -230,7 +274,7 @@ describe("generation races and content revisions", () => {
     const entered = new Promise<void>((resolve) => (enteredResolve = resolve)),
       gate = new Promise<void>((resolve) => (release = resolve));
     let first = true;
-    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+    setUpstream(async (input) => {
       const r = input instanceof Request ? input : new Request(input),
         path = new URL(r.url).pathname;
       calls.push({
@@ -353,7 +397,7 @@ describe("renewal bounds", () => {
     const entered = new Promise<void>((r) => (enter = r)),
       gate = new Promise<void>((r) => (release = r));
     let renewals = 0;
-    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+    setUpstream(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const body = (await request.json()) as { elements: unknown[] };
       calls.push({
@@ -485,7 +529,7 @@ it("does not confirm an expired renewal prefix after a late suffix retry and rec
   });
   await displayed(admin);
   let count = 0;
-  vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+  setUpstream(async (input) => {
     const r = input instanceof Request ? input : new Request(input);
     calls.push({
       method: r.method,
@@ -768,7 +812,7 @@ it("full-publish recovery clears a pending transient mask without resending unch
   const entered = new Promise<void>((r) => (enter = r)),
     gate = new Promise<void>((r) => (release = r));
   let first = true;
-  vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+  setUpstream(async (input) => {
     const request = input instanceof Request ? input : new Request(input),
       body = (await request.json()) as Record<string, unknown>;
     calls.push({
@@ -816,4 +860,157 @@ it("full-publish recovery clears a pending transient mask without resending unch
       .flatMap((c) => c.body!.elements as { id: string }[])
       .filter((e) => e.id === "text"),
   ).toHaveLength(1);
+});
+it("advances a clear-only replacement admission only after its selective clear acknowledges", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  const mask = {
+    id: "opaque-mask",
+    type: "rectangle",
+    width: 72,
+    height: 16,
+    opacity: 100,
+  };
+  await send("/publish", {
+    ...presentation(epoch),
+    level: "urgent",
+    scene: {
+      entryDurationMs: 0,
+      commands: [
+        {
+          offsetMs: 0,
+          elements: [...presentation(epoch).scene.commands[0].elements, mask],
+        },
+      ],
+    },
+  });
+  await displayed(admin);
+  let enter: () => void = () => {},
+    release: () => void = () => {};
+  const entered = new Promise<void>((r) => (enter = r)),
+    gate = new Promise<void>((r) => (release = r));
+  let fail = true;
+  setUpstream(async (input) => {
+    const request = input instanceof Request ? input : new Request(input);
+    calls.push({
+      method: request.method,
+      path: new URL(request.url).pathname,
+      body: null,
+    });
+    if (fail) {
+      enter();
+      await gate;
+    }
+    return Response.json({ ok: true }, { status: fail ? 409 : 200 });
+  });
+  await send("/publish", {
+    ...presentation(epoch),
+    version: 2,
+    level: "urgent",
+  });
+  await entered;
+  const pending = (await (await admin("/snapshot")).json()) as {
+    items: { itemId: string; coverageProof?: { version: number } }[];
+  };
+  release();
+  expect(
+    pending.items.find((i) => i.itemId === "one")?.coverageProof,
+  ).toBeUndefined();
+  const stub = env.DEVICES.getByName(deviceId);
+  let state: State | null = null;
+  for (let j = 0; j < 50; j++) {
+    await admin("/snapshot");
+    state = await runInDurableObject(stub, (_instance, ctx) =>
+      new StateStore(ctx.storage).load(),
+    );
+    if (state!.health.status === "blocked") break;
+  }
+  expect(state!.admission[0].version).toBe(1);
+  expect(state!.displaying).toBeNull();
+  fail = false;
+  await runInDurableObject(stub, (_instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    s.commands[0].dueAt = Date.now();
+    store.save(s);
+  });
+  await runDurableObjectAlarm(stub);
+  const accepted = (await (await admin("/snapshot")).json()) as {
+    items: { itemId: string; coverageProof?: { version: number } }[];
+  };
+  expect(
+    accepted.items.find((i) => i.itemId === "one")?.coverageProof?.version,
+  ).toBe(2);
+  expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+});
+it("binds an unchanged projected replacement to its still-pending native ACK without redrawing text", async () => {
+  const { send, admin, epoch } = await setup();
+  const mask = {
+    id: "mask",
+    type: "rectangle",
+    width: 72,
+    height: 16,
+    opacity: 0,
+  };
+  const scene = (opacity: number) => ({
+    entryDurationMs: 0,
+    commands: [
+      {
+        offsetMs: 0,
+        elements: [
+          ...presentation(epoch).scene.commands[0].elements,
+          { ...mask, opacity },
+        ],
+      },
+    ],
+  });
+  await send("/publish", {
+    ...presentation(epoch),
+    level: "urgent",
+    scene: scene(0),
+  });
+  const initial = await displayed(admin);
+  let enter: () => void = () => {},
+    release: () => void = () => {};
+  const entered = new Promise<void>((r) => (enter = r)),
+    gate = new Promise<void>((r) => (release = r));
+  setUpstream(async (request) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    calls.push({
+      method: request.method,
+      path: new URL(request.url).pathname,
+      body,
+    });
+    enter();
+    await gate;
+    return Response.json({ ok: true });
+  });
+  await send("/update", {
+    epoch,
+    instanceId: "mac",
+    itemId: "one",
+    version: 2,
+    generation: initial.generation,
+    elements: [{ ...mask, opacity: 100 }],
+    scene: scene(100),
+  });
+  await entered;
+  await send("/publish", {
+    ...presentation(epoch),
+    version: 3,
+    level: "urgent",
+    scene: scene(100),
+  });
+  const pending = (await (await admin("/snapshot")).json()) as {
+    items: { coverageProof?: { version: number } }[];
+  };
+  release();
+  expect(pending.items[0].coverageProof).toBeUndefined();
+  type Accepted = { items: { coverageProof?: { version: number } }[] };
+  let accepted: Accepted | null = null;
+  for (let j = 0; j < 50; j++) {
+    accepted = (await (await admin("/snapshot")).json()) as Accepted;
+    if (accepted?.items[0].coverageProof?.version === 3) break;
+  }
+  expect(accepted?.items[0].coverageProof?.version).toBe(3);
+  expect(calls.filter((c) => c.body)).toHaveLength(2);
 });
