@@ -24,10 +24,10 @@ class PresenterTests(unittest.TestCase):
     def test_ten_visible_seconds_then_fade_and_yield_to_coordinator(self):
         self.assertTrue(self.presenter.start(self.plane,demo=True))
         self.assertTrue(self.presenter.active)
-        self.clock[0]=110.49;self.assertFalse(self.presenter.advance())
-        self.clock[0]=110.51;self.assertFalse(self.presenter.advance())
+        self.clock[0]=111.19;self.assertFalse(self.presenter.advance())
+        self.clock[0]=111.21;self.assertFalse(self.presenter.advance())
         self.assertEqual(self.presenter.phase,'exit')
-        self.clock[0]=110.8;self.assertTrue(self.presenter.advance())
+        self.clock[0]=111.5;self.assertTrue(self.presenter.advance())
         self.assertFalse(self.presenter.active)
         self.assertEqual(self.api.clears,0)
         last=self.api.draws[-1]['elements']

@@ -13,7 +13,10 @@ It does not need an ADSBao API key.
 The nearest new aircraft flies into view.
 The display shows its callsign, distance, and aircraft type when available.
 The flight identity uses the clock's native Bold7 font.
-Its entrance uses a damped subpixel roll and takes 500 ms.
+The aircraft enters in 300 ms. The title holds `ADSBAO` for 500 ms.
+Two hinged halves then flip to the flight identity in 400 ms.
+The full introduction takes 1.2 seconds.
+Reduced-motion mode shows the flight identity immediately.
 A missing callsign uses the registration or ICAO hex identifier.
 The back display shows aircraft details.
 

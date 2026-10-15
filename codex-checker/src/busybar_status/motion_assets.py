@@ -7,7 +7,7 @@ from .animation import ANIMATION_FILE, thinking_animation
 from .display import draw_clock, tiny_text, render
 
 from busybar_shared.native import FPS, encode_sections, fade_asset, roll_frame
-PREFIX='motion-v2'
+PREFIX='motion-v3'
 # Region size, fade-out frames, fade-in frames.
 REGIONS={'view':((72,16),6,12), 'bar':((4,16),5,7),
          'icon':((14,14),5,7), 'rate':((30,5),4,6)}
@@ -24,7 +24,7 @@ def digit_image(kind, char):
     return image
 
 
-def digit_frames(kind, old, new, frames=12):
+def digit_frames(kind, old, new, frames=15):
     previous,target=digit_image(kind,old),digit_image(kind,new)
     return [roll_frame(previous,target,n/(frames-1)) for n in range(frames)]
 

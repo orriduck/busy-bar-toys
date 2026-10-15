@@ -5,6 +5,12 @@ from busybar_status.animation import thinking_animation,thinking_offset
 
 
 class AnimationTests(unittest.TestCase):
+    def test_light_pauses_at_each_end_before_a_faster_middle_stroke(self):
+        values=[thinking_offset(i/30) for i in range(93)]
+        self.assertEqual(values[:7],[1]*7)
+        self.assertEqual(values[40:53],[14]*13)
+        self.assertGreater(values[24]-values[23],.65)
+
     def test_endpoint_speed_is_slow_and_turnaround_is_continuous(self):
         values=[thinking_offset(i/30) for i in range(93)]
         self.assertLess(values[1]-values[0],(values[23]-values[22])/10)

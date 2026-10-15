@@ -98,15 +98,16 @@ def preview(output):
     for i,card in enumerate(cards):sheet.paste(card,(0,165*i))
     sheet.save(output/'preview.png')
     images=[]
-    for i in range(90):
+    count=ENTRANCE_FRAMES+60
+    for i in range(count):
         progress=min(1,i/(ENTRANCE_FRAMES-1))
         front=render(plane,progress=progress,demo=True)[0]
-        if i>=84:front=Image.blend(front,Image.new('RGB',front.size),min(1,(i-84)/5))
+        if i>=count-6:front=Image.blend(front,Image.new('RGB',front.size),min(1,(i-(count-6))/5))
         card=Image.new('RGB',(600,165),'#11151D');draw=ImageDraw.Draw(card)
         draw.text((12,8),'RENDERED MOCK / 30 FPS / SHORT PREVIEW',fill='white')
         card.paste(front.resize((576,128),Image.Resampling.NEAREST),(12,30));images.append(card)
     images[0].save(output/'preview.gif',save_all=True,append_images=images[1:],
-                   duration=[30 if i%3!=2 else 40 for i in range(90)],loop=0,disposal=2)
+                   duration=[30 if i%3!=2 else 40 for i in range(count)],loop=0,disposal=2)
     print(output/'preview.png')
     return 0
 

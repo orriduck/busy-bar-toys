@@ -7,23 +7,30 @@ emitted. That firmware requires bicycle0; dev's bicycle1 is incompatible.
 import math
 import struct
 
-ANIMATION_FILE = "thinking-v4.anim"
+ANIMATION_FILE = "thinking-v5.anim"
 WIDTH = 4
 HEIGHT = 16
 FPS = 30
 FRAME_COUNT = 92
 TRAVEL = 13
+END_HOLD = 6
 
 
 def thinking_offset(now):
-    phase = (now * FPS) % FRAME_COUNT
-    return 1 + TRAVEL * (1-math.cos(2*math.pi*phase/FRAME_COUNT))/2
+    leg=(now*FPS)%(FRAME_COUNT/2)
+    t=max(0,min(1,(leg-END_HOLD)/(FRAME_COUNT/2-2*END_HOLD)))
+    p=t*t*t*(10+t*(-15+6*t))
+    returning=(now*FPS)%FRAME_COUNT>=FRAME_COUNT/2
+    return 1+TRAVEL*((1-p) if returning else p)
 
 
 def glow_frame(now, color=(69,154,255), *, moving=True, intensity=1):
     """RGB pixels: small bright core, wider dim halo, smooth subpixel travel."""
     center = thinking_offset(now) if moving else 7.5
-    velocity = math.sin(2*math.pi*now*FPS/FRAME_COUNT) if moving else 0
+    leg=(now*FPS)%(FRAME_COUNT/2)
+    t=max(0,min(1,(leg-END_HOLD)/(FRAME_COUNT/2-2*END_HOLD)))
+    direction=-1 if (now*FPS)%FRAME_COUNT>=FRAME_COUNT/2 else 1
+    velocity=direction*16*t*t*(1-t)*(1-t) if moving else 0
     halo_center = center-.65*velocity
     halo_width = 3.0+.5*abs(velocity) if moving else 3.5
     bright = tuple(c + .35*(255-c) for c in color)

@@ -46,7 +46,7 @@ def settle(t):
     """Critically damped step: acceleration, quick travel, then a quiet tail."""
     t=max(0,min(1,t))
     if t in (0,1):return t
-    response=8.5
+    response=6.5
     return (1-(1+response*t)*math.exp(-response*t))/(1-(1+response)*math.exp(-response))
 
 
@@ -62,6 +62,35 @@ def roll_frame(previous,target,t):
     strip.paste(previous,(0,0));strip.paste(target,(0,height))
     return strip.transform(target.size,Image.Transform.AFFINE,(1,0,0,0,1,height*p),
                            resample=Image.Resampling.BICUBIC)
+
+
+def split_flap_frame(previous,target,t):
+    """Two hinged halves: old upper closes, then the new lower falls into place."""
+    if previous.size!=target.size or previous.mode!=target.mode:
+        raise ValueError('Flap faces must have matching dimensions and modes')
+    t=max(0,min(1,t))
+    if t==0:return previous.copy()
+    if t==1:return target.copy()
+    width,height=target.size;hinge=height//2
+    image=previous.copy()
+    image.paste(target.crop((0,0,width,hinge)),(0,0))
+    if t<.5:
+        # The old upper face folds toward the horizontal hinge.
+        angle=smooth(t*2)*math.pi/2
+        extent=max(1,round(hinge*math.cos(angle)))
+        face=previous.crop((0,0,width,hinge)).resize((width,extent),Image.Resampling.BOX)
+        face=face.point(lambda value:round(value*(1-.6*math.sin(angle))))
+        image.paste(face,(0,hinge-extent))
+    else:
+        # The new lower face unfolds over the previous lower face.
+        angle=smooth((t-.5)*2)*math.pi/2
+        extent=max(1,round((height-hinge)*math.sin(angle)))
+        face=target.crop((0,hinge,width,height)).resize((width,extent),Image.Resampling.BOX)
+        face=face.point(lambda value:round(value*(.4+.6*math.sin(angle))))
+        image.paste(face,(0,hinge))
+    # The hinge is visible only during the flip; settled letters retain Bold7.
+    image.paste((0,0,0),(0,hinge,width,hinge+1))
+    return image
 
 
 @lru_cache(maxsize=16)

@@ -156,7 +156,7 @@ class DisplayTests(unittest.TestCase):
         # 92 frames at 30fps: top -> bottom -> top, with subpixel travel.
         positions = [thinking_offset(frame/30) for frame in range(93)]
         self.assertEqual((positions[0],positions[46],positions[92]), (1,14,1))
-        self.assertTrue(all(0<abs(b-a)<1 for a,b in zip(positions,positions[1:])))
+        self.assertTrue(all(0<=abs(b-a)<1 for a,b in zip(positions,positions[1:])))
 
     def test_work_uses_native_animation_and_other_states_replace_it(self):
         work = make_payload(self.task(), 100, 1)

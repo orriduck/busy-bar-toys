@@ -4,6 +4,18 @@ from busybar_shared import native
 
 
 class WeightedMotionTests(unittest.TestCase):
+    def test_split_flap_changes_upper_then_lower_with_exact_settled_faces(self):
+        old=Image.new('RGB',(7,7),'red');new=Image.new('RGB',(7,7),'blue')
+        self.assertEqual(native.split_flap_frame(old,new,0).tobytes(),old.tobytes())
+        self.assertEqual(native.split_flap_frame(old,new,1).tobytes(),new.tobytes())
+        closing=native.split_flap_frame(old,new,.4)
+        opening=native.split_flap_frame(old,new,.7)
+        self.assertEqual(closing.getpixel((0,0)),(0,0,255))
+        self.assertEqual(closing.getpixel((0,6)),(255,0,0))
+        self.assertEqual(opening.getpixel((0,0)),(0,0,255))
+        self.assertGreater(opening.getpixel((0,4))[2],0)
+        self.assertEqual(opening.getpixel((0,3)),(0,0,0))
+
     def test_damped_progress_accelerates_then_settles_without_overshoot(self):
         curve=getattr(native,'settle',None)
         self.assertTrue(callable(curve),'A shared damped progress curve is required')
@@ -11,7 +23,8 @@ class WeightedMotionTests(unittest.TestCase):
         self.assertEqual((values[0],values[-1]),(0,1))
         self.assertEqual(values,sorted(values))
         self.assertGreater(values[3]-values[2],values[1]-values[0])
-        self.assertGreater(values[50],.85)
+        self.assertGreater(values[50],.8)
+        self.assertLess(values[50],.88,'Keep visible travel for the slower settling half')
         self.assertLess(values[-1]-values[-2],(values[20]-values[19])/10)
 
     def test_subpixel_roll_preserves_glyphs_and_uses_fractional_coverage(self):

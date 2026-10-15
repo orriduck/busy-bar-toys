@@ -2,11 +2,14 @@
 from PIL import Image,ImageDraw
 from functools import lru_cache
 from busybar_shared.graphics import tiny_text,fitted_text,to_xpm,clock_font,draw_clock
-from busybar_shared.native import FPS,encode_sections,smooth,settle,roll_frame
+from busybar_shared.native import FPS,encode_sections,smooth,settle,split_flap_frame
 from .proximity import MILE
 
 JADE=(100,220,179)
-ENTRANCE_FRAMES=15
+ICON_ENTER_FRAMES=9
+BRAND_HOLD_FRAMES=15
+FLIP_FRAMES=12
+ENTRANCE_FRAMES=ICON_ENTER_FRAMES+BRAND_HOLD_FRAMES+FLIP_FRAMES
 ENTRANCE_SECONDS=ENTRANCE_FRAMES/FPS
 
 
@@ -36,11 +39,18 @@ def render(nearby,*,progress=1,demo=False):
     detail=detail[:11]
     text_width=max(heading.width,len(detail)*4-1)
     left=(72-(16+1+text_width))//2;tx=left+17
-    p=settle(progress)
+    step=max(0,min(1,progress))*(ENTRANCE_FRAMES-1)
+    entering=min(1,step/(ICON_ENTER_FRAMES-1))
+    flip=max(0,min(1,(step-(ICON_ENTER_FRAMES+BRAND_HOLD_FRAMES-1))/FLIP_FRAMES))
+    p=settle(entering)
     front=Image.new('RGB',(72,16),'black');draw=ImageDraw.Draw(front)
-    rolled=roll_frame(Image.new('RGB',heading.size),heading,progress)
-    front.paste(rolled,(tx,1))
-    tiny_text(draw,(tx,10),detail,tuple(round(c*smooth(max(0,min(1,progress)))) for c in JADE))
+    brand=title_image('ADSBAO')
+    if brand.width>text_width:brand=brand.resize((text_width,7),Image.Resampling.BOX)
+    old,new=Image.new('RGB',(text_width,7)),Image.new('RGB',(text_width,7))
+    old.paste(brand,(0,0));new.paste(heading,(0,0))
+    flipped=split_flap_frame(old,new,flip).point(lambda value:round(value*p))
+    front.paste(flipped,(tx,1))
+    tiny_text(draw,(tx,10),detail,tuple(round(c*smooth(entering)) for c in JADE))
     x=round(-17+(left+17)*p)
     if p<1:
         for offset,level in ((2,.16),(4,.06)):
