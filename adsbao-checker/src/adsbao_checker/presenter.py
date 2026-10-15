@@ -2,7 +2,7 @@
 import time
 from PIL import Image
 from busybar_shared.native import encode_sections,fade_asset
-from .display import entrance_asset,payload
+from .display import ENTRANCE_SECONDS,entrance_asset,payload
 
 
 class AircraftPresenter:
@@ -25,12 +25,12 @@ class AircraftPresenter:
     def start(self,nearby,*,demo=False):
         if self.active:return False
         self._sequence+=1
-        path=f'adsbao-entry-{self._sequence%2}.anim'
+        path=f'adsbao-entry-v2-{self._sequence%2}.anim'
         if not self.reduced:
             self._prepare();self.client.upload_asset(path,entrance_asset(nearby))
         if not self.client.draw(payload(nearby,demo=demo,reduced=self.reduced,path=path)):return False
         self._nearby=nearby;self._demo=demo;self._path=path;self.phase='hold'
-        self._hold_until=self.clock()+(0 if self.reduced else .4)+10
+        self._hold_until=self.clock()+(0 if self.reduced else ENTRANCE_SECONDS)+10
         self._refresh_at=self.clock()+5
         return True
 

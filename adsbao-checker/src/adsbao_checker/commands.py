@@ -10,7 +10,7 @@ from PIL import Image,ImageDraw
 from busybar_shared.api import BusyAPI
 from busybar_shared.credentials import read_token
 from .checker import read_status,write_private
-from .display import render
+from .display import ENTRANCE_FRAMES,render
 from .location import read_location,location_status,start_location_helper,stop_location_helper
 from .presenter import AircraftPresenter
 from .proximity import EncounterTracker
@@ -99,7 +99,7 @@ def preview(output):
     sheet.save(output/'preview.png')
     images=[]
     for i in range(90):
-        progress=min(1,i/11)
+        progress=min(1,i/(ENTRANCE_FRAMES-1))
         front=render(plane,progress=progress,demo=True)[0]
         if i>=84:front=Image.blend(front,Image.new('RGB',front.size),min(1,(i-84)/5))
         card=Image.new('RGB',(600,165),'#11151D');draw=ImageDraw.Draw(card)

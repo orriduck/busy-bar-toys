@@ -12,6 +12,8 @@ It does not need an ADSBao API key.
 
 The nearest new aircraft flies into view.
 The display shows its callsign, distance, and aircraft type when available.
+The flight identity uses the clock's native Bold7 font.
+Its entrance uses a damped subpixel roll and takes 500 ms.
 A missing callsign uses the registration or ICAO hex identifier.
 The back display shows aircraft details.
 
@@ -128,3 +130,4 @@ suppression, native location validation, stream shutdown, reduced motion,
 button dismissal, restoration, interrupted masks, and device retry delays.
 
 See [native helper details](macos/README.md).
+See the [bold type and weighted-motion check](../docs/weighted-motion.md).

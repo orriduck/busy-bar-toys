@@ -1,10 +1,20 @@
 import struct
 import unittest
 
-from busybar_status.animation import thinking_animation
+from busybar_status.animation import thinking_animation,thinking_offset
 
 
 class AnimationTests(unittest.TestCase):
+    def test_endpoint_speed_is_slow_and_turnaround_is_continuous(self):
+        values=[thinking_offset(i/30) for i in range(93)]
+        self.assertLess(values[1]-values[0],(values[23]-values[22])/10)
+        self.assertLess(values[46]-values[45],(values[23]-values[22])/10)
+        epsilon=.0001;bottom=46/30
+        left=(thinking_offset(bottom)-thinking_offset(bottom-epsilon))/epsilon
+        right=(thinking_offset(bottom+epsilon)-thinking_offset(bottom))/epsilon
+        self.assertLess(abs(left),.02)
+        self.assertAlmostEqual(left,-right,places=5)
+
     def test_device_animation_is_vertical_with_glowing_frames_and_no_jump(self):
         data=thinking_animation()
         header=struct.unpack_from('<8sBBBBBHBIIIII',data)

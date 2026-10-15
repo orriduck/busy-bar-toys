@@ -108,7 +108,7 @@ def make_payload(task, now, count=1, rates=None):
     ImageDraw.Draw(background).rectangle((0,0,WIDTH-1,HEIGHT-1), fill="black")
     elements = [
         {"id": name, "type": "xpmbitmap", "display": name, "x": 0, "y": 0,
-         "timeout": 15, "data": to_xpm(image, UI_PALETTE if name == "front" else None)}
+         "timeout": 15, "z_index": 0, "data": to_xpm(image, UI_PALETTE if name == "front" else None)}
         for name, image in zip(("front", "back"), (background,images[1]))]
     strip = {"id": "thinking", "display": "front", "x": 0, "y": 0,
              "timeout": 15, "z_index": 1}

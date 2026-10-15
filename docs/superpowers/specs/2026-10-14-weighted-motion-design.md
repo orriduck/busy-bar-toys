@@ -15,9 +15,8 @@ and deceleration cycle. Velocity must reach zero at each endpoint. Keep the exis
 blue color, travel range, and approximately three-second round trip. A subtle halo
 lag can convey momentum; do not add flashing or large brightness changes.
 
-Recommended feel: critically damped settling, with no visible overshoot.
-Alternative: one small overshoot and return for glyphs only. Avoid repeated bouncing.
-The user's selection determines this detail before implementation.
+The user selected critically damped settling without visible overshoot.
+Avoid repeated bouncing.
 
 Keep device-native playback at 30 fps, shared transition primitives, reduced-motion
 support, alert hold durations, and Codex/calendar restoration. Version changed asset

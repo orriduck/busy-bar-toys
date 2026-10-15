@@ -1,10 +1,23 @@
 """Small pixel aircraft and finite native entrance, using shared primitives."""
 from PIL import Image,ImageDraw
-from busybar_shared.graphics import tiny_text,fitted_text,to_xpm
-from busybar_shared.native import encode_sections,smooth
+from functools import lru_cache
+from busybar_shared.graphics import tiny_text,fitted_text,to_xpm,clock_font,draw_clock
+from busybar_shared.native import FPS,encode_sections,smooth,settle,roll_frame
 from .proximity import MILE
 
 JADE=(100,220,179)
+ENTRANCE_FRAMES=15
+ENTRANCE_SECONDS=ENTRANCE_FRAMES/FPS
+
+
+@lru_cache(maxsize=64)
+def title_image(title):
+    width=max(1,round(clock_font().getlength(title)))
+    image=Image.new('RGB',(width,7))
+    draw_clock(ImageDraw.Draw(image),(0,0),title)
+    if bounds:=image.getbbox():image=image.crop((0,0,bounds[2],7))
+    if image.width>55:image=image.resize((55,7),Image.Resampling.BOX)
+    return image
 
 
 def aircraft_icon():
@@ -18,14 +31,16 @@ def aircraft_icon():
 def render(nearby,*,progress=1,demo=False):
     plane=nearby.aircraft
     title=plane.identity[:8]
+    heading=title_image(title)
     detail=f'{nearby.distance/MILE:.1f}MI'+(' '+plane.kind if plane.kind else '')
     detail=detail[:11]
-    text_width=max(len(title),len(detail))*4-1
+    text_width=max(heading.width,len(detail)*4-1)
     left=(72-(16+1+text_width))//2;tx=left+17
-    p=smooth(max(0,min(1,progress)))
+    p=settle(progress)
     front=Image.new('RGB',(72,16),'black');draw=ImageDraw.Draw(front)
-    tiny_text(draw,(tx,2),title,tuple(round(255*p) for _ in range(3)))
-    tiny_text(draw,(tx,10),detail,tuple(round(c*p) for c in JADE))
+    rolled=roll_frame(Image.new('RGB',heading.size),heading,progress)
+    front.paste(rolled,(tx,1))
+    tiny_text(draw,(tx,10),detail,tuple(round(c*smooth(max(0,min(1,progress)))) for c in JADE))
     x=round(-17+(left+17)*p)
     if p<1:
         for offset,level in ((2,.16),(4,.06)):
@@ -41,12 +56,14 @@ def render(nearby,*,progress=1,demo=False):
 
 
 def entrance_asset(nearby):
-    return encode_sections((72,16),{'enter':[render(nearby,progress=i/11)[0] for i in range(12)]})
+    return encode_sections((72,16),{'enter':[render(nearby,progress=i/(ENTRANCE_FRAMES-1))[0]
+                                          for i in range(ENTRANCE_FRAMES)]})
 
 
 def payload(nearby,*,demo=False,reduced=False,path=None):
     front,back=render(nearby,demo=demo)
     elements=[{'id':name,'type':'xpmbitmap','display':name,'x':0,'y':0,'timeout':15,
+               'z_index':2 if name=='front' else 0,
                'data':to_xpm(image)} for name,image in (('front',front),('back',back))]
     strip={'id':'thinking','display':'front','x':0,'y':0,'z_index':1,'timeout':15}
     if reduced:strip.update(type='xpmbitmap',data=to_xpm(Image.new('RGB',(4,16),'black')))

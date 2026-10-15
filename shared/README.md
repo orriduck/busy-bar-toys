@@ -11,7 +11,7 @@ It does not contain Codex lifecycle rules or aircraft proximity rules.
 | `wifi_setup` | Private device address and local-token setup. |
 | `frames` | Actual device framebuffer decoding. |
 | `graphics` | Pixel text, native clock font, and XPM encoding. |
-| `native` | Native bicycle0 sections, smooth progress, and alpha fade masks. |
+| `native` | Native bicycle0 sections, alpha fades, damped progress, and subpixel glyph rolls. |
 
 Both checkers use the same fade generator and native file encoder.
 The device plays the stored frames.

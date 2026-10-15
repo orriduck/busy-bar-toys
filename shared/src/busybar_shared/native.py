@@ -1,5 +1,6 @@
 """Native bicycle0 encoding and reusable fade masks."""
 from functools import lru_cache
+import math
 import struct
 from PIL import Image
 
@@ -39,6 +40,28 @@ def encode_sections(size, sections, *, rgba=False, fps=FPS):
 
 def smooth(t):
     return t*t*(3-2*t)
+
+
+def settle(t):
+    """Critically damped step: acceleration, quick travel, then a quiet tail."""
+    t=max(0,min(1,t))
+    if t in (0,1):return t
+    response=8.5
+    return (1-(1+response*t)*math.exp(-response*t))/(1-(1+response)*math.exp(-response))
+
+
+def roll_frame(previous,target,t):
+    """Clip a damped vertical glyph roll, with fractional pixel coverage."""
+    if previous.size!=target.size or previous.mode!=target.mode:
+        raise ValueError('Roll glyphs must have matching dimensions and modes')
+    p=settle(t)
+    if p==0:return previous.copy()
+    if p==1:return target.copy()
+    width,height=target.size
+    strip=Image.new(target.mode,(width,height*2))
+    strip.paste(previous,(0,0));strip.paste(target,(0,height))
+    return strip.transform(target.size,Image.Transform.AFFINE,(1,0,0,0,1,height*p),
+                           resample=Image.Resampling.BICUBIC)
 
 
 @lru_cache(maxsize=16)

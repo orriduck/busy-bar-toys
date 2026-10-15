@@ -9,7 +9,7 @@ The approved clock, icon spacing, and network layout stay the same.
 | Return to the calendar | Fade out, then release this app's display. | 200 ms before release |
 | Change task state | Dim the light, change its color, then brighten it. | 167 ms out + 233 ms in |
 | Change source | Fade out the icon, replace it, then fade it in. | 167 ms out + 233 ms in |
-| Change a decimal digit | Roll the old digit upward and bring in the new digit. | 300 ms |
+| Change a decimal digit | Roll with subpixel coverage and damped settling. | 400 ms |
 | Change a rate unit or field format | Fade out the rate field, replace it, then fade it in. | 133 ms out + 200 ms in |
 
 These times describe stored frames at 30 fps.
@@ -32,8 +32,8 @@ An expired display lease uses a complete entrance effect on recovery.
 
 The device plays native `bicycle0` animation files.
 The Mac sends target states instead of individual frames.
-Fifteen assets use 298,729 bytes in total.
-The largest asset uses 123,897 bytes.
+Fifteen assets use 356,779 bytes in total.
+The largest asset uses 164,667 bytes.
 An observer uploads each asset once after it starts.
 Successful uploads are retained if a later upload fails.
 
@@ -90,6 +90,10 @@ upload recovery, expired leases, rejected draws, reduced motion, and standby tim
 All 121 local tests passed.
 The [timed device check](standby-timeout.md) confirmed the calendar at 11.012 seconds
 after the standby timer started, including the outgoing fade and cloud capture.
+
+The later [weighted-motion refinement](weighted-motion.md) adds Bold7 flight
+identities, damped glyph rolls, and smooth endpoint motion for the blue light.
+The complete project suite now has 160 passing local tests.
 
 ## Firmware sources
 
