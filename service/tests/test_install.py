@@ -21,6 +21,7 @@ class InstallTests(unittest.TestCase):
                 install(reduced_motion=True)
                 config=plistlib.loads((root/'agent.plist').read_bytes())
                 self.assertEqual(config['ProgramArguments'][-2:],['watch','--reduced-motion'])
+                self.assertIn('/usr/bin', config['EnvironmentVariables']['PATH'])
                 install()
                 config=plistlib.loads((root/'agent.plist').read_bytes())
                 self.assertEqual(config['ProgramArguments'][-1],'watch')

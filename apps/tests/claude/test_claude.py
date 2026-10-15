@@ -53,7 +53,8 @@ class ClaudeProfileTest(unittest.TestCase):
         self.assertEqual(hook_event({"session_id": "s", "hook_event_name": "Stop"}, now=1)["turn_id"], "")
 
     def test_hook_command_reuses_the_spooled_turn(self):
-        with tempfile.TemporaryDirectory() as root, patch("busybar_service.cli.SPOOL", Path(root)):
+        with tempfile.TemporaryDirectory() as root, patch("busybar_service.cli.SPOOL", Path(root)), \
+             patch("busybar_service.cli.logging.basicConfig"):
             for event in ("UserPromptSubmit", "PreToolUse", "Stop"):
                 stdin = io.TextIOWrapper(io.BytesIO(json.dumps(payload(event)).encode()))
                 with patch("sys.stdin", stdin):

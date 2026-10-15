@@ -1,8 +1,15 @@
-# BUSY Bar AI Status
+# Agent checker
 
-Show local Codex task status on a BUSY Bar.
+Show the status of local AI agents on a BUSY Bar.
+Each agent is an app that registers a source icon, a title, and a hook mapping.
 
-The front display shows a source icon, a clock, and one network rate.
+| App | Source | Events |
+|---|---|---|
+| [Codex](../apps/src/busybar_apps/codex/README.md) | `chatgpt` | Local rollout files and optional hooks. |
+| [Your dot](../apps/src/busybar_apps/dots/README.md) | `dots` | Orbit identity and lifecycle commands. |
+| [Claude Code](../apps/src/busybar_apps/claude/README.md) | `claude` | Claude Code hooks. |
+
+The front display shows the source icon, a clock, and one network rate.
 The clock uses New York time and a 24-hour format.
 The layout matches the device calendar.
 
@@ -21,8 +28,7 @@ The layout matches the device calendar.
 | Cyan down arrow | The Mac received data during the last sample. |
 | Dark arrow | That direction has no measured activity. |
 
-The ChatGPT icon identifies standard Codex tasks.
-The five-dot icon identifies Your dot tasks.
+The source icon identifies the agent app of the task.
 
 The network number is the sum of upload and download rates.
 The program reads the Mac's default network interface every five seconds.
@@ -190,71 +196,18 @@ Run the observer in a terminal:
 Service log: `~/Library/Logs/BusyBarAI/service.log`.
 Private runtime directory: `~/Library/Application Support/BusyBarAI`.
 
-## Task sources
-
-The observer reads local Codex Desktop and CLI lifecycle events.
-It extracts identifiers, source, project directory name, and timestamps.
-It does not store prompts or tool output.
-Subagents do not get separate display entries.
-A failed tool command does not mean that the task failed.
-
-Your dot identification uses explicit local Orbit metadata.
-Use `watch --dot-thread THREAD_ID` for a manual identity override.
-Identity alone does not indicate activity.
-
-Cloud-only Your dot tasks need an event bridge to this Mac.
-Browser ChatGPT conversations are not monitored.
-Local Codex log formats can change after an update.
-
 ## Send lifecycle events
 
 Use one session ID and one turn ID for each real task turn.
+Replace `SOURCE` with a registered source, such as `chatgpt`, `dots`, or `claude`.
 
 ```sh
-.venv/bin/busy-bar emit working --source dots --session-id THREAD_ID --turn-id RUN_ID --project my-project
-.venv/bin/busy-bar emit waiting --source dots --session-id THREAD_ID --turn-id RUN_ID --project my-project
-.venv/bin/busy-bar emit done --source dots --session-id THREAD_ID --turn-id RUN_ID --project my-project
+.venv/bin/busy-bar emit working --source SOURCE --session-id SESSION --turn-id TURN --project my-project
+.venv/bin/busy-bar emit done --source SOURCE --session-id SESSION --turn-id TURN --project my-project
 ```
 
-The commands write local metadata.
-The observer sends the display data.
-A cloud task must be able to run these commands on this Mac.
-
-### Optional Codex hooks
-
-`busy-bar hook` reads structured hook data from standard input.
-
-| Hook | State |
-|---|---|
-| UserPromptSubmit, PreToolUse, PostToolUse | working |
-| PermissionRequest | waiting |
-| Stop | done |
-| Interrupt | stopped |
-
-Add a handler to each required event in `~/.codex/hooks.json`.
-Replace the example path with the absolute repository path.
-Keep all existing hooks.
-
-```json
-{
-  "hooks": {
-    "PermissionRequest": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/ABSOLUTE/PATH/busy-bar-toys/.venv/bin/busy-bar hook",
-            "timeout": 3
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Review and trust new hooks through the normal Codex process.
-The program does not change hook trust records.
+`busy-bar hook --source SOURCE` reads one hook payload from standard input.
+Each app README gives its hook mapping and configuration.
 
 ## Preview and capture
 

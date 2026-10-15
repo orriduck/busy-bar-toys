@@ -51,12 +51,13 @@ line, an accent color, an icon, an optional group, and an optional primary actio
 | Level | Icon background | Event hold |
 |---|---|---|
 | urgent | Red | Until the condition clears or the primary action runs. |
-| attention | Amber | Five minutes. |
+| attention | Amber | Ten seconds. |
 | info | The app color | Ten seconds. |
 
 The queue shows urgent items first, then new events, then standing conditions.
-A standing condition hides after five visible minutes and returns after 30
-minutes if it is still true. Items in one group show once, at the highest level.
+A standing condition hides after ten visible seconds and returns after 30
+minutes if it is still true. The user selected the ten-second default on
+2026-10-15; the private `display` section can change it. Items in one group show once, at the highest level.
 A failed condition check replaces stale items with an `ERROR` item.
 
 The entrance generalizes the ADSBao motion. The icon flies in, the brand holds,
