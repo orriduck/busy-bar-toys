@@ -598,6 +598,18 @@ a {
     flex-wrap: wrap;
   }
 }
+/* At short desktop heights, keep both navigation and preview reachable. */
+@media (max-height: 430px) and (min-width: 761px) {
+  .app-shell[data-docked="true"] .sidebar {
+    max-height: calc(100dvh - var(--header-bottom) - 24px);
+  }
+  .preview-host-dock {
+    position: static;
+    width: min(100%, 420px);
+    align-self: center;
+    margin-bottom: 28px;
+  }
+}
 @media (max-width: 760px) {
   .app-shell {
     --header-bottom: calc(80px + var(--banner-height));
