@@ -36,6 +36,7 @@ import { SessionFence, collectorSetupMode } from "./session";
 import { startEventStream } from "./event-stream";
 import { MotionPage } from "./motion";
 import "./style.css";
+import "./mobile.css";
 function App() {
   const [session, setSession] = useState<boolean | null>(null);
   const queryClient = useQueryClient();
@@ -278,6 +279,7 @@ function App() {
       <div
         className="app-shell"
         data-demo={demo || undefined}
+        data-navigation={Boolean(session)}
         data-docked={Boolean(session && snapshot && page !== "display")}
       >
         <header className="app-header">
