@@ -1,4 +1,4 @@
-export type PolicyKey = "priority" | "visibleMs" | "snoozeMs" | "heartbeatMs";
+export type PolicyKey = "priority" | "visibleMs" | "heartbeatMs";
 export const priorityPresets = [
   { id: "low", label: "Low", value: 10 },
   { id: "normal", label: "Normal", value: 50 },
@@ -25,27 +25,13 @@ export const policyFields = {
     scale: 1000,
     min: 1,
     max: 86400,
-    help: "How long a fixed-time message stays on screen after its entry animation. Automatic uses each message’s default; Source ends stays until the sender finishes.",
+    help: "For fixed-time messages, how long content stays on screen after its entry animation. Source-controlled messages stay until their sender finishes.",
     presets: [5, 10, 30, 60].map((value) => ({
       id: String(value),
       label: value === 60 ? "1 min" : `${value} s`,
       value: value * 1000,
     })),
     stops: [1, 5, 10, 30, 60, 86400],
-  },
-  snoozeMs: {
-    label: "Later",
-    unit: "min",
-    scale: 60000,
-    min: 1 / 60,
-    max: 1440,
-    help: "When you choose Later on a message, hide it for this long before it can re-enter the queue. It can return only while its source remains valid.",
-    presets: [5, 15, 30, 60].map((value) => ({
-      id: String(value),
-      label: value === 60 ? "1 hour" : `${value} min`,
-      value: value * 60000,
-    })),
-    stops: [1 / 60, 5, 15, 30, 60, 1440],
   },
   heartbeatMs: {
     label: "Heartbeat",
@@ -82,7 +68,7 @@ export function sliderValue(
   const raw = (Math.max(0, Math.min(100, position)) / 100) * (stops.length - 1);
   const clamped = Math.max(0, Math.min(100, position));
   const snap = detents.find(
-    (stop) => Math.abs(sliderPosition(stop, stops) - clamped) <= 0.8,
+    (stop) => Math.abs(sliderPosition(stop, stops) - clamped) <= 3,
   );
   if (snap !== undefined) return Math.round(snap * scale);
   const index = Math.min(stops.length - 2, Math.floor(raw));
@@ -100,7 +86,18 @@ export function sliderNudge(
   detents: readonly number[],
 ) {
   const position = sliderPosition(value / scale, stops);
-  const next = sliderValue(position + direction * 2, stops, scale, detents);
+  const candidate = sliderValue(position + direction * 2, stops, scale, []);
+  // Keyboard movement is directional: land on a crossed preset, then leave it
+  // on the next key. Pointer magnetism must never pull a key step backwards.
+  const crossed = detents
+    .map((stop) => Math.round(stop * scale))
+    .filter((stop) =>
+      direction === 1
+        ? stop > value && stop <= candidate
+        : stop < value && stop >= candidate,
+    )
+    .sort((a, b) => direction * (a - b));
+  const next = crossed[0] ?? candidate;
   return Math.max(
     Math.round(stops[0] * scale),
     Math.min(

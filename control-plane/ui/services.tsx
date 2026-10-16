@@ -3,10 +3,24 @@ import type { FormEvent } from "react";
 import type { Service, Mutate } from "./api";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
+import { SettingsSelect } from "./settings-select";
+import { Separator } from "./components/ui/separator";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "./components/ui/native-select";
+  Item,
+  ItemContent,
+  ItemTitle,
+  ItemActions,
+} from "./components/ui/item";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "./components/ui/alert-dialog";
 import { Switch } from "./components/ui/switch";
 import { MoreHorizontal, KeyRound, Trash2 } from "lucide-react";
 import {
@@ -14,10 +28,16 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuGroup,
 } from "./components/ui/dropdown-menu";
 import { serviceLabel } from "./service-layout";
 import { PolicyField } from "./policy-field";
-import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldDescription,
+} from "./components/ui/field";
 import {
   Card,
   CardHeader,
@@ -48,6 +68,7 @@ export function ServiceEditor({
   }) => void;
 }) {
   const formId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const [config, setConfig] = useState(service.config);
   const [dirty, setDirty] = useState(false);
   const edits = useRef(0);
@@ -81,6 +102,8 @@ export function ServiceEditor({
       enabled: _enabled,
       allowInput: _input,
       allowPreview: _preview,
+      exit: _exit,
+      snoozeMs: _snooze,
       ...policy
     } = config;
     const result = await mutate(
@@ -89,8 +112,18 @@ export function ServiceEditor({
       "PATCH",
     );
     if (result) {
-      if (edits.current === submittedEdit) setDirty(false);
-      else {
+      if (edits.current === submittedEdit) {
+        const form = formRef.current;
+        if (
+          form?.getClientRects().length &&
+          (document.activeElement === document.body ||
+            form
+              .querySelector(".policy-actions")
+              ?.contains(document.activeElement))
+        )
+          form.focus({ preventScroll: true });
+        setDirty(false);
+      } else {
         const state = result.snapshot as
           { configRevision?: number } | undefined;
         if (typeof state?.configRevision === "number")
@@ -109,83 +142,69 @@ export function ServiceEditor({
       />
     );
   return (
-    <Card className="service policy-card">
-      <form id={formId} onSubmit={(event) => void save(event)}>
-        <CardContent>
-          <FieldGroup className="service-fields policy-fields">
-            <PolicyField
-              key={`priority-${resetVersion}`}
-              field="priority"
-              value={config.priority}
-              onChange={(value) => edit("priority", value)}
-            />
-            <Field>
-              <FieldLabel htmlFor={`${formId}-field2`}>{"Exit"}</FieldLabel>
-              <NativeSelect
-                id={`${formId}-field2`}
-                value={config.exit}
-                onChange={(event) => edit("exit", event.target.value)}
-              >
-                <NativeSelectOption value="default">
-                  Automatic
-                </NativeSelectOption>
-                <NativeSelectOption value="finite">
-                  Fixed time
-                </NativeSelectOption>
-                <NativeSelectOption value="source">
-                  Source ends
-                </NativeSelectOption>
-              </NativeSelect>
-            </Field>
-            <PolicyField
-              key={`visibleMs-${resetVersion}`}
-              field="visibleMs"
-              value={config.visibleMs}
-              onChange={(value) => edit("visibleMs", value)}
-            />
-            <PolicyField
-              key={`snoozeMs-${resetVersion}`}
-              field="snoozeMs"
-              value={config.snoozeMs}
-              onChange={(value) => edit("snoozeMs", value)}
-            />
-            <PolicyField
-              key={`heartbeatMs-${resetVersion}`}
-              field="heartbeatMs"
-              value={config.heartbeatMs}
-              onChange={(value) => edit("heartbeatMs", value)}
-            />
-          </FieldGroup>
-          {dirty && baseRevision !== configRevision && (
-            <Alert className="mt-5">
-              <AlertDescription>
-                Configuration changed elsewhere. Reload this form before saving.
-              </AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-        <div className="policy-actions">
-          <Button type="submit" size="sm" disabled={pending || !dirty}>
-            Save{dirty ? " changes" : ""}
-          </Button>
-          {dirty && (
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              onClick={() => {
-                setDirty(false);
-                setResetVersion((v) => v + 1);
-                setConfig(service.config);
-                setBaseRevision(configRevision);
-              }}
-            >
-              Discard
+    <form
+      ref={formRef}
+      tabIndex={-1}
+      aria-label={`${serviceLabel(service)} settings`}
+      className="policy-card @container/policy outline-none"
+      id={formId}
+      onSubmit={(event) => void save(event)}
+    >
+      <FieldGroup className="grid grid-cols-1 gap-x-4 gap-y-3 @xl/policy:grid-cols-2 @2xl/policy:grid-cols-3">
+        <PolicyField
+          key={`priority-${resetVersion}`}
+          field="priority"
+          value={config.priority}
+          onChange={(value) => edit("priority", value)}
+        />
+        <PolicyField
+          key={`visibleMs-${resetVersion}`}
+          field="visibleMs"
+          value={config.visibleMs}
+          onChange={(value) => edit("visibleMs", value)}
+        />
+        <PolicyField
+          key={`heartbeatMs-${resetVersion}`}
+          field="heartbeatMs"
+          value={config.heartbeatMs}
+          onChange={(value) => edit("heartbeatMs", value)}
+        />
+      </FieldGroup>
+      {dirty && baseRevision !== configRevision && (
+        <Alert className="mt-5">
+          <AlertDescription>
+            Configuration changed elsewhere. Reload this form before saving.
+          </AlertDescription>
+        </Alert>
+      )}
+      {dirty && (
+        <>
+          <Separator className="mt-3" />
+          <div className="policy-actions">
+            <Button type="submit" size="sm" disabled={pending || !dirty}>
+              Save{dirty ? " changes" : ""}
             </Button>
-          )}
-        </div>
-      </form>
-    </Card>
+            {dirty && (
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  formRef.current?.focus({ preventScroll: true });
+                  setDirty(false);
+                  setResetVersion((v) => v + 1);
+                  setConfig(service.config);
+                  setBaseRevision(configRevision);
+                }}
+              >
+                Discard
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+    </form>
   );
 }
 function ServiceAccess({
@@ -207,6 +226,8 @@ function ServiceAccess({
   }) => void;
 }) {
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const actionTrigger = useRef<HTMLButtonElement>(null);
+  const [revokeError, setRevokeError] = useState(false);
   const change = (field: string, checked: boolean) =>
     void mutate(
       `/services/${encodeURIComponent(service.id)}`,
@@ -227,104 +248,125 @@ function ServiceAccess({
       });
   };
   return (
-    <div className="service-access-row">
-      <div className="service-access-main">
-        <div className="service-identity">
-          <strong>{serviceLabel(service)}</strong>
-          <span>
-            {service.template === "agent"
-              ? "Agent"
-              : service.template === "notifier"
-                ? "Notifications"
-                : "Custom"}
-          </span>
+    <Item size="sm" role="listitem" className="service-access-row">
+      <ItemContent className="min-w-0">
+        <div className="service-access-main">
+          <ItemTitle className="service-identity">
+            <strong>{serviceLabel(service)}</strong>
+            <span>
+              {service.template === "agent"
+                ? "Agent"
+                : service.template === "notifier"
+                  ? "Notifications"
+                  : "Custom"}
+            </span>
+          </ItemTitle>
+          <ItemActions>
+            <Switch
+              checked={service.config.enabled}
+              disabled={pending}
+              aria-label={`Enable ${service.name}`}
+              onCheckedChange={(checked) => change("enabled", checked)}
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Actions for ${service.name}`}
+                    ref={actionTrigger}
+                  />
+                }
+              >
+                <MoreHorizontal />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-48">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    disabled={pending}
+                    onClick={() => void rotate()}
+                  >
+                    <KeyRound />
+                    Replace credential
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    variant="destructive"
+                    disabled={pending}
+                    onClick={() => {
+                      setRevokeError(false);
+                      setConfirmRevoke(true);
+                    }}
+                  >
+                    <Trash2 />
+                    Revoke service
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </ItemActions>
         </div>
-        <Switch
-          checked={service.config.enabled}
-          disabled={pending}
-          aria-label={`Enable ${service.name}`}
-          onCheckedChange={(checked) => change("enabled", checked)}
-        />
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Actions for ${service.name}`}
-              />
-            }
-          >
-            <MoreHorizontal />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-48">
-            <DropdownMenuItem disabled={pending} onClick={() => void rotate()}>
-              <KeyRound />
-              Replace credential
-            </DropdownMenuItem>
-            <DropdownMenuItem
+        <div className="service-connections">
+          <label title="Let this service forward the Bar’s Start / Pause button.">
+            <span>Bar buttons</span>
+            <Switch
+              size="sm"
+              checked={service.config.allowInput}
+              disabled={pending}
+              aria-label={`Bar buttons for ${service.name}`}
+              onCheckedChange={(checked) => change("allowInput", checked)}
+            />
+          </label>
+          <label title="Let this service send the Bar’s actual screen to this page. Use one Mac with local access.">
+            <span>Live preview</span>
+            <Switch
+              size="sm"
+              checked={service.config.allowPreview}
+              disabled={pending}
+              aria-label={`Live preview for ${service.name}`}
+              onCheckedChange={(checked) => change("allowPreview", checked)}
+            />
+          </label>
+        </div>
+      </ItemContent>
+      <AlertDialog open={confirmRevoke} onOpenChange={setConfirmRevoke}>
+        <AlertDialogContent finalFocus={actionTrigger}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke {serviceLabel(service)}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              End queued items and revoke this service’s access?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {revokeError && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                Could not revoke this service. Review the error and try again.
+              </AlertDescription>
+            </Alert>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
               variant="destructive"
               disabled={pending}
-              onClick={() => setConfirmRevoke(true)}
+              onClick={() => {
+                void (async () => {
+                  setRevokeError(false);
+                  const result = await mutate(
+                    `/services/${encodeURIComponent(service.id)}/revoke`,
+                    { expectedRevision: configRevision },
+                  );
+                  if (result) setConfirmRevoke(false);
+                  else setRevokeError(true);
+                })();
+              }}
             >
-              <Trash2 />
-              Revoke service
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      <div className="service-connections">
-        <label title="Let this service forward the Bar’s Start / Pause button.">
-          <span>Bar buttons</span>
-          <Switch
-            size="sm"
-            checked={service.config.allowInput}
-            disabled={pending}
-            aria-label={`Bar buttons for ${service.name}`}
-            onCheckedChange={(checked) => change("allowInput", checked)}
-          />
-        </label>
-        <label title="Let this service send the Bar’s actual screen to this page. Use one Mac with local access.">
-          <span>Live preview</span>
-          <Switch
-            size="sm"
-            checked={service.config.allowPreview}
-            disabled={pending}
-            aria-label={`Live preview for ${service.name}`}
-            onCheckedChange={(checked) => change("allowPreview", checked)}
-          />
-        </label>
-      </div>
-      {confirmRevoke && (
-        <div
-          className="service-revoke"
-          role="group"
-          aria-label={`Confirm revoke ${service.name}`}
-        >
-          <p>End queued items and revoke this service’s access?</p>
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={pending}
-            onClick={() =>
-              void mutate(
-                `/services/${encodeURIComponent(service.id)}/revoke`,
-                { expectedRevision: configRevision },
-              )
-            }
-          >
-            Confirm revoke
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setConfirmRevoke(false)}
-          >
-            Cancel
-          </Button>
-        </div>
-      )}
-    </div>
+              Confirm revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Item>
   );
 }
 
@@ -384,26 +426,21 @@ export function Register({
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor={`${formId}-device`}>Computer</FieldLabel>
-              <NativeSelect
+              <SettingsSelect
                 id={`${formId}-device`}
                 value={computerId}
-                onChange={(event) => setComputerId(event.target.value)}
-              >
-                <NativeSelectOption value="">
-                  New computer (generate ID)
-                </NativeSelectOption>
-                {[
-                  ...new Set(
-                    services
-                      .map((s) => s.computerId)
-                      .filter((id): id is string => !!id),
-                  ),
-                ].map((id) => (
-                  <NativeSelectOption key={id} value={id}>
-                    {id}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
+                onChange={setComputerId}
+                options={[
+                  { value: "", label: "New computer (generate ID)" },
+                  ...[
+                    ...new Set(
+                      services
+                        .map((s) => s.computerId)
+                        .filter((id): id is string => !!id),
+                    ),
+                  ].map((id) => ({ value: id, label: id })),
+                ]}
+              />
             </Field>
             <Field>
               <FieldLabel htmlFor={`${formId}-field6`}>{"Name"}</FieldLabel>
@@ -432,21 +469,21 @@ export function Register({
             </Field>
             <Field>
               <FieldLabel htmlFor={`${formId}-field8`}>{"Template"}</FieldLabel>
-              <NativeSelect
+              <SettingsSelect
                 id={`${formId}-field8`}
                 value={template}
-                onChange={(event) => setTemplate(event.target.value)}
-              >
-                <NativeSelectOption value="agent">
-                  Agent checker
-                </NativeSelectOption>
-                <NativeSelectOption value="notifier">
-                  Notifier
-                </NativeSelectOption>
-                <NativeSelectOption value="custom">
-                  Custom publisher
-                </NativeSelectOption>
-              </NativeSelect>
+                onChange={setTemplate}
+                options={[
+                  { value: "agent", label: "Agent checker" },
+                  { value: "notifier", label: "Notifier" },
+                  { value: "custom", label: "Custom publisher" },
+                ]}
+              />
+              <FieldDescription>
+                Each message declares whether it ends with its source or after a
+                fixed time. Hold applies to timed messages. The publisher
+                decides when to send again.
+              </FieldDescription>
             </Field>
           </FieldGroup>
         </CardContent>

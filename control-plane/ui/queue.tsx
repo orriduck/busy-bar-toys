@@ -1,5 +1,4 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
 import { etaText, queueMetadata } from "./api";
 import type { Snapshot, QueueItem, Mutate } from "./api";
 import { AppIcon, Icon } from "./common";
@@ -10,6 +9,7 @@ import {
 } from "@tanstack/react-table";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
+import { Progress } from "./components/ui/progress";
 import { PriorityBadge } from "./policy-field";
 import { Empty, EmptyHeader, EmptyTitle } from "./components/ui/empty";
 import {
@@ -57,20 +57,17 @@ const columns = column.columns([
             <span>{meta.app}</span>
           </Button>
           {priority !== undefined && <PriorityBadge value={priority} />}
-          {current && <span className="queue-playing">Playing</span>}
           {current && (
-            <span
-              className={cn(
-                "queue-playback-line",
-                progress === null && "queue-playback-indeterminate",
-              )}
-              role="progressbar"
+            <Badge variant="secondary" className="queue-playing">
+              Playing
+            </Badge>
+          )}
+          {current && (
+            <Progress
+              className="queue-playback-line"
+              data-size="thin"
+              value={progress === null ? null : Math.round(progress)}
               aria-label={`${meta.app} playback`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={
-                progress === null ? undefined : Math.round(progress)
-              }
               aria-valuetext={
                 progress === null ? "Playing · duration unknown" : undefined
               }
@@ -307,16 +304,7 @@ export function Queue({
             const group = row.original;
             return (
               <Fragment key={row.id}>
-                <TableRow
-                  className={cn(group.current && "current-row")}
-                  style={
-                    group.current && group.progress !== null
-                      ? ({
-                          "--queue-progress": `${group.progress}%`,
-                        } as CSSProperties)
-                      : undefined
-                  }
-                >
+                <TableRow className={cn(group.current && "current-row")}>
                   {row.getAllCells().map((cell) => (
                     <TableCell key={cell.id}>
                       <table.FlexRender cell={cell} />

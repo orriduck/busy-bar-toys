@@ -2,7 +2,7 @@
 
 [简体中文](cloud-mode.zh-CN.md)
 
-Cloud mode sends local agent states and notifications to the control plane. The control plane owns the device display, queue, grouping, snooze, and calendar return. Source tools and their credentials stay on the Mac. The default mode remains `standalone`.
+Cloud mode sends local agent states and notifications to the control plane. The control plane owns the device display, queue, grouping, and calendar return. Source tools and their credentials stay on the Mac. The default mode remains `standalone`.
 
 Use the [production management page](https://busy-bar-control-plane.orriduck.workers.dev) for real collectors. The shared cloud preview accepts synthetic data only. Mock acceptance does not prove physical display behavior. These steps configure and migrate one Mac; repeat them with a separate service registration on each Mac.
 
@@ -24,7 +24,7 @@ Build this helper once. Rebuild it only when its Swift source changes. This step
 
 ## 2. Create the services
 
-Open **Services** on the control-plane page. Register one **agent** service and one **notifier** service. Open **Configuration** to set their policies. Keep the notifier priority above the agent priority. The page defaults are agent 10 and notifier 50. Keep the default exit policy unless you need different behavior.
+Open **Services** on the control-plane page. Register one **agent** service and one **notifier** service. Open **Configuration** to set their policies. Keep the notifier priority above the agent priority. The page defaults are agent 10 and notifier 50. Each message declares a source-controlled or fixed-time lifetime. The host decides when to issue another occurrence.
 
 Copy the publisher credential shown for each service. Each credential belongs to one service. The page shows it once. Do not put it in a shell command, environment variable, repository file, or chat.
 
@@ -67,7 +67,7 @@ The current observer and cloud observer share one process lock. Stop the current
 .venv/bin/busy-bar watch --mode cloud
 ```
 
-Use Control-C to stop cloud watch. Stop retains occurrence IDs, snooze state, action results, and urgent deadlines. A quick restart renews the same occurrences. If the backend lease expires first, its tombstones suppress replay until a confirmed source clear or a new agent turn. The client never clears the device namespace.
+Use Control-C to stop cloud watch. Stop retains occurrence IDs, action results, and urgent deadlines. A quick restart renews the same occurrences. If the backend lease expires first, its tombstones suppress replay until a confirmed source clear or a new agent turn. The client never clears the device namespace.
 
 Check cloud status from another terminal:
 
@@ -105,7 +105,7 @@ Standalone mode requires its existing BUSY device token.
 
 - **Display:** the current front display and the queue. Each row shows App, Sender, and Received. Open the app to read details and use queue controls.
 - **Services:** register collectors and replace or revoke publisher credentials.
-- **Configuration:** enable services and set priority, exit, hold, later, and heartbeat rules.
+- **Configuration:** drag service order and set Priority, Hold and Heartbeat.
 - **Device:** inspect connection, current controller, API confirmation, and preview diagnostics. Sign out here.
 
 Sender means the registered service name. An instance name distinguishes Macs that share a registration. It is not the author of the source notification. Received is the server receipt time for that occurrence. Updates retain it. Hover over the time for the full date and time.
@@ -126,7 +126,7 @@ Primary callbacks run on the Mac that advertised them. For example, a Datadog ca
 
 ## Delivery and urgent fallback
 
-The notifier adapter publishes every raw source item. State sources become conditions. Event sources become events. Original source group keys are retained inside the notifier service. Aircraft use a persisted encounter ID: repeated polls and restarts retain it; a confirmed outside-radius rearm or daily rearm creates a new ID. The backend owns ordering and snooze. A manual clear tombstones the occurrence; a heartbeat cannot revive it. Delivery expiry also prevents cloud replay, but retains an unresolved urgent item's local fallback text and deadline until source clear or fallback notification. A confirmed state clear followed by recurrence creates a new occurrence UUID.
+The notifier adapter publishes every raw source item. State sources become conditions. Event sources become events. Original source group keys are retained inside the notifier service. Aircraft use a persisted encounter ID: repeated polls and restarts retain it; a confirmed outside-radius rearm or daily rearm creates a new ID. The backend owns ordering. A timed message completes without automatic replay. The host decides when to create a new occurrence. A manual clear tombstones the occurrence; a heartbeat cannot revive it. Delivery expiry also prevents cloud replay, but retains an unresolved urgent item's local fallback text and deadline until source clear or fallback notification. A confirmed state clear followed by recurrence creates a new occurrence UUID.
 
 A failed source poll retains the last condition as uncertain and stops its renewal. A successful poll has a bounded freshness window based on its next expected poll. A stuck source cannot renew cached data forever. Source `on_shown` callbacks run only after confirmed cloud admission.
 

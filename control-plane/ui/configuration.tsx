@@ -18,6 +18,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { ChevronDown, GripVertical } from "lucide-react";
 import type { Snapshot, Mutate, Service, CredentialValue } from "./api";
+import { Card, CardHeader, CardContent } from "./components/ui/card";
+import { cn } from "./lib/utils";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
 import {
@@ -26,6 +28,7 @@ import {
   CollapsibleContent,
 } from "./components/ui/collapsible";
 import { ServiceEditor } from "./services";
+import { SettingNumber } from "./setting-number";
 import { PriorityBadge } from "./policy-field";
 import { priorityOrder, serviceLabel, computerIds } from "./service-layout";
 function ConfigurationRow({
@@ -49,16 +52,19 @@ function ConfigurationRow({
 }) {
   const sortable = useSortable({ id: service.id, disabled: pending });
   return (
-    <div
+    <Card
       ref={sortable.setNodeRef}
       style={{
         transform: CSS.Transform.toString(sortable.transform),
         transition: sortable.transition,
       }}
-      className={`configuration-row${sortable.isDragging ? " dragging" : ""}`}
+      className={cn(
+        "configuration-row gap-0 p-0",
+        sortable.isDragging && "z-10 bg-popover shadow-lg ring-1 ring-primary",
+      )}
     >
       <Collapsible open={open} onOpenChange={onOpen}>
-        <div className="configuration-summary">
+        <CardHeader className="configuration-summary">
           <Button
             type="button"
             variant="ghost"
@@ -72,10 +78,14 @@ function ConfigurationRow({
             <GripVertical />
           </Button>
           <span className="configuration-rank" aria-label={`Position ${rank}`}>
-            {rank}
+            <span aria-hidden="true">
+              <SettingNumber value={rank} />
+            </span>
           </span>
           <CollapsibleTrigger
-            render={<Button variant="ghost" className="configuration-open" />}
+            render={
+              <Button variant="disclosure" className="configuration-open" />
+            }
           >
             <span className="configuration-name">
               <strong>{serviceLabel(service)}</strong>
@@ -87,18 +97,20 @@ function ConfigurationRow({
             <PriorityBadge value={service.config.priority} />
             <ChevronDown className={open ? "chevron-open" : ""} />
           </CollapsibleTrigger>
-        </div>
-        <CollapsibleContent keepMounted className="configuration-detail">
-          <ServiceEditor
-            service={service}
-            configRevision={snapshot.configRevision}
-            mutate={mutate}
-            pending={pending}
-            onCredential={onCredential}
-          />
+        </CardHeader>
+        <CollapsibleContent keepMounted>
+          <CardContent className="configuration-detail">
+            <ServiceEditor
+              service={service}
+              configRevision={snapshot.configRevision}
+              mutate={mutate}
+              pending={pending}
+              onCredential={onCredential}
+            />
+          </CardContent>
         </CollapsibleContent>
       </Collapsible>
-    </div>
+    </Card>
   );
 }
 export function ConfigurationList({

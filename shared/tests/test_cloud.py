@@ -122,6 +122,22 @@ class CloudTest(unittest.TestCase):
             self.assertEqual(calls,['running'])
             self.assertEqual(state.data['actions']['act']['status'],'succeeded')
 
+    def test_sender_declares_each_messages_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            class HTTP:
+                def __init__(self): self.calls=[]
+                def request(self,method,path,body=None):
+                    if path=='/api/publish': self.calls.append(body)
+                    return {}
+            http=HTTP()
+            producer=cloud.Producer(directory,{'role':'agent','serviceId':'agent','instanceId':'mac','epoch':'e'},http,clock=lambda:100)
+            cases=[('agent','info',None,'source'),('condition','urgent',None,'source'),('event','info',None,'finite'),('condition','info','source','source'),('agent','info','finite','finite')]
+            for index,(kind,level,declared,expected) in enumerate(cases):
+                extra={} if declared is None else {'exit':declared}
+                producer.state.recognize(str(index),kind=kind,level=level,title='A',detail='',scene={'commands':[]},**extra)
+            producer.flush()
+            self.assertEqual([body.get('exit') for body in http.calls],[case[3] for case in cases])
+
     def test_exact_publish_body_is_retried_after_lost_ack(self):
         with tempfile.TemporaryDirectory() as directory:
             now=[100.0]
