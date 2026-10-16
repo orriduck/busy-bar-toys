@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, SVGProps } from "react";
 import type { Snapshot } from "./api";
 export type IconName =
   | "chevron"
@@ -15,7 +15,10 @@ export type IconName =
   | "plane"
   | "github"
   | "terminal";
-export function Icon({ name }: { name: IconName }) {
+export function Icon({
+  name,
+  ...props
+}: { name: IconName } & SVGProps<SVGSVGElement>) {
   const paths: Record<IconName, string> = {
     chevron: "m6 9 6 6 6-6",
     plus: "M12 5v14M5 12h14",
@@ -36,7 +39,7 @@ export function Icon({ name }: { name: IconName }) {
     terminal: "m4 6 6 6-6 6M13 18h7",
   };
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
+    <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
       <path
         d={paths[name]}
         fill="none"

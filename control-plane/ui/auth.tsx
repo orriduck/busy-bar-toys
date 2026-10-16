@@ -1,6 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, message } from "./api";
+import { useMutation } from "@tanstack/react-query";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Textarea } from "./components/ui/textarea";
+import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
+import { Alert, AlertDescription } from "./components/ui/alert";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "./components/ui/dialog";
 export function SignIn({
   demo,
   onSignIn,
@@ -11,22 +25,27 @@ export function SignIn({
   onError: (error: string) => void;
 }) {
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const login = useMutation({
+    mutationFn: (token: string) =>
+      api<{ deviceId: string; demo?: boolean }>("/session", { token }),
+    retry: false,
+    gcTime: 0,
+  });
+  const busy = login.isPending;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
     onError("");
+    setError("");
     try {
-      const result = await api<{ deviceId: string; demo?: boolean }>(
-        "/session",
-        { token },
-      );
+      const result = await login.mutateAsync(token);
       setToken("");
       onSignIn(result.deviceId, result.demo);
     } catch (e) {
+      setError(message(e));
       onError(message(e));
     } finally {
-      setBusy(false);
+      login.reset();
     }
   };
   return (
@@ -36,20 +55,31 @@ export function SignIn({
         Connect your BUSY Bar to manage display services and see what is next.
       </p>
       <form onSubmit={(event) => void submit(event)}>
-        <label htmlFor="device-token">Device API token</label>
-        <input
-          id="device-token"
-          type="password"
-          autoComplete="off"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          required
-          maxLength={4096}
-          placeholder={demo ? "demo-token" : "Device-scoped BUSY cloud token"}
-        />
-        <button className="primary" disabled={busy}>
-          {busy ? "Connecting…" : "Connect device"}
-        </button>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="device-token">Device API token</FieldLabel>
+            <Input
+              id="device-token"
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              required
+              maxLength={4096}
+              placeholder={
+                demo ? "demo-token" : "Device-scoped BUSY cloud token"
+              }
+            />
+          </Field>
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <Button type="submit" disabled={busy}>
+            {busy ? "Connecting…" : "Connect device"}
+          </Button>
+        </FieldGroup>
       </form>
       <p className="muted">
         The backend verifies your device and stores the token encrypted. This
@@ -83,23 +113,18 @@ export function Credential({
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState("");
   const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const prior = document.activeElement;
-    closeRef.current?.focus();
-    return () => {
-      if (
-        prior instanceof HTMLElement &&
-        prior !== document.body &&
-        prior.isConnected &&
-        !prior.closest("[hidden]")
-      )
-        prior.focus();
-      else
-        document
-          .querySelector<HTMLButtonElement>('nav button[aria-current="page"]')
-          ?.focus();
-    };
-  }, []);
+  const prior = useRef(document.activeElement);
+  const restoreFocus = () => {
+    const target = prior.current;
+    return target instanceof HTMLElement &&
+      target !== document.body &&
+      target.isConnected &&
+      !target.closest("[hidden]")
+      ? target
+      : document.querySelector<HTMLButtonElement>(
+          'nav button[aria-current="page"]',
+        );
+  };
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value.credential);
@@ -111,49 +136,51 @@ export function Credential({
     }
   };
   return (
-    <div className="modal-backdrop">
-      <section
-        className="credential"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="credential-title"
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
-          if (event.key === "Tab") {
-            const nodes = event.currentTarget.querySelectorAll<HTMLElement>(
-              'button:not(:disabled),textarea:not(:disabled),input:not(:disabled),a[href],select:not(:disabled),[tabindex="0"]',
-            );
-            const first = nodes[0],
-              last = nodes[nodes.length - 1];
-            if (event.shiftKey && document.activeElement === first) {
-              event.preventDefault();
-              last.focus();
-            } else if (!event.shiftKey && document.activeElement === last) {
-              event.preventDefault();
-              first.focus();
-            }
-          }
-        }}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        className="credential max-h-[90dvh] overflow-y-auto"
+        initialFocus={closeRef}
+        finalFocus={restoreFocus}
       >
-        <h2 id="credential-title">Connect {value.id}</h2>
-        <p>Save this publisher credential now. It is shown only once.</p>
-        <label>
-          Publisher credential
-          <textarea
-            readOnly
-            rows={3}
-            value={value.credential}
-            spellCheck={false}
-          />
-        </label>
-        <button onClick={() => void copy()}>
+        <DialogHeader>
+          <DialogTitle id="credential-title">Connect {value.id}</DialogTitle>
+          <DialogDescription>
+            Save this publisher credential now. It is shown only once.
+          </DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="publisher-credential">
+              Publisher credential
+            </FieldLabel>
+            <Textarea
+              id="publisher-credential"
+              readOnly
+              rows={3}
+              value={value.credential}
+              spellCheck={false}
+            />
+          </Field>
+        </FieldGroup>
+        <Button variant="secondary" onClick={() => void copy()}>
           {copied ? "Copied" : "Copy credential"}
-        </button>
-        {copyError && <p role="alert">{copyError}</p>}
-        <label>
-          Epoch
-          <input readOnly value={value.epoch} />
-        </label>
+        </Button>
+        {copyError && (
+          <Alert variant="destructive">
+            <AlertDescription>{copyError}</AlertDescription>
+          </Alert>
+        )}
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="publisher-epoch">Epoch</FieldLabel>
+            <Input id="publisher-epoch" readOnly value={value.epoch} />
+          </Field>
+        </FieldGroup>
         <p className="muted">
           Expires {new Date(value.epochExpiresAt).toLocaleString()}. Keep this{" "}
           {setupMode !== "allowed"
@@ -196,10 +223,12 @@ export function Credential({
             secret store.
           </p>
         )}
-        <button ref={closeRef} className="primary" onClick={onClose}>
-          I saved it
-        </button>
-      </section>
-    </div>
+        <DialogFooter>
+          <Button ref={closeRef} onClick={onClose}>
+            I saved it
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

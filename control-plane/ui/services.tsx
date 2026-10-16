@@ -1,6 +1,32 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Service, Mutate } from "./api";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "./components/ui/native-select";
+import { Switch } from "./components/ui/switch";
+import { Checkbox } from "./components/ui/checkbox";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldSet,
+  FieldLegend,
+  FieldDescription,
+} from "./components/ui/field";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+  CardAction,
+} from "./components/ui/card";
+import { Alert, AlertDescription } from "./components/ui/alert";
 export function ServiceEditor({
   service,
   configRevision,
@@ -21,6 +47,7 @@ export function ServiceEditor({
     id: string;
   }) => void;
 }) {
+  const formId = useId();
   const [config, setConfig] = useState(service.config);
   const [dirty, setDirty] = useState(false);
   const edits = useRef(0);
@@ -70,33 +97,36 @@ export function ServiceEditor({
   };
   if (mode === "access")
     return (
-      <section className="service service-access">
-        <div className="service-top">
-          <div>
-            <h3>{service.name}</h3>
-            <span className="muted">
-              {service.template} · {service.id}
-            </span>
-          </div>
-        </div>
-        <p className="muted">
-          Publisher expires{" "}
-          {new Date(service.epochExpiresAt).toLocaleDateString()}.
-        </p>
-        <div className="access-actions">
-          <button
+      <Card className="service service-access">
+        <CardHeader>
+          <CardTitle role="heading" aria-level={3}>
+            {service.name}
+          </CardTitle>
+          <CardDescription>
+            {service.template} · {service.id}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="muted">
+            Publisher expires{" "}
+            {new Date(service.epochExpiresAt).toLocaleDateString()}.
+          </p>
+        </CardContent>
+        <CardFooter className="access-actions flex-wrap gap-2">
+          <Button
+            variant="secondary"
             type="button"
             disabled={pending}
             onClick={() => void rotate()}
           >
             Replace credential
-          </button>
+          </Button>
           {confirmRevoke ? (
             <>
               <span>End this service’s queued items and revoke access?</span>
-              <button
+              <Button
                 type="button"
-                className="danger"
+                variant="destructive"
                 disabled={pending}
                 onClick={() =>
                   void mutate(
@@ -106,150 +136,194 @@ export function ServiceEditor({
                 }
               >
                 Confirm revoke
-              </button>
-              <button type="button" onClick={() => setConfirmRevoke(false)}>
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => setConfirmRevoke(false)}
+              >
                 Cancel
-              </button>
+              </Button>
             </>
           ) : (
-            <button
+            <Button
               type="button"
-              className="text-button"
+              variant="ghost"
               onClick={() => setConfirmRevoke(true)}
             >
               Revoke service
-            </button>
+            </Button>
           )}
-        </div>
-      </section>
+        </CardFooter>
+      </Card>
     );
   return (
-    <form className="service" onSubmit={(event) => void save(event)}>
-      <div className="service-top">
-        <div>
-          <h3>{service.name}</h3>
-          <span className="muted">
-            {service.template} · {service.id}
-          </span>
-        </div>
-        <label className="switch">
-          <input
-            type="checkbox"
+    <Card className="service">
+      <CardHeader>
+        <CardTitle role="heading" aria-level={3}>
+          {service.name}
+        </CardTitle>
+        <CardDescription>
+          {service.template} · {service.id}
+        </CardDescription>
+        <CardAction>
+          <Switch
             checked={config.enabled}
             aria-label={`Enable ${service.name}`}
-            onChange={(event) => edit("enabled", event.target.checked)}
+            onCheckedChange={(checked) => edit("enabled", checked)}
           />
-          <span />
-        </label>
-      </div>
-      <div className="service-fields">
-        <label>
-          Priority
-          <input
-            type="number"
-            required
-            min="0"
-            max="1000"
-            value={config.priority}
-            onChange={(event) => edit("priority", Number(event.target.value))}
-          />
-        </label>
-        <label>
-          Exit
-          <select
-            value={config.exit}
-            onChange={(event) => edit("exit", event.target.value)}
-          >
-            <option value="default">Automatic</option>
-            <option value="finite">Fixed time</option>
-            <option value="source">Source ends</option>
-          </select>
-        </label>
-        <label>
-          Hold (s)
-          <input
-            type="number"
-            required
-            min="1"
-            step="any"
-            max="86400"
-            value={config.visibleMs / 1000}
-            onChange={(event) =>
-              edit("visibleMs", Math.round(Number(event.target.value) * 1000))
-            }
-          />
-        </label>
-        <label>
-          Later (min)
-          <input
-            type="number"
-            required
-            min="0.016666666666666666"
-            step="any"
-            max="1440"
-            value={config.snoozeMs / 60000}
-            onChange={(event) =>
-              edit("snoozeMs", Math.round(Number(event.target.value) * 60000))
-            }
-          />
-        </label>
-        <label>
-          Heartbeat (s)
-          <input
-            type="number"
-            required
-            min="5"
-            step="any"
-            max="300"
-            value={config.heartbeatMs / 1000}
-            onChange={(event) =>
-              edit("heartbeatMs", Math.round(Number(event.target.value) * 1000))
-            }
-          />
-        </label>
-      </div>
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={"allowInput" in config && Boolean(config.allowInput)}
-          onChange={(event) => edit("allowInput", event.target.checked)}
-        />
-        Trusted device button bridge
-      </label>
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={config.allowPreview === true}
-          onChange={(event) => edit("allowPreview", event.target.checked)}
-        />
-        Live display preview bridge
-      </label>
-      <p className="field-hint">
-        Use one Mac with local Wi-Fi access to the Bar.
-      </p>
-      {dirty && baseRevision !== configRevision && (
-        <p className="inline-warning">
-          Configuration changed elsewhere. Reload this form before saving.
-        </p>
-      )}
-      <div className="service-bottom">
-        <button className="save" disabled={pending || !dirty}>
-          Save{dirty ? " changes" : ""}
-        </button>
-        {dirty && (
-          <button
-            type="button"
-            onClick={() => {
-              setDirty(false);
-              setConfig(service.config);
-              setBaseRevision(configRevision);
-            }}
-          >
-            Reload
-          </button>
-        )}
-      </div>
-    </form>
+        </CardAction>
+      </CardHeader>
+      <form id={formId} onSubmit={(event) => void save(event)}>
+        <CardContent>
+          <FieldGroup className="service-fields">
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field1`}>{"Priority"}</FieldLabel>
+              <Input
+                id={`${formId}-field1`}
+                type="number"
+                required
+                min="0"
+                max="1000"
+                value={config.priority}
+                onChange={(event) =>
+                  edit("priority", Number(event.target.value))
+                }
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field2`}>{"Exit"}</FieldLabel>
+              <NativeSelect
+                id={`${formId}-field2`}
+                value={config.exit}
+                onChange={(event) => edit("exit", event.target.value)}
+              >
+                <NativeSelectOption value="default">
+                  Automatic
+                </NativeSelectOption>
+                <NativeSelectOption value="finite">
+                  Fixed time
+                </NativeSelectOption>
+                <NativeSelectOption value="source">
+                  Source ends
+                </NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field3`}>{"Hold (s)"}</FieldLabel>
+              <Input
+                id={`${formId}-field3`}
+                type="number"
+                required
+                min="1"
+                step="any"
+                max="86400"
+                value={config.visibleMs / 1000}
+                onChange={(event) =>
+                  edit(
+                    "visibleMs",
+                    Math.round(Number(event.target.value) * 1000),
+                  )
+                }
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field4`}>
+                {"Later (min)"}
+              </FieldLabel>
+              <Input
+                id={`${formId}-field4`}
+                type="number"
+                required
+                min="0.016666666666666666"
+                step="any"
+                max="1440"
+                value={config.snoozeMs / 60000}
+                onChange={(event) =>
+                  edit(
+                    "snoozeMs",
+                    Math.round(Number(event.target.value) * 60000),
+                  )
+                }
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field5`}>
+                {"Heartbeat (s)"}
+              </FieldLabel>
+              <Input
+                id={`${formId}-field5`}
+                type="number"
+                required
+                min="5"
+                step="any"
+                max="300"
+                value={config.heartbeatMs / 1000}
+                onChange={(event) =>
+                  edit(
+                    "heartbeatMs",
+                    Math.round(Number(event.target.value) * 1000),
+                  )
+                }
+              />
+            </Field>
+          </FieldGroup>
+          <FieldSet className="mt-5">
+            <FieldLegend variant="label">Bridges</FieldLegend>
+            <FieldGroup>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id={`${formId}-input`}
+                  checked={"allowInput" in config && Boolean(config.allowInput)}
+                  onCheckedChange={(checked) => edit("allowInput", checked)}
+                />
+                <FieldLabel htmlFor={`${formId}-input`}>
+                  Trusted device button bridge
+                </FieldLabel>
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id={`${formId}-preview`}
+                  checked={config.allowPreview === true}
+                  onCheckedChange={(checked) => edit("allowPreview", checked)}
+                />
+                <FieldLabel htmlFor={`${formId}-preview`}>
+                  Live display preview bridge
+                </FieldLabel>
+              </Field>
+            </FieldGroup>
+            <FieldDescription>
+              Use one Mac with local Wi-Fi access to the Bar.
+            </FieldDescription>
+          </FieldSet>
+          {dirty && baseRevision !== configRevision && (
+            <Alert className="mt-5">
+              <AlertDescription>
+                Configuration changed elsewhere. Reload this form before saving.
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+        <CardFooter className="service-bottom gap-2 mt-5">
+          <Button type="submit" disabled={pending || !dirty}>
+            Save{dirty ? " changes" : ""}
+          </Button>
+          {dirty && (
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => {
+                setDirty(false);
+                setConfig(service.config);
+                setBaseRevision(configRevision);
+              }}
+            >
+              Reload
+            </Button>
+          )}
+        </CardFooter>
+      </form>
+    </Card>
   );
 }
 export function Register({
@@ -268,6 +342,7 @@ export function Register({
     id: string;
   }) => void;
 }) {
+  const formId = useId();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [template, setTemplate] = useState("agent");
@@ -289,43 +364,69 @@ export function Register({
       });
   };
   return (
-    <form className="register" onSubmit={(event) => void submit(event)}>
-      <h3>Register a service</h3>
-      <label>
-        Name
-        <input
-          required
-          maxLength={80}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="My Codex"
-        />
-      </label>
-      <label>
-        Service ID
-        <input
-          required
-          pattern="[A-Za-z0-9_-]{1,64}"
-          maxLength={64}
-          value={id}
-          onChange={(event) => setId(event.target.value)}
-          placeholder="codex-mac"
-        />
-      </label>
-      <label>
-        Template
-        <select
-          value={template}
-          onChange={(event) => setTemplate(event.target.value)}
-        >
-          <option value="agent">Agent checker</option>
-          <option value="notifier">Notifier</option>
-          <option value="custom">Custom publisher</option>
-        </select>
-      </label>
-      <button className="primary" disabled={pending}>
-        Create service
-      </button>
-    </form>
+    <Card className="register">
+      <CardHeader>
+        <CardTitle role="heading" aria-level={3}>
+          Register a service
+        </CardTitle>
+        <CardDescription>
+          Connect a local collector or custom publisher.
+        </CardDescription>
+      </CardHeader>
+      <form onSubmit={(event) => void submit(event)}>
+        <CardContent>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field6`}>{"Name"}</FieldLabel>
+              <Input
+                id={`${formId}-field6`}
+                required
+                maxLength={80}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="My Codex"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field7`}>
+                {"Service ID"}
+              </FieldLabel>
+              <Input
+                id={`${formId}-field7`}
+                required
+                pattern="[A-Za-z0-9_-]{1,64}"
+                maxLength={64}
+                value={id}
+                onChange={(event) => setId(event.target.value)}
+                placeholder="codex-mac"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${formId}-field8`}>{"Template"}</FieldLabel>
+              <NativeSelect
+                id={`${formId}-field8`}
+                value={template}
+                onChange={(event) => setTemplate(event.target.value)}
+              >
+                <NativeSelectOption value="agent">
+                  Agent checker
+                </NativeSelectOption>
+                <NativeSelectOption value="notifier">
+                  Notifier
+                </NativeSelectOption>
+                <NativeSelectOption value="custom">
+                  Custom publisher
+                </NativeSelectOption>
+              </NativeSelect>
+            </Field>
+          </FieldGroup>
+        </CardContent>
+        <CardFooter className="mt-5">
+          <Button type="submit" disabled={pending}>
+            Create service
+          </Button>
+        </CardFooter>
+      </form>
+    </Card>
   );
 }

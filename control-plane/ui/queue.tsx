@@ -1,7 +1,84 @@
-import { Fragment, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { etaText, queueMetadata } from "./api";
 import type { Snapshot, QueueItem, Mutate } from "./api";
 import { AppIcon, Icon } from "./common";
+import {
+  createColumnHelper,
+  tableFeatures,
+  useTable,
+} from "@tanstack/react-table";
+import { Button } from "./components/ui/button";
+import { Badge } from "./components/ui/badge";
+import { Empty, EmptyHeader, EmptyTitle } from "./components/ui/empty";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "./components/ui/table";
+import { cn } from "./lib/utils";
+
+type QueueRow = {
+  groupId: string;
+  memberKeys: string[];
+  item: QueueItem;
+  meta: ReturnType<typeof queueMetadata>;
+  open: boolean;
+  current: boolean;
+  toggle: (id: string) => void;
+};
+const features = tableFeatures({});
+const column = createColumnHelper<typeof features, QueueRow>();
+const columns = column.columns([
+  column.accessor((row) => row.meta.app, {
+    id: "app",
+    header: "App",
+    cell: ({ row }) => {
+      const { groupId, meta, open, toggle } = row.original;
+      return (
+        <Button
+          variant="ghost"
+          className="queue-open"
+          aria-expanded={open}
+          aria-controls={`details-${encodeURIComponent(groupId)}`}
+          aria-label={`${open ? "Hide" : "Show"} ${meta.app} details from ${meta.sender}`}
+          onClick={() => toggle(groupId)}
+        >
+          <AppIcon app={meta.appId} />
+          <span>{meta.app}</span>
+        </Button>
+      );
+    },
+  }),
+  column.accessor((row) => row.meta.sender, {
+    id: "sender",
+    header: "Sender",
+    cell: ({ row }) => (
+      <span className="sender" title={row.original.item.instanceId}>
+        <Icon name="computer" />
+        {row.original.meta.sender}
+      </span>
+    ),
+  }),
+  column.accessor((row) => row.meta.receivedAt, {
+    id: "received",
+    header: "Received",
+    cell: ({ row }) => {
+      const date = new Date(row.original.meta.receivedAt);
+      return (
+        <time dateTime={date.toISOString()} title={date.toLocaleString()}>
+          {date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })}
+        </time>
+      );
+    },
+  }),
+]);
 export function Queue({
   snapshot,
   mutate,
@@ -12,22 +89,50 @@ export function Queue({
   pending: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const groups = snapshot.groups
-    .map((group) => ({
-      ...group,
-      representativeItem: snapshot.items.find(
-        (i) => i.itemKey === group.representative,
-      ),
-    }))
-    .filter((group) => group.representativeItem);
-  const represented = new Set(groups.flatMap((group) => group.memberKeys));
-  const orphaned = snapshot.items
-    .filter((item) => !represented.has(item.itemKey))
-    .map((item) => ({
-      groupId: item.itemKey,
-      memberKeys: [item.itemKey],
-      representativeItem: item,
+  const toggle = useCallback(
+    (id: string) =>
+      setExpanded((previous) => {
+        const next = new Set(previous);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      }),
+    [],
+  );
+  const data = useMemo(() => {
+    const groups = snapshot.groups
+      .map((group) => ({
+        ...group,
+        representativeItem: snapshot.items.find(
+          (item) => item.itemKey === group.representative,
+        ),
+      }))
+      .filter((group) => group.representativeItem);
+    const represented = new Set(groups.flatMap((group) => group.memberKeys));
+    const orphaned = snapshot.items
+      .filter((item) => !represented.has(item.itemKey))
+      .map((item) => ({
+        groupId: item.itemKey,
+        memberKeys: [item.itemKey],
+        representativeItem: item,
+      }));
+    return [...groups, ...orphaned].map((group): QueueRow => ({
+      groupId: group.groupId,
+      memberKeys: group.memberKeys,
+      item: group.representativeItem!,
+      meta: queueMetadata(group.representativeItem!, snapshot),
+      open: expanded.has(group.groupId),
+      current:
+        snapshot.health.status === "healthy" &&
+        group.memberKeys.includes(snapshot.displaying?.itemKey || ""),
+      toggle,
     }));
+  }, [snapshot, expanded, toggle]);
+  const table = useTable({
+    features,
+    columns,
+    data,
+    getRowId: (row) => row.groupId,
+  });
   const operate = (item: QueueItem, operation: string) =>
     void mutate("/items", {
       itemKey: item.itemKey,
@@ -45,7 +150,11 @@ export function Queue({
         <div className="item-detail-heading">
           <AppIcon app={meta.appId} />
           <strong>{item.title}</strong>
-          <span className={`badge ${item.level}`}>{item.level}</span>
+          <Badge
+            variant={item.level === "urgent" ? "destructive" : "secondary"}
+          >
+            {item.level}
+          </Badge>
         </div>
         <p className="muted">
           {meta.sender} · {item.instanceId} ·{" "}
@@ -60,21 +169,33 @@ export function Queue({
           {!item.timeReliable ? " · Source clock uncertain" : ""}
         </p>
         <div className="item-actions">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             disabled={pending}
             onClick={() =>
               operate(item, item.state === "paused" ? "resume" : "pause")
             }
           >
-            <Icon name={item.state === "paused" ? "play" : "pause"} />
+            <Icon
+              name={item.state === "paused" ? "play" : "pause"}
+              data-icon="inline-start"
+            />
             {item.state === "paused" ? "Resume" : "Pause"}
-          </button>
-          <button disabled={pending} onClick={() => operate(item, "end")}>
-            <Icon name="end" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={pending}
+            onClick={() => operate(item, "end")}
+          >
+            <Icon name="end" data-icon="inline-start" />
             End
-          </button>
+          </Button>
           {item.actionKeys.includes("primary") && (
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               disabled={
                 pending ||
                 !item.actionAvailable ||
@@ -90,9 +211,9 @@ export function Queue({
                 })
               }
             >
-              <Icon name="play" />
+              <Icon name="play" data-icon="inline-start" />
               Run action
-            </button>
+            </Button>
           )}
         </div>
         {snapshot.actions
@@ -111,68 +232,36 @@ export function Queue({
   };
   return (
     <div className="queue-scroll">
-      <table className="queue-table" aria-label="Display queue">
-        <thead>
-          <tr>
-            <th scope="col">App</th>
-            <th scope="col">Sender</th>
-            <th scope="col">Received</th>
-          </tr>
-        </thead>
-        <tbody>
-          {[...groups, ...orphaned].map((group) => {
-            const item = group.representativeItem!,
-              meta = queueMetadata(item, snapshot),
-              open = expanded.has(group.groupId);
-            const current =
-              snapshot.health.status === "healthy" &&
-              group.memberKeys.includes(snapshot.displaying?.itemKey || "");
+      <Table className="queue-table" aria-label="Display queue">
+        <TableHeader>
+          {table.getHeaderGroups().map((group) => (
+            <TableRow key={group.id}>
+              {group.headers.map((header) => (
+                <TableHead key={header.id} scope="col">
+                  {header.isPlaceholder ? null : (
+                    <table.FlexRender header={header} />
+                  )}
+                </TableHead>
+              ))}
+            </TableRow>
+          ))}
+        </TableHeader>
+        <TableBody>
+          {table.getRowModel().rows.map((row) => {
+            const group = row.original;
             return (
-              <Fragment key={group.groupId}>
-                <tr className={current ? "current-row" : ""}>
-                  <td>
-                    <button
-                      className="queue-open"
-                      aria-expanded={open}
-                      aria-controls={`details-${encodeURIComponent(group.groupId)}`}
-                      aria-label={`${open ? "Hide" : "Show"} ${meta.app} details from ${meta.sender}`}
-                      onClick={() =>
-                        setExpanded((previous) => {
-                          const next = new Set(previous);
-                          next.has(group.groupId)
-                            ? next.delete(group.groupId)
-                            : next.add(group.groupId);
-                          return next;
-                        })
-                      }
-                    >
-                      <AppIcon app={meta.appId} />
-                      <span>{meta.app}</span>
-                    </button>
-                  </td>
-                  <td title={item.instanceId}>
-                    <span className="sender">
-                      <Icon name="computer" />
-                      {meta.sender}
-                    </span>
-                  </td>
-                  <td>
-                    <time
-                      dateTime={new Date(meta.receivedAt).toISOString()}
-                      title={new Date(meta.receivedAt).toLocaleString()}
-                    >
-                      {new Date(meta.receivedAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        hour12: false,
-                      })}
-                    </time>
-                  </td>
-                </tr>
-                {open && (
-                  <tr className="details-row">
-                    <td
-                      colSpan={3}
+              <Fragment key={row.id}>
+                <TableRow className={cn(group.current && "current-row")}>
+                  {row.getAllCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      <table.FlexRender cell={cell} />
+                    </TableCell>
+                  ))}
+                </TableRow>
+                {group.open && (
+                  <TableRow className="details-row">
+                    <TableCell
+                      colSpan={columns.length}
                       id={`details-${encodeURIComponent(group.groupId)}`}
                     >
                       {group.memberKeys
@@ -183,21 +272,25 @@ export function Queue({
                         )
                         .filter((member): member is QueueItem => !!member)
                         .map(details)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )}
               </Fragment>
             );
           })}
           {!snapshot.items.length && (
-            <tr>
-              <td colSpan={3} className="empty">
-                Your queue is clear
-              </td>
-            </tr>
+            <TableRow>
+              <TableCell colSpan={columns.length}>
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>Your queue is clear</EmptyTitle>
+                  </EmptyHeader>
+                </Empty>
+              </TableCell>
+            </TableRow>
           )}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
