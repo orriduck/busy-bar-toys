@@ -80,13 +80,16 @@ export function Preview({
           body: JSON.stringify({ viewerId: id, operation: "close" }),
         }).catch(() => {});
     };
-    const blank = (text: string) => {
-      playout.clear();
+    const clearSurface = (text: string) => {
       shown = false;
       shownFrame = null;
       latency = null;
       ctx.clearRect(0, 0, surface.width, surface.height);
       if (live) setMessage(text);
+    };
+    const blank = (text: string) => {
+      playout.clear();
+      clearSurface(text);
     };
     const verifySession = async () => {
       try {
@@ -188,12 +191,9 @@ export function Preview({
       const playoutNow = performance.now();
       const ready = playout.ready(playoutNow, now);
       if (shownFrame && !frameIsFresh(shownFrame, now)) {
-        // Never paint an expired frame after a stalled main thread.
-        if (ready) {
-          ctx.clearRect(0, 0, surface.width, surface.height);
-          shownFrame = null;
-          shown = false;
-        } else blank("Preview delayed");
+        // Expire displayed pixels without discarding fresh arrivals waiting
+        // for their reanchored startup gate after a stalled main thread.
+        clearSurface("Preview delayed");
       }
       const frame =
         ready && pacer.allow(t) ? playout.take(playoutNow, now) : null;
