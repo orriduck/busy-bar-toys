@@ -45,6 +45,8 @@ export interface Service {
   credentialHash: string;
   epoch: string;
   epochExpiresAt: number;
+  /** Stable management identity, separate from publisher instance IDs. */
+  computerId?: string;
   /** Collector instance IDs observed through authenticated heartbeat messages. */
   computerIds?: string[];
 }
@@ -285,6 +287,16 @@ export function registerService(
   requireThat(Object.keys(s.services).length < 32, "SERVICE_CAPACITY", 413);
   const name = text(b.name, 80);
   requireThat(["agent", "notifier", "custom"].includes(String(b.template)));
+  const computerId =
+    b.computerId === undefined ? crypto.randomUUID() : identifier(b.computerId);
+  if (b.computerId !== undefined)
+    requireThat(
+      Object.values(s.services).some(
+        (service) => service.computerId === computerId,
+      ),
+      "COMPUTER_NOT_FOUND",
+      404,
+    );
   s.services[id] = {
     id,
     name,
@@ -293,6 +305,7 @@ export function registerService(
     credentialHash: hash,
     epoch,
     epochExpiresAt: now + 30 * 86400000,
+    computerId,
   };
   s.configRevision++;
   s.revision++;

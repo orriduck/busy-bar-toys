@@ -4,6 +4,7 @@ export function serviceLabel(service: Service) {
   return parts.length > 1 ? parts.slice(1).join(" · ") : service.name;
 }
 export function computerIds(service: Service, items: QueueItem[] = []) {
+  if (service.computerId) return [service.computerId];
   return [
     ...new Set([
       ...(service.computerIds ?? []),
@@ -12,6 +13,28 @@ export function computerIds(service: Service, items: QueueItem[] = []) {
         .map((i) => i.instanceId),
     ]),
   ];
+}
+/** Upgrade a saved presentation preference only when its source maps uniquely. */
+export function resolveComputerBinding(
+  binding: string | null,
+  services: Service[],
+  items: QueueItem[] = [],
+) {
+  if (!binding || services.some((s) => s.computerId === binding))
+    return binding;
+  const matches = new Set(
+    services
+      .filter(
+        (s) =>
+          s.computerId &&
+          (s.computerIds?.includes(binding) ||
+            items.some(
+              (i) => i.serviceId === s.id && i.instanceId === binding,
+            )),
+      )
+      .map((s) => s.computerId!),
+  );
+  return matches.size === 1 ? [...matches][0] : binding;
 }
 export function deviceGroups(services: Service[], items: QueueItem[] = []) {
   const groups = new Map<string, Service[]>();

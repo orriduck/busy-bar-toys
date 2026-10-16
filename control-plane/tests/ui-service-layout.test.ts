@@ -52,3 +52,21 @@ it("sorts descending priority with stable deterministic ties without mutating th
   expect(priorityOrder(values).map((v) => v.id)).toEqual(["c", "a", "b"]);
   expect(values.map((v) => v.id)).toEqual(["b", "a", "c"]);
 });
+
+it("uses managed IDs even if legacy publishers use different role IDs", () => {
+  const services = [
+    {
+      ...service("a", "MacBook · Claude"),
+      computerId: "new-mac",
+      computerIds: ["old-agent"],
+    },
+    {
+      ...service("b", "MacBook · Notifier"),
+      computerId: "new-mac",
+      computerIds: ["old-notifier"],
+    },
+  ];
+  expect(
+    deviceGroups(services).map((g) => [g.name, g.services.length]),
+  ).toEqual([["new-mac", 2]]);
+});

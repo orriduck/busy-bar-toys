@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { digest, encrypt, signSession } from "../src/security";
+import { DeviceControl } from "../src/index";
 import { StateStore } from "../src/store";
 
 const origin = "https://control.test";
@@ -107,5 +108,72 @@ describe("management order endpoint", () => {
       ).status,
     ).toBe(409);
     expect(await read()).toEqual(before);
+  });
+});
+
+describe("computer identity upgrade", () => {
+  it("persists legacy grouping on object start and never regenerates it on another start", async () => {
+    const deviceId = crypto.randomUUID();
+    const stub = env.DEVICES.getByName(deviceId);
+    await stub.login(
+      deviceId,
+      await encrypt("fake", env.TOKEN_ENCRYPTION_KEY),
+      "session",
+      Date.now() + 60000,
+    );
+    const state = await runInDurableObject(stub, (_instance, ctx) => {
+      const store = new StateStore(ctx.storage);
+      const s = store.load()!;
+      const base = {
+        config: {
+          enabled: true,
+          allowInput: true,
+          allowPreview: true,
+          priority: 50,
+          visibleMs: 10000,
+          snoozeMs: 60000,
+          heartbeatMs: 90000,
+          exit: "default" as const,
+        },
+        template: "agent",
+        credentialHash: "hash",
+        epoch: "epoch",
+        epochExpiresAt: Date.now() + 60000,
+      };
+      s.services = {
+        a: { ...base, id: "a", name: "MacBook · Claude" },
+        b: { ...base, id: "b", name: "MacBook · Notifier" },
+      };
+      store.save(s);
+      new DeviceControl(ctx, env);
+      return new StateStore(ctx.storage).load()!;
+    });
+    expect(state.services.a.computerId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(state.services.b.computerId).toBe(state.services.a.computerId);
+    const after = await runInDurableObject(stub, (_instance, ctx) => {
+      new DeviceControl(ctx, env);
+      return new StateStore(ctx.storage).load()!;
+    });
+    expect(after).toEqual(state);
+  });
+  it("allows a manager to register on an existing computer but rejects publishers and foreign IDs", async () => {
+    const { api, read, credential } = await setup();
+    const before = await read();
+    const body = {
+      id: "c",
+      name: "New service",
+      template: "custom",
+      computerId: before.services.a.computerId,
+      expectedRevision: 2,
+    };
+    expect((await api("/api/services", body, credential)).status).toBe(403);
+    expect(
+      (await api("/api/services", { ...body, computerId: crypto.randomUUID() }))
+        .status,
+    ).toBe(404);
+    expect(await read()).toEqual(before);
+    expect((await api("/api/services", body)).status).toBe(201);
+    const after = await read();
+    expect(after.services.c.computerId).toBe(before.services.a.computerId);
   });
 });
