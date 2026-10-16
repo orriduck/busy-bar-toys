@@ -1367,115 +1367,143 @@ it("keeps outgoing content and pins while all incoming scene assets upload", asy
   expect(events.slice(0, 2)).toEqual(["upload", "upload"]);
 });
 
-it("reclaims full asset slots through an anchor without exposing calendar", async () => {
-  const { send, admin, epoch, deviceId } = await setup();
-  const { digest } = await import("../src/security");
-  const hash = await digest("next");
-  await send("/assets", { hash, type: "png", data: btoa("next") });
-  await send("/publish", presentation(epoch));
-  await displayed(admin);
-  const stub = env.DEVICES.getByName(deviceId);
-  // Mock 16 live asset slots: storage metadata exercises the real allocator.
-  await runInDurableObject(stub, (_instance, ctx) => {
-    const store = new StateStore(ctx.storage),
-      s = store.load()!;
-    s.nativeElements = {};
-    s.elementExpiries = {};
-    s.slots = [];
-    for (let i = 0; i < 16; i++) {
-      const oldHash = i.toString(16).padStart(64, "0"),
-        id = `old-${i}`;
-      s.slots.push({
-        slot: i,
-        hash: oldHash,
-        type: "png",
-        bytes: 10,
-        uploaded: true,
-      });
-      s.nativeElements[id] = { id, type: "image", assetHash: oldHash };
-      s.elementExpiries[id] = { type: "image", expiresAt: Date.now() + 60000 };
-    }
-    store.save(s);
-  });
-  const screen = new Set(Array.from({ length: 16 }, (_, i) => `old-${i}`));
-  const empty: boolean[] = [];
-  let anchorIsOpaqueBlack = false;
-  setUpstream(async (request) => {
-    if (new URL(request.url).pathname.endsWith("/display/draw")) {
-      const body = request.body
-        ? ((await request.json()) as {
-            elements?: {
-              id: string;
-              type: string;
-              data?: string;
-              fill?: string;
-              fill_colors?: string[];
-              border_width?: number;
-            }[];
-            element_ids?: string[];
-          })
-        : null;
-      if (request.method === "DELETE") {
-        if (body?.element_ids)
-          for (const id of body.element_ids) screen.delete(id);
-        else screen.clear();
-      } else
-        for (const e of body!.elements!) {
-          screen.add(e.id);
-          if (e.id.startsWith("control-handoff-")) {
-            if (e.type === "xpmbitmap" && e.data) {
-              const lines = e.data.trim().split("\n");
-              const [width, height, count, chars] = lines[1]
-                .split(" ")
-                .map(Number);
-              const palette = new Map(
-                lines
-                  .slice(2, 2 + count)
-                  .map((line) => [
-                    line.slice(0, chars),
-                    line.slice(chars).trim().replace(/^c /, "").toUpperCase(),
-                  ]),
-              );
-              anchorIsOpaqueBlack =
-                width === 1 &&
-                height === 1 &&
-                palette.get(lines[2 + count].slice(0, chars)) === "#000000";
-            } else
-              anchorIsOpaqueBlack =
-                e.type === "rectangle" &&
-                e.fill === "solid" &&
-                e.fill_colors?.[0] === "#000000FF" &&
-                e.border_width === 0;
+it.each([false, true])(
+  "reclaims asset slots while retaining an inline view when present (%s)",
+  async (retainInline) => {
+    const { send, admin, epoch, deviceId } = await setup();
+    const { digest } = await import("../src/security");
+    const hash = await digest("next");
+    await send("/assets", { hash, type: "png", data: btoa("next") });
+    await send("/publish", presentation(epoch));
+    await displayed(admin);
+    const stub = env.DEVICES.getByName(deviceId);
+    // Mock 16 live asset slots: storage metadata exercises the real allocator.
+    await runInDurableObject(stub, (_instance, ctx) => {
+      const store = new StateStore(ctx.storage),
+        s = store.load()!;
+      s.nativeElements = {};
+      s.elementExpiries = {};
+      s.slots = [];
+      for (let i = 0; i < 16; i++) {
+        const oldHash = i.toString(16).padStart(64, "0"),
+          id = `old-${i}`;
+        s.slots.push({
+          slot: i,
+          hash: oldHash,
+          type: "png",
+          bytes: 10,
+          uploaded: true,
+        });
+        s.nativeElements[id] = { id, type: "image", assetHash: oldHash };
+        s.elementExpiries[id] = {
+          type: "image",
+          expiresAt: Date.now() + 60000,
+        };
+      }
+      if (retainInline) {
+        s.nativeElements["old-base"] = {
+          id: "old-base",
+          type: "xpmbitmap",
+          display: "front",
+          data: "! XPM2\n1 1 1 1\nW c #FFFFFF\nW\n",
+        };
+        s.elementExpiries["old-base"] = {
+          type: "xpmbitmap",
+          expiresAt: Date.now() + 60000,
+        };
+      }
+      store.save(s);
+    });
+    const screen = new Set(Array.from({ length: 16 }, (_, i) => `old-${i}`));
+    if (retainInline) screen.add("old-base");
+    const empty: boolean[] = [];
+    let anchorIsOpaqueBlack = false;
+    let outgoingViewLostDuringUpload = false;
+    setUpstream(async (request) => {
+      if (
+        new URL(request.url).pathname.endsWith("/assets/upload") &&
+        retainInline
+      )
+        outgoingViewLostDuringUpload ||= !screen.has("old-base");
+      if (new URL(request.url).pathname.endsWith("/display/draw")) {
+        const body = request.body
+          ? ((await request.json()) as {
+              elements?: {
+                id: string;
+                type: string;
+                data?: string;
+                fill?: string;
+                fill_colors?: string[];
+                border_width?: number;
+              }[];
+              element_ids?: string[];
+            })
+          : null;
+        if (request.method === "DELETE") {
+          if (body?.element_ids)
+            for (const id of body.element_ids) screen.delete(id);
+          else screen.clear();
+        } else
+          for (const e of body!.elements!) {
+            screen.add(e.id);
+            if (e.id.startsWith("control-handoff-")) {
+              if (e.type === "xpmbitmap" && e.data) {
+                const lines = e.data.trim().split("\n");
+                const [width, height, count, chars] = lines[1]
+                  .split(" ")
+                  .map(Number);
+                const palette = new Map(
+                  lines
+                    .slice(2, 2 + count)
+                    .map((line) => [
+                      line.slice(0, chars),
+                      line.slice(chars).trim().replace(/^c /, "").toUpperCase(),
+                    ]),
+                );
+                anchorIsOpaqueBlack =
+                  width === 1 &&
+                  height === 1 &&
+                  palette.get(lines[2 + count].slice(0, chars)) === "#000000";
+              } else
+                anchorIsOpaqueBlack =
+                  e.type === "rectangle" &&
+                  e.fill === "solid" &&
+                  e.fill_colors?.[0] === "#000000FF" &&
+                  e.border_width === 0;
+            }
           }
-        }
-      if (!screen.size) empty.push(true);
-    }
-    return Response.json({ ok: true });
-  });
-  await send("/publish", {
-    ...presentation(epoch, "two"),
-    scene: {
-      entryDurationMs: 0,
-      commands: [
-        {
-          offsetMs: 0,
-          elements: [{ id: "next", type: "image", assetHash: hash }],
-        },
-      ],
-    },
-  });
-  await send("/withdraw", {
-    epoch,
-    instanceId: "mac",
-    itemId: "one",
-    version: 1,
-  });
-  const final = (await displayed(admin)) as { displaying: { itemKey: string } };
-  expect(final.displaying.itemKey).toContain("two");
-  expect(empty).toEqual([]);
-  expect(anchorIsOpaqueBlack).toBe(true);
-  expect([...screen]).toEqual(["next"]);
-});
+        if (!screen.size) empty.push(true);
+      }
+      return Response.json({ ok: true });
+    });
+    await send("/publish", {
+      ...presentation(epoch, "two"),
+      scene: {
+        entryDurationMs: 0,
+        commands: [
+          {
+            offsetMs: 0,
+            elements: [{ id: "next", type: "image", assetHash: hash }],
+          },
+        ],
+      },
+    });
+    await send("/withdraw", {
+      epoch,
+      instanceId: "mac",
+      itemId: "one",
+      version: 1,
+    });
+    const final = (await displayed(admin)) as {
+      displaying: { itemKey: string };
+    };
+    expect(final.displaying.itemKey).toContain("two");
+    expect(empty).toEqual([]);
+    expect(outgoingViewLostDuringUpload).toBe(false);
+    expect(anchorIsOpaqueBlack).toBe(!retainInline);
+    expect([...screen]).toEqual(["next"]);
+  },
+);
 
 it("retires a preempted draw even when its response is lost after the device applied it", async () => {
   const { send, admin, epoch, deviceId } = await setup();
@@ -1554,7 +1582,7 @@ it("retains bounded content-free display diagnostics across eviction for managem
     implementation: string;
     events: { at: number; kind: string; data: Record<string, unknown> }[];
   };
-  expect(diagnostic.implementation).toBe("continuous-handoff-v3");
+  expect(diagnostic.implementation).toBe("continuous-handoff-v4");
   expect(diagnostic.events.some((e) => e.kind === "command_ack")).toBe(true);
   const serialized = JSON.stringify(diagnostic);
   expect(serialized).not.toContain("Hello");

@@ -139,6 +139,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       reason?: "inflight_restart" | "uncertain_draw";
       scope?: "selective" | "full";
       outgoingElements?: number;
+      retainedElements?: number;
       incomingElements?: number;
       typeConflicts?: number;
       obsoleteElements?: number;
@@ -623,7 +624,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           403,
         );
         response = json({
-          implementation: "continuous-handoff-v3",
+          implementation: "continuous-handoff-v4",
           generation: s.generation,
           nativeElements: Object.keys(s.nativeElements).length,
           earliestExpiryMs: Object.keys(s.nativeElements).length
@@ -1278,13 +1279,28 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       data: "! XPM2\n1 1 1 1\nB c #000000\nB\n",
     };
   }
-  private reclaimHandoff(s: State, command: Command, now: number) {
+  private reclaimHandoff(
+    s: State,
+    command: Command,
+    now: number,
+    elementCapacity: boolean,
+  ) {
     command.handoffReclaimed = true;
     const anchor = this.handoffAnchor(s);
     const old = Object.keys(s.nativeElements);
+    // Inline widgets need no asset slot. Keep the old base view visible while
+    // releasing only file-backed widgets; a black anchor is the last resort.
+    const inline = elementCapacity
+      ? []
+      : old.filter((id) => !s.nativeElements[id].assetHash);
+    const retainInline = inline.length > 0 && inline.length < old.length;
+    const retired = retainInline
+      ? old.filter((id) => s.nativeElements[id].assetHash)
+      : [...old];
     this.traceDisplay("reclaim", {
       generation: s.generation,
       outgoingElements: old.length,
+      retainedElements: retainInline ? inline.length : 0,
     });
     const prefix: Command[] = [];
     const add = (
@@ -1304,10 +1320,20 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     };
     // Free one widget if necessary before creating the anchor. The remaining
     // old widgets still retain our namespace until the anchor is acknowledged.
-    if (old.length >= 128) add("clear", undefined, [old.shift()!]);
-    add("draw", [anchor]);
-    for (let offset = 0; offset < old.length; offset += 64)
-      add("clear", undefined, old.slice(offset, offset + 64));
+    if (retainInline) {
+      // Bound a fresh native lifetime before potentially slow uploads. This is
+      // still outgoing content, not proof that the incoming scene is displayed.
+      for (let offset = 0; offset < inline.length; offset += 32)
+        add(
+          "draw",
+          inline.slice(offset, offset + 32).map((id) => s.nativeElements[id]),
+        );
+    } else {
+      if (old.length >= 128) add("clear", undefined, [retired.shift()!]);
+      add("draw", [anchor]);
+    }
+    for (let offset = 0; offset < retired.length; offset += 64)
+      add("clear", undefined, retired.slice(offset, offset + 64));
     s.commands.splice(s.commands.indexOf(command), 0, ...prefix);
   }
   private prepareHandoff(s: State, command: Command, now: number) {
@@ -1556,7 +1582,12 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             ) {
               // A large pair cannot coexist. Retire through an acknowledged
               // anchor rather than exposing calendar or overwriting live slots.
-              this.reclaimHandoff(s, cmd, now);
+              this.reclaimHandoff(
+                s,
+                cmd,
+                now,
+                error.code === "NATIVE_ELEMENT_CAPACITY",
+              );
               this.save(s);
               continue;
             }
