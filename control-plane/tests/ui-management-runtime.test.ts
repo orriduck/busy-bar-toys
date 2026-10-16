@@ -177,3 +177,40 @@ describe("computer identity upgrade", () => {
     expect(after.services.c.computerId).toBe(before.services.a.computerId);
   });
 });
+
+describe("retired service removal", () => {
+  it("removes only the named registration and invalidates its credential", async () => {
+    const { api, read, credential } = await setup();
+    const before = await read();
+    const response = await api("/api/services/b/remove", {
+      expectedRevision: 2,
+    });
+    expect(response.status).toBe(200);
+    const after = await read();
+    expect(Object.keys(after.services)).toEqual(["a"]);
+    expect(after.services.a).toEqual(before.services.a);
+    expect(after.configRevision).toBe(3);
+    expect(
+      (
+        await api(
+          "/api/heartbeat",
+          { instanceId: "mac", itemIds: [] },
+          credential,
+        )
+      ).status,
+    ).toBe(401);
+  });
+  it("rejects publisher removal and stale revisions without mutation", async () => {
+    const { api, read, credential } = await setup();
+    const before = await read();
+    expect(
+      (await api("/api/services/a/remove", { expectedRevision: 2 }, credential))
+        .status,
+    ).toBe(403);
+    expect(await read()).toEqual(before);
+    expect(
+      (await api("/api/services/a/remove", { expectedRevision: 1 })).status,
+    ).toBe(409);
+    expect(await read()).toEqual(before);
+  });
+});

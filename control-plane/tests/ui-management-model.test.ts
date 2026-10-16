@@ -286,3 +286,39 @@ describe("authenticated computer observations", () => {
     expect(s.services.a.computerIds).toBeUndefined();
   });
 });
+
+describe("retired service removal", () => {
+  it("ends its occurrences, retains tombstones, and leaves peer services intact", () => {
+    const s = state();
+    const item = publish(s);
+    const peers = structuredClone([s.services.b, s.services.c]);
+    model.removeService(s, "a", s.configRevision, now);
+    expect(s.services.a).toBeUndefined();
+    expect(s.items[item.itemKey]).toBeUndefined();
+    expect(s.tombstones[item.itemKey].reason).toBe("revoked");
+    expect([s.services.b, s.services.c]).toEqual(peers);
+    expect(s.selected).toBeNull();
+    expect(() => model.snapshot(s, now)).not.toThrow();
+  });
+  it("does not remove a service with an unresolved local action", () => {
+    const s = state();
+    s.actions.pending = { serviceId: "a", status: "running" } as model.Action;
+    const before = structuredClone(s);
+    expect(() => model.removeService(s, "a", s.configRevision, now)).toThrow(
+      "SERVICE_ACTION_PENDING",
+    );
+    expect(s).toEqual(before);
+  });
+});
+
+it.each(["missing", "constructor", "__proto__"])(
+  "does not remove an absent own registration %s",
+  (id) => {
+    const s = state(),
+      before = structuredClone(s);
+    expect(() => model.removeService(s, id, s.configRevision, now)).toThrow(
+      "SERVICE_NOT_FOUND",
+    );
+    expect(s).toEqual(before);
+  },
+);

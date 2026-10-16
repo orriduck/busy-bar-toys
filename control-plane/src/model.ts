@@ -311,6 +311,31 @@ export function registerService(
   s.revision++;
   return s.services[id];
 }
+/** Remove one retired registration; keep occurrence receipts until their normal expiry. */
+export function removeService(
+  s: State,
+  id: string,
+  expected: number,
+  now: number,
+) {
+  requireThat(expected === s.configRevision, "CONFIG_CONFLICT", 409);
+  requireThat(Object.hasOwn(s.services, id), "SERVICE_NOT_FOUND", 404);
+  requireThat(
+    !Object.values(s.actions).some(
+      (a) =>
+        a.serviceId === id &&
+        ["pending", "running", "unknown"].includes(a.status),
+    ),
+    "SERVICE_ACTION_PENDING",
+    409,
+  );
+  for (const item of Object.values(s.items))
+    if (item.serviceId === id) end(s, item, "revoked", item.version);
+  delete s.services[id];
+  s.configRevision++;
+  s.revision++;
+  tick(s, now);
+}
 export function patchConfig(
   s: State,
   id: string,
