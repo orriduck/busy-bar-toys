@@ -116,3 +116,10 @@ Register a separate Notifier before starting an upgraded observer:
 在网页中把 Agent requests、ADSBao 放入 Follow queue，把 Agent 状态放入 Dispensable；需要立即打断的独立 Page 服务放入 Interception。各组只调整本机服务的队列。日常状态与输入请求使用两个注册服务；每个等待任务都有独立消息。问题解决后源端撤下提示，工作状态继续。其他电脑也须单独注册和路由自己的 Notifier；此命令不改动其他电脑。
 
 撤回通知：调用 `CloudQueue.withdraw(source, item_id)` 或 `RoutedCloudQueue.withdraw(source, item_id)`。本地 outbox 持久重试 `POST /api/withdraw`，成功后才删除待发送记录。HTTP 字段为 `instanceId`、`epoch`、`itemId`、`version`，使用对应 owned service 的发布身份。撤回会终止当前 occurrence；下一次发送须创建新 occurrence。
+
+
+## 恢复断开的预览
+
+遇到已知的过期帧、限流或序号拒收时，本机桥按 1–30 秒退避重连。每次重连创建新流，并重新核对设备身份。认证、设备身份和未知协议错误仍会停止桥接。
+
+检查 `~/Library/Application Support/BusyBarAI/preview-status.json`。`lastCloudError` 只记录已知的服务器错误码。通过 `connected`、`sent` 和 `timestamp` 判断当前是否持续发送画面。旧版留下的 `protocol` 状态无法说明最初触发原因；重启本机服务前保留该报告，供后续排查。

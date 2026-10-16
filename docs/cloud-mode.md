@@ -116,3 +116,10 @@ Register a separate Notifier before starting an upgraded observer:
 Put Agent requests and ADSBao in Follow queue, and Agent status in Dispensable. Put a dedicated Page service in Interception when it must interrupt queued work. Move only your own services between groups. There is no ranking inside a group. Status and input requests use separate registrations. Each waiting task retains its own notification; the source removes it when input is resolved. Other computers must register and route their own Notifier; this command does not change them.
 
 To withdraw a notification, call `CloudQueue.withdraw(source, item_id)` or `RoutedCloudQueue.withdraw(source, item_id)`. The durable local outbox retries `POST /api/withdraw` until acknowledged. The HTTP body contains `instanceId`, `epoch`, `itemId`, `version`, authenticated for the matching owned service. Withdrawal retires that occurrence; a later notification needs a new occurrence.
+
+
+## Restore a disconnected preview
+
+The local bridge retries known stale-frame, rate-limit and sequence rejections with a 1–30 second backoff. Each retry opens a new stream and verifies the device again. Authentication, device identity and unknown protocol failures still stop the bridge.
+
+Check `~/Library/Application Support/BusyBarAI/preview-status.json`. `lastCloudError` records only a known server error code. `connected`, `sent` and `timestamp` show whether the bridge is currently sending frames. A previously reported `protocol` failure does not identify its original cause; restart the local service and retain the report for diagnosis.

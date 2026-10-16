@@ -32,6 +32,8 @@ READ_TIMEOUT = .3
 FPS = 30
 _HEX = re.compile(r'^[a-f0-9]{64}$')
 _STREAM = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
+# A fresh authenticated socket resets frame sequence and discards stale work.
+_TRANSIENT_CLOUD_ERRORS = frozenset(('PREVIEW_STALE_FRAME','PREVIEW_RATE_LIMIT','PREVIEW_SEQUENCE'))
 _QUIET = logging.Logger('busy-preview-private')
 _QUIET.disabled = True
 
@@ -237,7 +239,7 @@ class PreviewBridge:
         self._diag={'status':'idle','connected':False,'demand':False,'captureRequested':0,
                     'captured':0,'sent':0,'dropped':0,'busySkipped':0,'captureErrors':0,
                     'invalidatedDropped':0,'outOfOrderDropped':0,'supersededDropped':0,'noDemandDropped':0,
-                    'captureRetries':0,'connections':0,'disconnects':0,'lastCaptureError':None}
+                    'captureRetries':0,'connections':0,'disconnects':0,'lastCaptureError':None,'lastCloudError':None}
 
     def _update(self,**values):
         with self._diag_lock: self._diag.update(values)
@@ -428,6 +430,12 @@ class PreviewBridge:
             except (ValueError,UnicodeError,RecursionError): raise PreviewError('protocol') from None
             if isinstance(value,dict) and value=={'type':'error','code':'PREVIEW_NO_DEMAND'}:
                 self._drop('noDemandDropped'); continue
+            if (isinstance(value,dict) and set(value)=={'type','code'} and value['type']=='error'
+                    and isinstance(value['code'],str) and value['code'] in _TRANSIENT_CLOUD_ERRORS):
+                # Timing/rate rejection is not an identity or schema failure.
+                # Invalidate this stream and reconnect through the normal backoff.
+                self._update(lastCloudError=value['code'])
+                raise PreviewError('unavailable')
             demand=parse_demand(raw,device_id)
             if stream is not None and stream!=demand['streamId']: raise PreviewError('protocol')
             stream=demand['streamId']
@@ -539,7 +547,9 @@ class PreviewBridge:
                 except WebSocketException as error:
                     received=getattr(error,'rcvd',None)
                     reason=getattr(received,'reason','')
-                    if reason=='PREVIEW_CAPABILITY_REQUIRED': self._blocked[id(client)]='capability'
+                    if isinstance(reason,str) and reason in _TRANSIENT_CLOUD_ERRORS:
+                        self._update(lastCloudError=reason)
+                    elif reason=='PREVIEW_CAPABILITY_REQUIRED': self._blocked[id(client)]='capability'
                     elif (getattr(received,'code',None)==1008
                           and reason not in ('PREVIEW_PUBLISHER_IDLE','PREVIEW_DISCONNECTED')):
                         self._blocked[id(client)]='terminal'

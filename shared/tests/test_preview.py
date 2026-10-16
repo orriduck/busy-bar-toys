@@ -864,4 +864,71 @@ class PreviewCaptureClockTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(min(intervals[4:]),.025)
 
 
+
+
+class PreviewTransientRejectionTest(unittest.IsolatedAsyncioTestCase):
+    wait_until=PreviewBridgeTest.wait_until
+
+    async def test_transient_frame_rejection_reconnects_with_fresh_identity_and_stream(self):
+        from websockets.asyncio.server import serve
+        for code in ('PREVIEW_STALE_FRAME','PREVIEW_RATE_LIMIT','PREVIEW_SEQUENCE'):
+            for close_only in (False,True):
+                with self.subTest(code=code,close_only=close_only):
+                    attempts=[]; frames=[]; device=FakeDevice()
+                    async def handler(ws):
+                        attempts.append(time.monotonic()); number=len(attempts)
+                        await ws.send(json.dumps({'type':'demand','enabled':True,'targetFps':30,
+                                                  'streamId':'stream'+str(number),'deviceId':DEVICE}))
+                        try:
+                            if number==1:
+                                await ws.recv()  # A working connection can fail later under jitter.
+                                if not close_only: await ws.send(json.dumps({'type':'error','code':code}))
+                                await ws.close(code=1008,reason=code)
+                            else:
+                                async for raw in ws:
+                                    value=json.loads(raw)
+                                    if value.get('type')=='frame': frames.append(value)
+                        except WebSocketException: pass
+                    async with serve(handler,'127.0.0.1',0) as server:
+                        url='http://127.0.0.1:'+str(server.sockets[0].getsockname()[1])
+                        bridge=preview.PreviewBridge('.',{'agent':client_for(url)},status_path=None,
+                                                     device_factory=lambda _:device)
+                        task=asyncio.create_task(bridge.run())
+                        try:
+                            await self.wait_until(lambda:bool(frames))
+                            self.assertEqual(len(attempts),2)
+                            self.assertGreaterEqual(attempts[1]-attempts[0],.9)
+                            self.assertEqual(device.verified,[DEVICE,DEVICE])
+                            self.assertTrue(bridge.diagnostics()['connected'])
+                            self.assertEqual(bridge.diagnostics()['lastCloudError'],code)
+                            self.assertNotIn('secret',json.dumps(bridge.diagnostics()))
+                        finally:
+                            task.cancel()
+                            with self.assertRaises(asyncio.CancelledError): await task
+
+    async def test_unknown_or_malformed_rejections_stay_terminal_without_echoing_peer_data(self):
+        from websockets.asyncio.server import serve
+        for rejection in ({'type':'error','code':'private-peer-data'},
+                          {'type':'error','code':'PREVIEW_RATE_LIMIT','extra':'private-peer-data'}):
+            attempts=[]; device=FakeDevice()
+            async def handler(ws):
+                attempts.append(True)
+                await ws.send(json.dumps(rejection))
+                await ws.wait_closed()
+            async with serve(handler,'127.0.0.1',0) as server:
+                url='http://127.0.0.1:'+str(server.sockets[0].getsockname()[1])
+                bridge=preview.PreviewBridge('.',{'agent':client_for(url)},status_path=None,
+                                             device_factory=lambda _:device)
+                task=asyncio.create_task(bridge.run())
+                try:
+                    await self.wait_until(lambda:bridge.diagnostics()['status']=='protocol')
+                    await asyncio.sleep(1.1)
+                    self.assertEqual(len(attempts),1)
+                    self.assertEqual(device.calls,[])
+                    self.assertNotIn('private-peer-data',json.dumps(bridge.diagnostics()))
+                finally:
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError): await task
+
+
 if __name__=='__main__': unittest.main()
