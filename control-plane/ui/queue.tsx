@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-table";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
+import { PriorityBadge } from "./policy-field";
 import { Empty, EmptyHeader, EmptyTitle } from "./components/ui/empty";
 import {
   Table,
@@ -55,13 +56,7 @@ const columns = column.columns([
             <AppIcon app={meta.appId} />
             <span>{meta.app}</span>
           </Button>
-          <Badge
-            variant="outline"
-            className="queue-priority"
-            title="Service priority"
-          >
-            P{priority ?? "—"}
-          </Badge>
+          {priority !== undefined && <PriorityBadge value={priority} />}
           {current && <span className="queue-playing">Playing</span>}
           {current && (
             <span

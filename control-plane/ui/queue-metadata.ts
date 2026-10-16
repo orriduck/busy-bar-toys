@@ -1,4 +1,5 @@
 import type { QueueItem, Snapshot } from "./api";
+import { serviceLabel } from "./service-layout";
 
 const apps: Record<string, string> = {
   codex: "Codex",
@@ -27,15 +28,7 @@ export function queueMetadata(item: QueueItem, snapshot: Snapshot) {
       : service?.template === "notifier"
         ? "Notifier"
         : service?.name || "Unknown app";
-  const name = service?.name || item.serviceId;
-  const shared = snapshot.items.some(
-    (other) =>
-      other.serviceId === item.serviceId &&
-      other.instanceId !== item.instanceId,
-  );
-  const sender =
-    shared && !name.toLowerCase().includes(item.instanceId.toLowerCase())
-      ? `${name} / ${item.instanceId}`
-      : name;
+  const name = service ? serviceLabel(service) : item.serviceId;
+  const sender = `${item.instanceId} · ${name}`;
   return { app, appId, sender, receivedAt: item.receivedAt };
 }

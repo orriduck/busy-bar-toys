@@ -1067,3 +1067,44 @@ a {
     opacity: 0.65;
   }
 }
+
+/* Compact preset controls, with a Custom-only precision editor. */
+:root { --priority-low: #9da3ae; --priority-normal: #79aaff; --priority-high: #edc56d; --priority-critical: #ff8e9a; }
+[data-priority="low"] { --priority-tone: var(--priority-low); }
+[data-priority="normal"] { --priority-tone: var(--priority-normal); }
+[data-priority="high"] { --priority-tone: var(--priority-high); }
+[data-priority="critical"] { --priority-tone: var(--priority-critical); }
+[data-priority="custom"] { --priority-tone: var(--muted-foreground); }
+.priority-badge { gap: 0.35rem; font-size: 0.6875rem; color: var(--priority-tone); border-color: color-mix(in srgb, var(--priority-tone) 25%, transparent); }
+.priority-dot { display: inline-block; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: var(--priority-tone, currentColor); flex-shrink: 0; }
+.policy-fields { display: flex; flex-direction: column; gap: 1.25rem; }
+.policy-field { display: grid; grid-template-columns: 7.5rem minmax(0,1fr); align-items: center; gap: 0.75rem 1rem; }
+.policy-label { display: flex; align-items: center; gap: 0.375rem; }
+.policy-label [data-slot="field-label"] { margin: 0; font-size: 0.875rem; }
+.field-help { color: var(--muted-foreground); width: 1.5rem; height: 1.5rem; border-radius: 50%; }
+.field-help svg { width: 0.875rem; height: 0.875rem; }
+.policy-options { flex-wrap: wrap; gap: 0.375rem; }
+.policy-options [data-slot="toggle-group-item"] { border-radius: 0.5rem; min-width: 3.625rem; height: 2.25rem; }
+.policy-options [data-priority][data-pressed] { color: var(--priority-tone); border-color: color-mix(in srgb, var(--priority-tone) 50%, transparent); background: color-mix(in srgb, var(--priority-tone) 12%, var(--card)); }
+.policy-custom { grid-column: 2; display: flex; align-items: center; gap: 1.25rem; padding: 0.25rem 0; }
+.policy-slider { flex: 1; min-width: 3rem; padding: 0.625rem 0; position: relative; }
+.slider-stops { position: absolute; left: 0; right: 0; bottom: 0; height: 0.25rem; pointer-events: none; }
+.slider-stops span { position: absolute; width: 1px; height: 0.25rem; background: var(--muted-foreground); opacity: 0.45; }
+.policy-exact { display: flex; align-items: center; gap: 0.5rem; width: 8rem; }
+.policy-exact input { font-variant-numeric: tabular-nums; min-width: 0; text-align: right; }
+.policy-exact > span { font-size: 0.75rem; color: var(--muted-foreground); }
+.policy-fields > [data-slot="field"]:not(.policy-field) { display: grid; grid-template-columns: 7.5rem minmax(0,1fr); align-items: center; gap: 1rem; }
+.policy-fields [data-slot="native-select-wrapper"] { max-width: 15rem; }
+.policy-actions { display: flex; flex-direction: row-reverse; align-items: center; gap: 0.5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.policy-card { overflow: visible; }
+.device-group-heading h2 { font-family: ui-monospace, monospace; font-size: 0.8125rem; font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.device-group-heading > .device-service-count { margin-left: auto; white-space: nowrap; }
+.device-group-heading > .this-computer-badge { margin-left: 0; color: var(--primary); font-size: 0.625rem; }
+@media (max-width: 700px) {
+  .policy-field, .policy-fields > [data-slot="field"]:not(.policy-field) { grid-template-columns: minmax(0,1fr); gap: 0.5rem; }
+  .policy-custom { grid-column: 1; }
+  .device-group-heading { flex-wrap: wrap; gap: 0.5rem; padding: 0.875rem; }
+  .device-group-heading h2 { flex: 1; }
+  .device-service-count { display: none; }
+  .policy-options [data-slot="toggle-group-item"] { min-width: 3.25rem; }
+}

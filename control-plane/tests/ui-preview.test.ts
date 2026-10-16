@@ -106,7 +106,7 @@ describe("compact queue provenance", () => {
     expect(client.queueMetadata({ ...item, app: "codex" }, snapshot)).toEqual({
       app: "Codex",
       appId: "codex",
-      sender: "Home Mac",
+      sender: "laptop · Home Mac",
       receivedAt: 42,
     });
   });
@@ -114,7 +114,7 @@ describe("compact queue provenance", () => {
     expect(client.queueMetadata(item, snapshot)).toEqual({
       app: "Notifier",
       appId: "notifier",
-      sender: "Home Mac",
+      sender: "laptop · Home Mac",
       receivedAt: 42,
     });
     expect(
@@ -126,6 +126,6 @@ describe("compact queue provenance", () => {
       ...snapshot,
       items: [item, { ...item, instanceId: "desktop" }],
     } as Snapshot;
-    expect(client.queueMetadata(item, shared).sender).toBe("Home Mac / laptop");
+    expect(client.queueMetadata(item, shared).sender).toBe("laptop · Home Mac");
   });
 });

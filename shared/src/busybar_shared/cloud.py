@@ -219,9 +219,12 @@ def setup(runtime, url, role, *, instance=None, secret, fallback_seconds=10, sto
     if not IDENTIFIER.fullmatch(service.get('id','')) or not service.get('epoch'): raise CloudError('invalid_response')
     try: previous=load_config(runtime,role)
     except CloudError: previous={}
+    # New roles on one installation share a source-computer ID. Never rekey an existing role.
+    try: peer=load_config(runtime,'notifier' if role=='agent' else 'agent')
+    except CloudError: peer={}
     config={'url':url,'role':role,'serviceId':service['id'],'epoch':service['epoch'],
             'epochExpiresAt':service.get('epochExpiresAt'),'fallbackSeconds':fallback_seconds,
-            'instanceId':instance or previous.get('instanceId') or 'mac-'+uuid.uuid4().hex[:16]}
+            'instanceId':instance or previous.get('instanceId') or peer.get('instanceId') or 'mac-'+uuid.uuid4().hex[:16]}
     store(role,secret)
     atomic_json(Path(runtime)/('cloud-'+role+'.json'),config)
     return config

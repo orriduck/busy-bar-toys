@@ -7,6 +7,15 @@ import { Empty, EmptyHeader, EmptyDescription } from "./components/ui/empty";
 import { cn } from "./lib/utils";
 import type { IconName } from "./common";
 import { ServiceEditor, Register } from "./services";
+import { Badge } from "./components/ui/badge";
+import { MoreHorizontal } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "./components/ui/dropdown-menu";
+import { useComputerBinding } from "./computer-binding";
 import { deviceGroups } from "./service-layout";
 import { ConfigurationList } from "./configuration";
 import type { PreviewStatus } from "./preview-session";
@@ -60,6 +69,7 @@ export function ServicesPage({
   onCredential: (value: CredentialValue) => void;
 }) {
   const [register, setRegister] = useState(false);
+  const [thisComputer, bindComputer] = useComputerBinding(snapshot.deviceId);
   return (
     <section className="management-page" aria-labelledby="services-title">
       <div className="page-heading">
@@ -81,7 +91,7 @@ export function ServicesPage({
         />
       )}
       <div className="service-list">
-        {deviceGroups(snapshot.services).map((group) => (
+        {deviceGroups(snapshot.services, snapshot.items).map((group) => (
           <section
             className="device-service-group"
             key={group.name}
@@ -89,8 +99,48 @@ export function ServicesPage({
           >
             <header className="device-group-heading">
               <Icon name="computer" />
-              <h2>{group.name}</h2>
-              <span>{group.services.length} services</span>
+              <h2 title={group.name}>
+                {group.name.startsWith("service:")
+                  ? group.name.slice(8)
+                  : group.name}
+              </h2>
+              {thisComputer === group.name && (
+                <Badge variant="secondary" className="this-computer-badge">
+                  This computer
+                </Badge>
+              )}
+              <span className="device-service-count">
+                {group.services.length}{" "}
+                {group.services.length === 1 ? "service" : "services"}
+              </span>
+              {!group.name.startsWith("service:") && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Computer actions for ${group.name}`}
+                      />
+                    }
+                  >
+                    <MoreHorizontal />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() =>
+                        bindComputer(
+                          thisComputer === group.name ? null : group.name,
+                        )
+                      }
+                    >
+                      {thisComputer === group.name
+                        ? "Clear this computer"
+                        : "Use as this computer"}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </header>
             <div>
               {group.services.map((service) => (

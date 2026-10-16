@@ -26,7 +26,8 @@ import {
   CollapsibleContent,
 } from "./components/ui/collapsible";
 import { ServiceEditor } from "./services";
-import { priorityOrder, serviceLabel } from "./service-layout";
+import { PriorityBadge } from "./policy-field";
+import { priorityOrder, serviceLabel, computerIds } from "./service-layout";
 function ConfigurationRow({
   service,
   rank,
@@ -79,13 +80,11 @@ function ConfigurationRow({
             <span className="configuration-name">
               <strong>{serviceLabel(service)}</strong>
               <span>
-                {service.name.includes(" · ")
-                  ? service.name.split(" · ")[0]
-                  : service.template}
+                {computerIds(service, snapshot.items).join(" · ") || service.id}
               </span>
             </span>
             {!service.config.enabled && <Badge variant="secondary">Off</Badge>}
-            <Badge variant="secondary">P{service.config.priority}</Badge>
+            <PriorityBadge value={service.config.priority} />
             <ChevronDown className={open ? "chevron-open" : ""} />
           </CollapsibleTrigger>
         </div>

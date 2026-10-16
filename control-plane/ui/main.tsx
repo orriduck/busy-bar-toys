@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { TooltipProvider } from "./components/ui/tooltip";
 import {
   skipToken,
   QueryClient,
@@ -412,6 +413,8 @@ const queryClient = new QueryClient({
 });
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
-    <App />
+    <TooltipProvider>
+      <App />
+    </TooltipProvider>
   </QueryClientProvider>,
 );
