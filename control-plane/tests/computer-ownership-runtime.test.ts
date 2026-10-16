@@ -355,21 +355,62 @@ describe("ownership transport boundary regressions", () => {
   });
 });
 
-it("can use its pre-saved management credential even if a legacy claim response is lost",async()=>{
-  const {call,stub,credential}=await setup(), deviceId=credential.split(".")[0];
-  const githubSecret="g".repeat(43), ddSecret="d".repeat(43), managementSecret="m".repeat(43);
-  const githubHash=await digest(githubSecret), ddHash=await digest(ddSecret);
-  await runInDurableObject(stub,(_instance,ctx)=>{
-    const store=new StateStore(ctx.storage),s=store.load()!;
-    delete s.computers["computer-a"];delete s.sessionComputers.owner;
-    s.services.github.credentialHash=githubHash;s.services.datadog.credentialHash=ddHash;
+it("can use its pre-saved management credential even if a legacy claim response is lost", async () => {
+  const { call, stub, credential } = await setup(),
+    deviceId = credential.split(".")[0];
+  const githubSecret = "g".repeat(43),
+    ddSecret = "d".repeat(43),
+    managementSecret = "m".repeat(43);
+  const githubHash = await digest(githubSecret),
+    ddHash = await digest(ddSecret);
+  await runInDurableObject(stub, (_instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    delete s.computers["computer-a"];
+    delete s.sessionComputers.owner;
+    s.services.github.credentialHash = githubHash;
+    s.services.datadog.credentialHash = ddHash;
     store.save(s);
   });
-  const oldGithub=`${deviceId}.github.${githubSecret}`,oldDatadog=`${deviceId}.datadog.${ddSecret}`;
-  const claim=await call("/api/computers/claim",{proofs:{github:oldGithub,datadog:oldDatadog},managementSecret},{credential:oldGithub});
-  expect(claim.status).toBe(201);expect(await claim.json()).not.toHaveProperty("credential");
-  const saved=`${deviceId}.c.computer-a.${managementSecret}`;
-  expect((await call("/api/snapshot",undefined,{credential:saved})).status).toBe(200);
-  expect((await call("/api/computers/claim",{proofs:{github:oldGithub,datadog:oldDatadog},managementSecret},{credential:oldGithub})).status).toBe(409);
-  expect((await call("/api/snapshot",undefined,{credential:saved})).status).toBe(200);
+  const oldGithub = `${deviceId}.github.${githubSecret}`,
+    oldDatadog = `${deviceId}.datadog.${ddSecret}`;
+  const claim = await call(
+    "/api/computers/claim",
+    { proofs: { github: oldGithub, datadog: oldDatadog }, managementSecret },
+    { credential: oldGithub },
+  );
+  expect(claim.status).toBe(201);
+  expect(await claim.json()).not.toHaveProperty("credential");
+  const saved = `${deviceId}.c.computer-a.${managementSecret}`;
+  expect(
+    (await call("/api/snapshot", undefined, { credential: saved })).status,
+  ).toBe(200);
+  expect(
+    (
+      await call(
+        "/api/computers/claim",
+        {
+          proofs: { github: oldGithub, datadog: oldDatadog },
+          managementSecret,
+        },
+        { credential: oldGithub },
+      )
+    ).status,
+  ).toBe(409);
+  expect(
+    (await call("/api/snapshot", undefined, { credential: saved })).status,
+  ).toBe(200);
+});
+
+it("returns its authenticated computer identity and only its owned registrations to a local client", async () => {
+  const { call, credential } = await setup();
+  const r = await call("/api/computer", undefined, { credential });
+  expect(r.status).toBe(200);
+  const value = (await r.json()) as {
+    computerId: string;
+    services: { id: string }[];
+  };
+  expect(value.computerId).toBe("computer-a");
+  expect(value.services.map((s) => s.id).sort()).toEqual(["datadog", "github"]);
+  expect((await call("/api/computer")).status).toBe(403);
 });

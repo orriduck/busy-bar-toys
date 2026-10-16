@@ -6,7 +6,7 @@ import LocalAuthentication
 guard CommandLine.arguments.count == 3 else { exit(1) }
 let mode = CommandLine.arguments[1]
 let role = CommandLine.arguments[2]
-guard role == "agent" || role == "notifier" else { exit(1) }
+guard role == "agent" || role == "notifier" || role == "computer" else { exit(1) }
 let query: [String: Any] = [
     kSecClass as String: kSecClassGenericPassword,
     kSecAttrService as String: "app.busybar.control-plane." + role,

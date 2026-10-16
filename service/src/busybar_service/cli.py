@@ -498,6 +498,15 @@ def main(argv=None):
     cloud_parser.add_argument("--instance")
     cloud_parser.add_argument("--fallback-seconds",type=_fallback_seconds,default=10,metavar="1..300",
                               help="Local urgent fallback delay in seconds (default: 10)")
+    for name in ('cloud-enroll', 'cloud-migrate'):
+        command = sub.add_parser(name, help='Enroll this computer using a one-use ticket or its existing publisher proofs')
+        command.add_argument('--url', required=True)
+    command = sub.add_parser('cloud-register', help='Register one explicit service for a local source')
+    command.add_argument('alias')
+    command.add_argument('--name')
+    command.add_argument('--template', choices=('agent', 'notifier', 'custom'))
+    command.add_argument('--source', help='Local source name or app routed to this service')
+    sub.add_parser('cloud-pair', help='Issue a five-minute code to pair a monitoring browser with this computer')
     for name in ("uninstall", "clear", "token-set", "input-wifi"):
         sub.add_parser(name)
     for name in ("preview", "capture"):
@@ -532,6 +541,22 @@ def main(argv=None):
     # request traces out of the service log; our diagnostics contain no URL.
     logging.getLogger('httpx2').setLevel(logging.WARNING)
     try:
+        if args.command in ('cloud-enroll', 'cloud-migrate', 'cloud-register', 'cloud-pair'):
+            from . import cloud_registration as registration
+            if args.command == 'cloud-enroll':
+                value = registration.enroll(RUNTIME, args.url, getpass.getpass('One-use enrollment ticket: '))
+                print('Computer enrolled:', value['computerId'])
+            elif args.command == 'cloud-migrate':
+                value = registration.migrate_legacy(RUNTIME, args.url)
+                print('Computer enrolled:', value['computerId'])
+            elif args.command == 'cloud-register':
+                value = registration.register_service(RUNTIME, args.alias, name=args.name,
+                    template=args.template or ('agent' if args.alias == 'codex' else 'notifier'), source=args.source)
+                print('Registered service:', value['services'][args.alias]['serviceId'])
+            else:
+                print(registration.pairing_code(RUNTIME))
+                print('Paste this one-use code into the management page within five minutes.')
+            return 0
         if args.command.startswith('adsbao-'):
             from busybar_apps.adsbao.commands import run as run_aircraft_command
             return run_aircraft_command(args, RUNTIME, REPO)

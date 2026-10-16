@@ -1,3 +1,4 @@
+import { enrollTestBrowser } from "./helpers/computer";
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, SELF } from "cloudflare:test";
 import { describe, it, expect, vi } from "vitest";
@@ -18,6 +19,7 @@ async function setup(
     encodeURIComponent(
       await signSession({ deviceId, id, expiresAt }, env.SESSION_SIGNING_KEY),
     );
+  await enrollTestBrowser(deviceId, cookie);
   const admin = (
     path: string,
     body?: unknown,

@@ -62,19 +62,28 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class Transport:
-    def __init__(self, url, credential, *, timeout=5, opener=None):
+    def __init__(self, url, credential, *, timeout=5, opener=None, service_id=None):
         self.url = base_url(url)
         if not credential or any(c.isspace() for c in credential): raise CloudError('invalid_credential')
         self._credential = credential
+        if service_id is not None and (not isinstance(service_id,str) or not IDENTIFIER.fullmatch(service_id)
+                                       or service_id in ('__proto__','constructor','prototype')):
+            raise CloudError('invalid_service')
+        self.service_id = service_id
         self.timeout = timeout
         self._opener = opener or build_opener(NoRedirect())
 
     def _preview_connection(self, config):
         """Private in-memory handoff to the optional local preview bridge."""
         parts=self._credential.split('.')
-        if len(parts)!=3 or not re.fullmatch(r'[a-f0-9]{64}',parts[0]):
+        computer=len(parts)==4 and parts[1]=='c'
+        if len(parts) not in (3,4) or len(parts)==4 and not computer or not re.fullmatch(r'[a-f0-9]{64}',parts[0]):
             raise CloudError('invalid_credential')
-        if parts[1]!=config.get('serviceId',parts[1]): raise CloudError('invalid_credential')
+        if computer:
+            if parts[2]!=config.get('computerId') or not IDENTIFIER.fullmatch(config.get('serviceId','')):
+                raise CloudError('invalid_credential')
+        elif parts[1]!=config.get('serviceId',parts[1]): raise CloudError('invalid_credential')
+        if self.service_id is not None and self.service_id!=config.get('serviceId'): raise CloudError('invalid_config')
         try:
             if not IDENTIFIER.fullmatch(config['instanceId']): raise ValueError()
             epoch=config['epoch']
@@ -82,14 +91,15 @@ class Transport:
         except (KeyError,ValueError,TypeError): raise CloudError('invalid_config') from None
         origin=urlsplit(self.url)
         scheme='wss' if origin.scheme=='https' else 'ws'
-        return (scheme+'://'+origin.netloc+'/api/preview/publish',
-                {'Authorization':'Bearer '+self._credential,'X-Busy-Instance':config['instanceId'],
-                 'X-Busy-Epoch':epoch},parts[0])
+        headers={'Authorization':'Bearer '+self._credential,'X-Busy-Instance':config['instanceId'],'X-Busy-Epoch':epoch}
+        if computer or self.service_id is not None: headers['X-Busy-Service']=config['serviceId']
+        return (scheme+'://'+origin.netloc+'/api/preview/publish',headers,parts[0])
 
     def _open(self, method, path, body=None):
         if not path.startswith('/api/') or '?' in path or '#' in path: raise CloudError('invalid_path')
         headers = {'Authorization':'Bearer ' + self._credential, 'Accept':'application/json',
                    'User-Agent':'busy-bar-toys/0.1'}
+        if self.service_id is not None: headers['X-Busy-Service']=self.service_id
         data = None if body is None else json.dumps(body, separators=(',',':'),allow_nan=False).encode()
         if data is not None:
             if len(data) > 512 * 1024: raise CloudError('request_too_large')
@@ -173,7 +183,7 @@ def atomic_json(path, data):
 
 
 def keychain(role, value=None):
-    if role not in ('agent','notifier'): raise ValueError('Invalid cloud role')
+    if role not in ('agent','notifier','computer'): raise ValueError('Invalid cloud role')
     try:
         result=subprocess.run([str(HELPER),'get' if value is None else 'set',role],input=value,
                               text=True,capture_output=True,timeout=10)

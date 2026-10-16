@@ -1,3 +1,4 @@
+import { enrollTestBrowser } from "./helpers/computer";
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
@@ -22,6 +23,7 @@ async function setup() {
     encodeURIComponent(
       await signSession({ deviceId, id, expiresAt }, env.SESSION_SIGNING_KEY),
     );
+  await enrollTestBrowser(deviceId, cookie);
   const api = (path: string, body: unknown, credential?: string) =>
     exports.default.fetch(origin + path, {
       method: "POST",
@@ -67,10 +69,14 @@ describe("management order endpoint", () => {
     expect(body.snapshot.revision).toBe(before.revision + 1);
     expect(body.snapshot.serverNow).toBeGreaterThan(0);
     const after = await read();
-    expect([
-      after.services.b.config.priority,
-      after.services.a.config.priority,
-    ]).toEqual([1000, 999]);
+    expect(after.computers[after.services.a.computerId!].serviceOrder).toEqual([
+      "b",
+      "a",
+    ]);
+    expect([after.services.a.config, after.services.b.config]).toEqual([
+      before.services.a.config,
+      before.services.b.config,
+    ]);
   });
   it("rejects publisher access before mutation", async () => {
     const { api, read, credential } = await setup(),
@@ -170,7 +176,7 @@ describe("computer identity upgrade", () => {
     expect(
       (await api("/api/services", { ...body, computerId: crypto.randomUUID() }))
         .status,
-    ).toBe(404);
+    ).toBe(403);
     expect(await read()).toEqual(before);
     expect((await api("/api/services", body)).status).toBe(201);
     const after = await read();

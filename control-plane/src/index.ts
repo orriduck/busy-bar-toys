@@ -384,6 +384,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       const serviceId = this.authorize(s, auth),
         now = Date.now();
       const managementComputer = () => {
+        requireThat(auth.kind !== "publisher", "FORBIDDEN", 403);
         const id =
           auth.kind === "computer"
             ? auth.computerId
@@ -522,6 +523,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         requireThat(pairingDevice === s.deviceId, "PAIRING_INVALID", 403);
         const computerId = redeemPairing(s, auth.id, pairingHash!, now);
         response = json({ computerId });
+      } else if (path === "/api/computer" && method === "GET") {
+        requireThat(auth.kind === "computer", "FORBIDDEN", 403);
+        response = json({
+          computerId: auth.computerId,
+          deviceId: s.deviceId,
+          configRevision: s.configRevision,
+          services: snapshot(s, now).services.filter(
+            (service) => service.computerId === auth.computerId,
+          ),
+        });
       } else if (path === "/api/session" && method === "GET") {
         admin();
         response = json({

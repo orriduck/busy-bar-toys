@@ -1,3 +1,4 @@
+import { enrollTestBrowser } from "./helpers/computer";
 import { env, exports } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
 import { createState } from "../src/model";
@@ -19,6 +20,7 @@ async function admin() {
     encodeURIComponent(
       await signSession({ deviceId, id, expiresAt }, env.SESSION_SIGNING_KEY),
     );
+  await enrollTestBrowser(deviceId, cookie);
   devicesByCookie.set(cookie, deviceId);
   return { deviceId, cookie };
 }

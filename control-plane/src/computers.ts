@@ -200,7 +200,6 @@ export function redeemEnrollment(
   s.computers[computer.id] = computer;
   s.sessionComputers[enrollment.sessionId] = computer.id;
   delete s.enrollments[codeHash];
-  s.configRevision++;
   s.revision++;
   return computer;
 }
@@ -310,7 +309,6 @@ export function claimLegacy(
       .map((service) => service.id),
   };
   s.computers[computerId] = computer;
-  s.configRevision++;
   s.revision++;
   return computer;
 }
