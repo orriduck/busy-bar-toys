@@ -68,6 +68,8 @@ export interface Item {
   state:
     "waiting" | "applying" | "displaying" | "preempted" | "paused" | "snoozed";
   remainingMs: number | null;
+  /** Initial budget for this playback cycle; absent on legacy persisted items. */
+  originalVisibleMs?: number;
   nextEligibleAt: number | null;
   scene: Scene;
   actionKeys: string[];
@@ -311,6 +313,32 @@ export function patchConfig(
       if (i.serviceId === id) end(s, i, "disabled", i.version);
   tick(s, now);
 }
+export function reorderServices(
+  s: State,
+  serviceIds: unknown,
+  expectedRevision: unknown,
+  now: number,
+) {
+  requireThat(expectedRevision === s.configRevision, "CONFIG_CONFLICT", 409);
+  const ids = Object.keys(s.services);
+  requireThat(
+    Array.isArray(serviceIds) &&
+      serviceIds.length === ids.length &&
+      new Set(serviceIds).size === ids.length &&
+      serviceIds.every(
+        (id) => typeof id === "string" && Object.hasOwn(s.services, id),
+      ),
+    "INVALID_SERVICE_ORDER",
+  );
+  const revision = s.revision;
+  serviceIds.forEach((id, index) => {
+    s.services[id].config.priority = 1000 - index;
+  });
+  s.configRevision++;
+  tick(s, now);
+  // The complete reorder and its scheduling result form one atomic revision.
+  s.revision = revision + 1;
+}
 const allowed = new Set(
   "id type assetHash x y display align z_index text font color width height scroll_rate scroll_start_delay scroll_repeat_delay opacity loop await_previous_end section timestamp direction show_hours bitmap data".split(
     " ",
@@ -540,6 +568,13 @@ export function publish(
             (body.level === "urgent" || body.kind === "agent"))
         ? null
         : service.config.visibleMs,
+    originalVisibleMs: old
+      ? old.originalVisibleMs
+      : service.config.exit === "source" ||
+          (service.config.exit === "default" &&
+            (body.level === "urgent" || body.kind === "agent"))
+        ? undefined
+        : service.config.visibleMs,
     nextEligibleAt: old?.nextEligibleAt ?? null,
   };
   requireThat(
@@ -694,6 +729,7 @@ export function tick(s: State, now: number) {
       i.state = "waiting";
       i.nextEligibleAt = null;
       i.remainingMs = service.config.visibleMs;
+      i.originalVisibleMs = service.config.visibleMs;
       s.revision++;
     }
   }
@@ -721,6 +757,7 @@ export function tick(s: State, now: number) {
         i.state = "snoozed";
         i.nextEligibleAt = now + s.services[i.serviceId].config.snoozeMs;
         i.remainingMs = s.services[i.serviceId].config.visibleMs;
+        i.originalVisibleMs = i.remainingMs;
         s.revision++;
       } else end(s, i, "completed", i.version);
     }
@@ -961,8 +998,34 @@ export function snapshot(s: State, now: number, serviceId?: string) {
   const items = Object.values(s.items)
     .filter((i) => !serviceId || i.serviceId === serviceId)
     .map((i) => {
-      const { scene, epoch, businessId, lastUpdateFingerprint, ...publicItem } =
-        i;
+      const {
+        scene,
+        epoch,
+        businessId,
+        lastUpdateFingerprint,
+        originalVisibleMs,
+        ...publicItem
+      } = i;
+      const actualDisplay =
+        s.selected === i.itemKey &&
+        s.displaying?.itemKey === i.itemKey &&
+        s.displaying.generation === s.generation &&
+        i.state === "displaying" &&
+        s.applying === null &&
+        s.visibleSince !== null;
+      const confirmedUntil = actualDisplay
+        ? Math.min(
+            s.displaying!.confirmedValidUntil,
+            s.health.confirmedValidUntil,
+          )
+        : 0;
+      const elapsed = actualDisplay
+        ? Math.max(0, Math.min(now, confirmedUntil) - s.visibleSince!)
+        : 0;
+      const running =
+        actualDisplay &&
+        s.health.status === "healthy" &&
+        confirmedUntil > now;
       const waiting = i.state !== "displaying" && i.state !== "applying";
       const queueProof =
         waiting &&
@@ -1002,6 +1065,16 @@ export function snapshot(s: State, now: number, serviceId?: string) {
           : undefined;
       return {
         ...publicItem,
+        playback: {
+          totalMs: i.remainingMs === null ? null : (originalVisibleMs ?? null),
+          remainingMs:
+            i.remainingMs === null
+              ? null
+              : Math.max(0, i.remainingMs - elapsed),
+          running,
+          validUntil: running ? confirmedUntil : 0,
+          startsAt: actualDisplay ? s.visibleSince : null,
+        },
         source: {
           connected:
             i.lastHeartbeat + s.services[i.serviceId].config.heartbeatMs > now,
@@ -1022,6 +1095,7 @@ export function snapshot(s: State, now: number, serviceId?: string) {
     });
   return {
     protocol: 1,
+    serverNow: now,
     deviceId: s.deviceId,
     revision: s.revision,
     configRevision: s.configRevision,
