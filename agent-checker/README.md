@@ -34,7 +34,7 @@ Each agent app reports cumulative session totals. The observer samples every liv
 The rate is the change in reported totals over the last 10 seconds of samples.
 During the first 10 seconds of samples, the rate covers the observed span. It shows `--` until one second is observed.
 A session with no new usage shows 0.
-Input includes cached input. Output includes reasoning output.
+Input counts new input and first-time cache writes. It excludes cache reads, which re-send earlier context on every request. Output includes reasoning output.
 Codex totals come from local rollout records. Claude Code totals come from its local transcript, read through the hook's transcript path. Only usage fields are read, never message text.
 The back display shows the rates in whole tokens per second.
 
