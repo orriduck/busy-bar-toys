@@ -7,7 +7,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import type { DragEndEvent } from "@dnd-kit/core";
+import type { DragEndEvent, Modifier } from "@dnd-kit/core";
 import {
   SortableContext,
   arrayMove,
@@ -32,6 +32,8 @@ import { SettingNumber } from "./setting-number";
 import { PriorityBadge } from "./policy-field";
 import { priorityOrder, serviceLabel, computerIds } from "./service-layout";
 import { useListMotion } from "./motion";
+const verticalOrder: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+const orderModifiers = [verticalOrder];
 function ConfigurationRow({
   service,
   rank,
@@ -99,10 +101,12 @@ function ConfigurationRow({
                     service.id}
                 </span>
               </span>
-              {!service.config.enabled && (
-                <Badge variant="secondary">Off</Badge>
-              )}
-              <PriorityBadge value={service.config.priority} />
+              <span className="configuration-badges">
+                {!service.config.enabled && (
+                  <Badge variant="secondary">Off</Badge>
+                )}
+                <PriorityBadge value={service.config.priority} />
+              </span>
               <ChevronDown className={open ? "chevron-open" : ""} />
             </CollapsibleTrigger>
           </CardHeader>
@@ -198,6 +202,7 @@ export function ConfigurationList({
   return (
     <>
       <DndContext
+        modifiers={orderModifiers}
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragStart={start}

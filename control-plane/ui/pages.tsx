@@ -4,8 +4,6 @@ import type { Mutate, Snapshot, Service } from "./api";
 import { Icon, serviceName } from "./common";
 import { Button } from "./components/ui/button";
 import { Empty, EmptyHeader, EmptyDescription } from "./components/ui/empty";
-import { cn } from "./lib/utils";
-import type { IconName } from "./common";
 import { ServiceEditor, Register } from "./services";
 import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
 import { ItemGroup, ItemSeparator } from "./components/ui/item";
@@ -26,37 +24,8 @@ import type { PreviewStatus } from "./preview-session";
 import type { PreviewStats } from "./preview";
 import { MotionFeedback, MotionReveal, useListMotion } from "./motion";
 import { SettingNumber } from "./setting-number";
-export type Page = "display" | "services" | "configuration" | "device";
-const pages: { id: Page; label: string; icon: IconName }[] = [
-  { id: "display", label: "Display", icon: "display" },
-  { id: "services", label: "Services", icon: "services" },
-  { id: "configuration", label: "Configuration", icon: "settings" },
-  { id: "device", label: "Device", icon: "device" },
-];
-export function Navigation({
-  page,
-  onPage,
-}: {
-  page: Page;
-  onPage: (page: Page) => void;
-}) {
-  return (
-    <nav aria-label="Control plane">
-      {pages.map((entry) => (
-        <Button
-          key={entry.id}
-          variant="navigation"
-          className={cn("w-full", page === entry.id && "selected")}
-          aria-current={page === entry.id ? "page" : undefined}
-          onClick={() => onPage(entry.id)}
-        >
-          <Icon name={entry.icon} data-icon="inline-start" />
-          <span>{entry.label}</span>
-        </Button>
-      ))}
-    </nav>
-  );
-}
+export { Navigation } from "./navigation";
+export type { Page } from "./navigation";
 export type CredentialValue = {
   credential: string;
   epoch: string;
@@ -145,6 +114,7 @@ export function ServicesPage({
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        className="computer-actions"
                         aria-label={`Computer actions for ${group.name}`}
                       />
                     }
@@ -388,7 +358,12 @@ export function DevicePage({
         <dd>
           {typeof preview?.acceptedFps === "number" ? (
             <>
-              <SettingNumber value={preview.acceptedFps} decimals={1} /> fps
+              <SettingNumber
+                value={preview.acceptedFps}
+                decimals={1}
+                minimumDecimals={1}
+              />{" "}
+              fps
             </>
           ) : (
             "—"
@@ -398,8 +373,18 @@ export function DevicePage({
         <dd>
           {sample ? (
             <>
-              <SettingNumber value={sample.receivedFps} decimals={1} /> received
-              / <SettingNumber value={sample.drawnFps} decimals={1} /> drawn fps
+              <SettingNumber
+                value={sample.receivedFps}
+                decimals={1}
+                minimumDecimals={1}
+              />{" "}
+              received /{" "}
+              <SettingNumber
+                value={sample.drawnFps}
+                decimals={1}
+                minimumDecimals={1}
+              />{" "}
+              drawn fps
             </>
           ) : (
             "—"

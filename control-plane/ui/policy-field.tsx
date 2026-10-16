@@ -58,6 +58,7 @@ export function HelpTip({
             type="button"
             variant="ghost"
             size="icon-xs"
+            className="policy-help"
             aria-label={`About ${label}`}
             onClick={() => setOpen(true)}
           />
@@ -237,9 +238,11 @@ export function PolicyField({
                   <small
                     style={{
                       transform:
-                        position === 100
-                          ? "translateX(-100%)"
-                          : "translateX(-50%)",
+                        position <= 0
+                          ? "translateX(0)"
+                          : position === 100
+                            ? "translateX(-100%)"
+                            : "translateX(-50%)",
                     }}
                   >
                     {option.label}
