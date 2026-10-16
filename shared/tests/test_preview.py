@@ -372,6 +372,7 @@ class PreviewProtocolTest(unittest.IsolatedAsyncioTestCase):
                     else:
                         await self.wait_until(lambda:len(frames)>1)
                         self.assertTrue(bridge.diagnostics()['connected'])
+                    self.assertEqual(bridge.diagnostics()['noDemandDropped'],1)
                 finally:
                     task.cancel()
                     with self.assertRaises(asyncio.CancelledError): await task
@@ -432,6 +433,30 @@ class PreviewProtocolTest(unittest.IsolatedAsyncioTestCase):
 
 class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
     wait_until=PreviewBridgeTest.wait_until
+
+    async def test_drop_diagnostics_distinguish_completion_order_queue_replacement_and_invalidation(self):
+        from concurrent.futures import ThreadPoolExecutor
+        client=client_for('http://localhost:1234'); device=FakeDevice()
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        bridge._executor=ThreadPoolExecutor(max_workers=4)
+        bridge._client=client; bridge._demand=True
+        try:
+            for _ in range(2):
+                bridge._submit_frame(device,0,client,0)
+                await asyncio.gather(*list(bridge._pending))
+            bridge._latest.get_nowait()
+            bridge._latest.put_nowait((0,{'sequence':100}))
+            bridge._submit_frame(device,0,client,0)
+            await asyncio.gather(*list(bridge._pending))
+            bridge._invalidate()
+            diag=bridge.diagnostics()
+            self.assertEqual(diag['dropped'],3)
+            self.assertEqual(diag.get('supersededDropped'),1)
+            self.assertEqual(diag.get('outOfOrderDropped'),1)
+            self.assertEqual(diag.get('invalidatedDropped'),1)
+            self.assertEqual(diag.get('noDemandDropped'),0)
+        finally:
+            await bridge.aclose()
 
     async def test_latest_queue_keeps_newer_completion_when_callbacks_arrive_together(self):
         from concurrent.futures import ThreadPoolExecutor
@@ -693,6 +718,63 @@ class PreviewRelayCloseTest(unittest.IsolatedAsyncioTestCase):
 
 class PreviewCaptureClockTest(unittest.IsolatedAsyncioTestCase):
     wait_until=PreviewBridgeTest.wait_until
+
+    async def simulated_samples(self,*,wake_lateness=(.001,.003,.006),stall=0,restart=False,bookkeeping=0):
+        from types import SimpleNamespace
+        clock=[100.0]; started=[]; sleeps=[]
+        loop=asyncio.get_running_loop(); real_sleep=asyncio.sleep
+        client=client_for('http://localhost:1234'); device=FakeDevice()
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None,device_factory=lambda _:device)
+        bridge._client=client; bridge._demand=True
+        def immediate_worker(executor,work):
+            future=loop.create_future()
+            future.set_result(work())
+            return future
+        async def advance(delay):
+            self.assertGreaterEqual(delay,0)
+            lateness=wake_lateness[len(sleeps)%len(wake_lateness)]
+            sleeps.append(delay)
+            clock[0]+=delay+lateness
+            if stall and len(sleeps)==4: clock[0]+=stall
+            if restart and not bridge._demand: bridge._demand=True
+            await real_sleep(0)
+        def submit(*args):
+            started.append(clock[0])
+            if restart and len(started)==4: bridge._invalidate()
+            if len(started)==121: raise asyncio.CancelledError()
+            clock[0]+=bookkeeping
+        bridge._submit_frame=submit
+        simulated_loop=SimpleNamespace(time=lambda:clock[0],run_in_executor=immediate_worker)
+        with patch.object(preview.asyncio,'get_running_loop',return_value=simulated_loop), \
+             patch.object(preview.asyncio,'sleep',advance):
+            with self.assertRaises(asyncio.CancelledError): await bridge._capture(client,DEVICE)
+        self.assertEqual(device.verified,[DEVICE]*(2 if restart else 1))
+        self.assertGreaterEqual(len(sleeps),len(started)-1,'Capture must yield between ticks, including overruns')
+        return started
+
+    async def test_bounded_positive_wake_jitter_does_not_accumulate_cadence_drift(self):
+        started=await self.simulated_samples()
+        # Four seconds of 30 Hz phase, plus only the final wake's bounded
+        # lateness. Resetting every deadline from now accumulates every wake.
+        self.assertAlmostEqual(started[-1]-started[0],120/preview.FPS+.006,places=8)
+        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),.025-1e-9)
+
+    async def test_late_wake_preserves_minimum_gap_and_long_stall_skips_ticks(self):
+        for lateness,stall in (((0,0,.021,0),0),((0,),.12)):
+            with self.subTest(lateness=lateness,stall=stall):
+                started=await self.simulated_samples(wake_lateness=lateness,stall=stall)
+                intervals=[b-a for a,b in zip(started,started[1:])]
+                self.assertGreaterEqual(min(intervals),.025-1e-9)
+                if stall: self.assertGreater(intervals[3],.12)
+
+    async def test_resumed_demand_reverifies_and_resets_phase_with_minimum_gap(self):
+        started=await self.simulated_samples(wake_lateness=(0,),restart=True)
+        self.assertAlmostEqual(started[4]-started[3],.025,places=8)
+        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),.025-1e-9)
+
+    async def test_overrun_bookkeeping_yields_to_session_tasks_between_ticks(self):
+        started=await self.simulated_samples(wake_lateness=(0,),bookkeeping=.04)
+        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),.025-1e-9)
 
     async def scheduled_samples(self,*,bookkeeping=0,stall=False,partial_stall=False):
         from concurrent.futures import ThreadPoolExecutor
