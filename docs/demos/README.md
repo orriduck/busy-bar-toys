@@ -17,7 +17,7 @@ The root [English](../../README.md#watch-the-use-cases) and
 | [Your dot](your-dot.mp4) | The five-point source icon and task states. | [Your dot](../../apps/src/busybar_apps/dots/README.md) |
 | [Claude Code](claude.mp4) | The orange source icon and task states. This app is optional. | [Claude Code](../../apps/src/busybar_apps/claude/README.md) |
 | [State colors](state-colors.mp4) | Running, input, error, stale update, and standby. The stale state is injected. | [Agent checker](../../agent-checker/README.md) |
-| [Clock and network](clock-network.mp4) | A minute change, digit rolls, upload/download arrows, and a combined rate. | [Agent checker](../../agent-checker/README.md) |
+| [Clock and tokens](clock-tokens.mp4) | A minute change, digit rolls, and separate current-turn input/output counts. | [Agent checker](../../agent-checker/README.md) |
 | [Start/Pause](start-pause.mp4) | Scripted press: calendar until a new task turn starts. | [Button setup](../../README.md#enable-wi-fi-button-input) |
 | [Reduced motion](reduced-motion.mp4) | Static running, input, and standby states. | [Static mode](../../README.md#check-or-stop-the-service) |
 | [ADSBao](adsbao.mp4) | `ADSBAO` rolls to `JBU462`; only `A320` appears below; the current Codex view returns. | [ADSBao](../../apps/src/busybar_apps/adsbao/README.md) |
@@ -46,6 +46,8 @@ The root [English](../../README.md#watch-the-use-cases) and
 - The calendar image is an illustration. Native scrolling text uses an
   approximate software compositor. These parts are not firmware pixel or timing
   references. Cloud transfer delays and Wi-Fi latency are not modeled.
+- Token counts in these clips are synthetic. Live counts come from Codex rollout usage.
+  Sources that do not report usage show `--` in normal operation.
 - App support does not mean an app is enabled on the viewer's Mac.
   Rendering the Claude clip does not install Claude hooks.
 
@@ -84,10 +86,12 @@ Do not replace synthetic values with credentials, account names, or private even
 
 - Codex 短片展示运行、请求输入、待机，以及十秒后恢复日历。
   十秒计时使用项目中的 `StandbyTimer`。
+- 短片中的 token 计数是模拟值。真实计数来自 Codex 的用量记录。
+  没有上报用量的来源在实际运行时显示 `--`。
 - Your dot 和 Claude Code 短片展示各自的图标与状态。
   Claude Code 是可选 app；生成演示不会安装 hooks。
 - 状态短片展示蓝、黄、红、灰、白五种状态。灰色过期状态由脚本注入。
-- 时钟与流量短片展示分钟变化、数字滚动、上下行箭头和总速度。
+- 时钟与 token 短片展示分钟变化、数字滚动，以及当前轮的输入／输出计数。
 - Start/Pause 短片模拟按键：先回日历，等新一轮任务开始再恢复。
 - ADSBao 短片保留完整入场和十秒显示，下行只显示机型。
   结束时恢复当前 Codex；没有活动任务时，服务恢复日历。
@@ -107,4 +111,4 @@ Do not replace synthetic values with credentials, account names, or private even
 在仓库根目录运行上述生成命令即可重新生成全部素材。
 需要项目 Python 环境和 `ffmpeg`。
 每组输出 GIF、MP4 和封面 PNG；完整生成还会输出帧数、时长和大小清单。
-所有事件、时间、流量与航班均为固定模拟值，不包含用户私有数据。
+所有事件、时间、token 计数与航班均为固定模拟值，不包含用户私有数据。

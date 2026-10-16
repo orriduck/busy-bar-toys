@@ -37,7 +37,7 @@ Download an MP4 to pause or replay a clip locally.
 |---|---|
 | **Codex: run → approval → standby → calendar** · [MP4](docs/demos/codex-cycle.mp4)<br>![Codex: run → approval → standby → calendar; offline DEMO](docs/demos/codex-cycle.gif) | **ADSBao: aircraft → current Codex task** · [MP4](docs/demos/adsbao.mp4)<br>![ADSBao: aircraft → current Codex task; offline DEMO](docs/demos/adsbao.gif) |
 | **Your dot: dedicated source icon** · [MP4](docs/demos/your-dot.mp4)<br>![Your dot: dedicated source icon; offline DEMO](docs/demos/your-dot.gif) | **Start/Pause → calendar → new task turn** · [MP4](docs/demos/start-pause.mp4)<br>![Start/Pause → calendar → new task turn; offline DEMO](docs/demos/start-pause.gif) |
-| **Clock and upload/download activity** · [MP4](docs/demos/clock-network.mp4)<br>![Clock and upload/download activity; offline DEMO](docs/demos/clock-network.gif) | **Running, approval, error, stale, standby** · [MP4](docs/demos/state-colors.mp4)<br>![Running, approval, error, stale, standby; offline DEMO](docs/demos/state-colors.gif) |
+| **Clock and input/output tokens** · [MP4](docs/demos/clock-tokens.mp4)<br>![Clock and input/output tokens; offline DEMO](docs/demos/clock-tokens.gif) | **Running, approval, error, stale, standby** · [MP4](docs/demos/state-colors.mp4)<br>![Running, approval, error, stale, standby; offline DEMO](docs/demos/state-colors.gif) |
 
 The Codex clip includes the full ten-second standby period.
 The aircraft clip includes the full ten-second flight display.
@@ -68,7 +68,7 @@ See the [actual-device mock capture](docs/images/actual-staggered-intro.png) for
 
 | Component | Display | Apps |
 |---|---|---|
-| [Agent checker](agent-checker/README.md) | Task status, source icon, clock, and network rate. | Codex, Your dot, Claude Code |
+| [Agent checker](agent-checker/README.md) | Task status, source icon, clock, and turn token counts. | Codex, Your dot, Claude Code |
 | [Notifier](notifier/README.md) | Short alerts with staggered character rolls. | ADSBao, Datadog, GitHub, Jira, Metaflow, Terminal, Credentials, Calendar |
 
 See [all apps and their requirements](apps/README.md).
@@ -77,8 +77,10 @@ See [all apps and their requirements](apps/README.md).
 
 Start a task in a configured agent app to show its status.
 The clock uses New York time in 24-hour format.
-Colored arrows show upload and download activity.
-The number shows their combined rate on the Mac's default network interface.
+The amber ↑ value shows input tokens. The cyan ↓ value shows output tokens.
+Counts cover the current Codex turn and reset at the next turn.
+They update when Codex reports usage. `--` means that usage is not available.
+The front display uses compact counts. The back display shows exact counts.
 
 | Light | State |
 |---|---|

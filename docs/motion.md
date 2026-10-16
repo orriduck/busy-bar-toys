@@ -1,7 +1,8 @@
 # Display motion — 2026-10-14
 
 The motion controller uses five reusable effects.
-The approved clock, icon spacing, and network layout stay the same.
+The clock and source icon retain the calendar-like alignment.
+The lower row now shows separate current-turn input/output token counts (2026-10-16).
 
 | Trigger | Effect | Native playback time |
 |---|---|---|
@@ -10,7 +11,7 @@ The approved clock, icon spacing, and network layout stay the same.
 | Change task state | Dim the light, change its color, then brighten it. | 167 ms out + 233 ms in |
 | Change source | Fade out the icon, replace it, then fade it in. | 167 ms out + 233 ms in |
 | Change a decimal digit | Roll with subpixel coverage and damped settling. | 500 ms |
-| Change a rate unit or field format | Fade out the rate field, replace it, then fade it in. | 133 ms out + 200 ms in |
+| Change a token abbreviation or field format | Fade out the token field, replace it, then fade it in. | 133 ms out + 200 ms in |
 
 These times describe stored frames at 30 fps.
 Cloud requests add transport time between the dim and reveal steps.
@@ -18,7 +19,7 @@ The controller counts the outgoing fade from request dispatch.
 It does not add the complete response delay to that fade again.
 
 Only changed regions animate.
-The clock remains visible during light, source, and rate-format changes.
+The clock remains visible during light, source, and token-format changes.
 Only changed decimal digits roll.
 Repeated refreshes do not replay the same transition.
 The thinking light keeps its vertical movement between refreshes.
@@ -53,7 +54,8 @@ The ten-second standby rule and button handling remain active.
 ## Inspect the result
 
 The following GIF contains actual device framebuffers from an 18-second demo.
-The demo uses synthetic clock values and network rates.
+This historical capture uses synthetic clock values and the former network-rate row.
+See the current [token-count clip](demos/clock-tokens.gif) for the replacement row.
 The back display identifies it as DEMO.
 Cloud capture returned 64 samples at about three samples per second.
 This capture does not measure the device's playback frame rate.

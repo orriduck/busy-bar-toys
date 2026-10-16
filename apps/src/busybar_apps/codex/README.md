@@ -13,7 +13,10 @@ No configuration is necessary. The service reads new rollout lines every second.
 ## Task events
 
 The observer reads local Codex Desktop and CLI lifecycle events.
-It extracts identifiers, source, project directory name, and timestamps.
+It extracts identifiers, source, project directory name, timestamps, and reported token counts.
+Input and output counts cover the current turn. The next turn resets them.
+The observer subtracts the usage recorded before the turn started.
+If that baseline is unavailable, it shows unknown usage instead of a session total.
 It does not store prompts or tool output.
 Subagents do not get separate display entries.
 A failed tool command does not mean that the task failed.

@@ -6,57 +6,57 @@
       "name": "codex-cycle",
       "frames": 570,
       "seconds": 19.0,
-      "gif_bytes": 993432,
-      "mp4_bytes": 87313
+      "gif_bytes": 1034866,
+      "mp4_bytes": 86022
     },
     {
       "name": "your-dot",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 623364,
-      "mp4_bytes": 39035
+      "gif_bytes": 660557,
+      "mp4_bytes": 41848
     },
     {
       "name": "claude",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 657258,
-      "mp4_bytes": 40129
+      "gif_bytes": 674084,
+      "mp4_bytes": 43106
     },
     {
       "name": "state-colors",
       "frames": 300,
       "seconds": 10.0,
-      "gif_bytes": 600490,
-      "mp4_bytes": 54211
+      "gif_bytes": 652629,
+      "mp4_bytes": 56214
     },
     {
-      "name": "clock-network",
+      "name": "clock-tokens",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 889974,
-      "mp4_bytes": 41135
+      "gif_bytes": 823976,
+      "mp4_bytes": 44001
     },
     {
       "name": "start-pause",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 506054,
-      "mp4_bytes": 42244
+      "gif_bytes": 506732,
+      "mp4_bytes": 44568
     },
     {
       "name": "reduced-motion",
       "frames": 210,
       "seconds": 7.0,
-      "gif_bytes": 36267,
-      "mp4_bytes": 21009
+      "gif_bytes": 34548,
+      "mp4_bytes": 19933
     },
     {
       "name": "adsbao",
       "frames": 421,
       "seconds": 14.033333333333333,
-      "gif_bytes": 468579,
-      "mp4_bytes": 59233
+      "gif_bytes": 486008,
+      "mp4_bytes": 59481
     },
     {
       "name": "github",

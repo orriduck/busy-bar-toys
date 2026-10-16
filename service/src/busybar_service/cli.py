@@ -26,7 +26,7 @@ from busybar_apps.dots.orbit import load_dot_thread_ids
 from busybar_agents.runtime import RUNTIME, SPOOL, hook_event, read_event, write_event, read_spool
 from busybar_shared.frames import decode_frame
 from busybar_agents.animation import ANIMATION_FILE, thinking_animation
-from busybar_agents.network import NetworkSampler, NetworkRates
+from busybar_agents.tokens import TokenUsage
 from busybar_agents.view import ViewMode, StandbyTimer
 from busybar_shared.device_input import configured_input_monitor, read_input_status
 from busybar_agents.motion import MotionDirector
@@ -158,9 +158,6 @@ def watch(args):
     backoff = 5
     owned = False
     last_state = None
-    network = NetworkSampler()
-    rates = None
-    next_sample = 0
     reduced = getattr(args, 'reduced_motion', False)
     motion = MotionDirector(client, reduced=reduced)
     view = ViewMode(RUNTIME / "view.json")
@@ -323,11 +320,7 @@ def watch(args):
                     shared_paused = bool(foreign)
                     if not (notice and notice.active) and not shared_paused and now >= next_draw:
                         if allowed:
-                            sample_tick = time.monotonic()
-                            if sample_tick >= next_sample:
-                                rates = network.sample()
-                                next_sample = sample_tick + 5
-                            motion.show(task, now, registry.active_count(now), rates)
+                            motion.show(task, now, registry.active_count(now))
                         elif motion.visible:
                             motion.hide()
                         next_draw = now + 5
@@ -374,7 +367,7 @@ def preview(args):
     for source in ("chatgpt", "dots"):
         for state in ("working", "waiting", "done", "error"):
             task = Task("preview", "preview", source, "busy-bar", state, now-125, now)
-            front, back = render(task, now, 2, NetworkRates(1536, 850*1024, "preview"))
+            front, back = render(task, now, 2, TokenUsage(123456, 7890))
             front.save(out / f"{source}-{state}-front.png")
             back.save(out / f"{source}-{state}-back.png")
             card = Image.new("RGB", (600, 230), "#11151D")
@@ -392,14 +385,13 @@ def preview(args):
 def demo(args):
     client = BusyAPI(read_token())
     started = time.time()
-    network = NetworkSampler()
     task = Task("demo", "demo", args.source, "DEMO", args.state, started, started)
     try:
         if task.state == "working":
             client.upload_asset(ANIMATION_FILE, thinking_animation())
         end = started + args.seconds
         while time.time() < end:
-            if not client.draw(make_payload(task, time.time(), 1, network.sample())):
+            if not client.draw(make_payload(task, time.time(), 1, TokenUsage(123456, 7890))):
                 print("Display suppressed by focus mode.")
                 return 0
             time.sleep(min(5, max(0, end-time.time())))
@@ -408,7 +400,7 @@ def demo(args):
 
 
 def motion_demo(args):
-    """Show a finite DEMO with synthetic clock and rate changes."""
+    """Show a finite DEMO with synthetic clock and token changes."""
     client=BusyAPI(read_token())
     motion=MotionDirector(client,reduced=args.reduced_motion)
     sequence=[('working','chatgpt',1024,2048),('working','chatgpt',2048,4096),
@@ -422,7 +414,7 @@ def motion_demo(args):
             if phase!=previous:
                 state,source,up,down=sequence[phase]
                 task=Task('demo',str(phase),source,'DEMO',state,wall,wall)
-                motion.show(task,wall+phase*60,1,NetworkRates(up,down,'DEMO'))
+                motion.show(task,wall+phase*60,1,TokenUsage(up,down))
                 previous=phase
             motion.advance()
             time.sleep(.05)
@@ -520,7 +512,7 @@ def main(argv=None):
     command.add_argument("--source", choices=sorted(profiles.sources()), default="chatgpt")
     command.add_argument("--state", choices=("working", "waiting", "done", "error", "stopped"), default="working")
     command.add_argument("--seconds", type=int, choices=range(1,61), default=5, metavar="1..60")
-    command=sub.add_parser('motion-demo',help='Show finite DEMO transitions with synthetic clock and rates')
+    command=sub.add_parser('motion-demo',help='Show finite DEMO transitions with synthetic clock and token counts')
     command.add_argument('--seconds',type=int,choices=range(6,31),default=18,metavar='6..30')
     command.add_argument('--reduced-motion',action='store_true')
     command = sub.add_parser("emit", help="Emit a real lifecycle state from an external tool")

@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from . import profiles
+from .tokens import TokenUsage
 
 STALE_SECONDS = 1800
 FLASH_SECONDS = 12
@@ -41,6 +42,7 @@ class Task:
     state: str
     started_at: float
     updated_at: float
+    token_usage: TokenUsage | None = None
 
 
 class TaskRegistry:
@@ -107,7 +109,8 @@ class TaskRegistry:
         started = current.started_at if current and current.turn_id == turn else timestamp
         if started_at is not None:
             started = started_at
-        self._tasks[session] = Task(session, turn, source, project, state, started, timestamp)
+        self._tasks[session] = Task(session, turn, source, project, state, started, timestamp,
+                                    current.token_usage if current and current.turn_id == turn else None)
         self._seen_turns.setdefault(session, set()).add(turn)
         return True
 

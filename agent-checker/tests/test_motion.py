@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import unittest
 from busybar_agents.motion import MotionDirector
 from busybar_agents.motion_assets import bar_name
-from busybar_agents.network import NetworkRates
+from busybar_agents.tokens import TokenUsage
 from busybar_apps import load_agents
 
 load_agents()
@@ -26,7 +26,7 @@ class MotionTests(unittest.TestCase):
         self.now=[100.0];self.api=Device()
         self.motion=MotionDirector(self.api,clock=lambda:self.now[0])
         self.wall=datetime(2026,10,14,12,20,tzinfo=timezone.utc).timestamp()
-        self.rates=NetworkRates(1024,2048,'en0')
+        self.rates=TokenUsage(123,456)
 
     def show(self,state,**kwargs):
         return self.motion.show(task(state),kwargs.get('wall',self.wall),1,kwargs.get('rates',self.rates))
@@ -48,11 +48,12 @@ class MotionTests(unittest.TestCase):
 
     def test_only_changed_digits_roll_and_unchanged_refresh_does_not_replay(self):
         self.show('waiting');self.now[0]+=1
-        changed=NetworkRates(2048,4096,'en0')
+        changed=TokenUsage(124,457)
         self.show('waiting',wall=self.wall+60,rates=changed)
         overlays=[e for e in self.api.draws[-1]['elements'] if e['id'].startswith('roll-')]
         self.assertEqual(len([e for e in overlays if 'clock' in e['id']]),1)
-        self.assertTrue(any('rate' in e['id'] for e in overlays))
+        self.assertEqual({e['id'] for e in overlays if 'rate' in e['id']},{'roll-rate-input-2','roll-rate-output-2'})
+        self.assertEqual({e['x'] for e in overlays if 'rate' in e['id']},{40,56})
         self.assertTrue(all(e['timeout']==1 and not e['loop'] for e in overlays))
         self.assertEqual(len({name for name in self.api.uploads}),len(self.api.uploads))
         self.show('waiting',wall=self.wall+60,rates=changed)
@@ -60,7 +61,7 @@ class MotionTests(unittest.TestCase):
 
     def test_rate_width_change_uses_a_field_fade(self):
         self.show('waiting')
-        self.show('waiting',rates=NetworkRates(10*1024,10*1024,'en0'))
+        self.show('waiting',rates=TokenUsage(1000,1000))
         self.assertEqual([e['id'] for e in self.api.draws[-1]['elements']],['motion-rate'])
 
     def test_coalesced_source_change_adds_its_own_mask(self):
@@ -107,9 +108,17 @@ class MotionTests(unittest.TestCase):
         self.assertFalse(self.motion.visible)
 
     def test_decimal_format_change_fades_instead_of_rolling_a_decimal_point(self):
-        self.show('waiting',rates=NetworkRates(0,9.9*1024,'en0'))
-        self.show('waiting',rates=NetworkRates(0,100*1024,'en0'))
+        self.show('waiting',rates=TokenUsage(0,99000))
+        self.show('waiting',rates=TokenUsage(0,100000))
         self.assertEqual([e['id'] for e in self.api.draws[-1]['elements']],['motion-rate'])
+
+    def test_same_total_with_independent_direction_changes_updates_both_digits(self):
+        self.show('waiting',rates=TokenUsage(123,456));self.now[0]+=1
+        self.show('waiting',rates=TokenUsage(124,455))
+        rolls=[e for e in self.api.draws[-1]['elements'] if e['id'].startswith('roll-rate')]
+        self.assertEqual({e['id'] for e in rolls},{'roll-rate-input-2','roll-rate-output-2'})
+        self.assertEqual({e['x'] for e in rolls},{40,56})
+        self.assertFalse(self.motion.pending)
 
     def test_asset_retry_keeps_completed_uploads(self):
         from busybar_shared.api import ConnectionError

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build offline README clips. No tokens, device access, or source polling."""
+"""Build offline README clips. No credentials, device access, or source polling."""
 import argparse
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from PIL import Image, ImageDraw, ImageFont
 
 from busybar_agents.motion import MotionDirector
-from busybar_agents.network import NetworkRates
+from busybar_agents.tokens import TokenUsage
 from busybar_agents.view import StandbyTimer
 from busybar_apps import load_agents
 from busybar_apps.samples import samples
@@ -123,7 +123,7 @@ def agent_clip(kind):
         "state-colors": [(0, "working", "Blue: running"), (2, "waiting", "Yellow: needs input"),
                          (4, "error", "Red: error"), (6, "unknown", "Gray: stale update"),
                          (8, "done", "White: standby")],
-        "clock-network": [(0, "working", "Clock and combined upload/download rate")],
+        "clock-tokens": [(0, "working", "Clock and current-turn input/output tokens")],
         "start-pause": [(0, "working", "Task is running"), (2, None, "Start/Pause: return to calendar"),
                         (5, "working", "New task turn: restore Codex")],
         "reduced-motion": [(0, "working", "Static blue status light"), (2, "waiting", "Static approval state"),
@@ -142,11 +142,12 @@ def agent_clip(kind):
                 motion.hide()
             next_step += 1
         if active and not returned:
-            index = int(t) % 4
-            up, down = [(1024, 32 * 1024), (0, 48 * 1024), (4096, 0), (0, 0)][index]
-            # Update the sampled values once a second, as an observer would.
+            # Synthetic reported counters rise within a turn and reset on a new turn.
+            turn_time = max(0, t - 5) if kind == "start-pause" and t >= 5 else t
+            up, down = 1200 + int(turn_time) * 730, 84 + int(turn_time) * 165
+            # Update once a second to illustrate discrete usage reports.
             if number % FPS == 0 or motion.current is None:
-                motion.show(active, WALL + t, 1, NetworkRates(up, down, "demo"))
+                motion.show(active, WALL + t, 1, TokenUsage(up, down))
         motion.advance()
         if kind == "codex-cycle" and active.state == "done" and motion.standby_visible:
             timer.shown(t)
@@ -154,7 +155,7 @@ def agent_clip(kind):
                 motion.hide()
                 returned = True
                 label = "Ten seconds elapsed: restore calendar"
-        note = "Synthetic events, time and network rates. Calendar is an illustration."
+        note = "Synthetic events, time and token counts. Calendar is an illustration."
         images.append(card(device.frame(), kind.upper(), label, note))
     return images
 
@@ -169,7 +170,7 @@ def notification_clip(items, *, restore_agent=False, shared=False):
         # Keep the full ten-second aircraft hold. Shorten other information holds.
         hold = 10 if item.app == "adsbao" else 3
         if restore_agent:
-            motion.show(task("working"), WALL, rates=NetworkRates(1024, 32768, "demo"))
+            motion.show(task("working"), WALL, usage=TokenUsage(12000, 1500))
         for number in range(FPS):
             motion.advance()
             images.append(card(device.frame(), item.app.upper(), "Current agent view" if restore_agent else "Default calendar",
@@ -198,7 +199,7 @@ def notification_clip(items, *, restore_agent=False, shared=False):
             tick[0] += 1 / FPS
         device.clear()
         if restore_agent:
-            motion.show(task("working"), WALL + tick[0], rates=NetworkRates(1024, 32768, "demo"))
+            motion.show(task("working"), WALL + tick[0], usage=TokenUsage(12000, 1500))
         for number in range(FPS):
             motion.advance()
             label = "Restore current Codex task" if restore_agent else "Restore calendar"
@@ -247,7 +248,7 @@ def main():
     done = next(n for n in notifications if n.id == "sample:done")
     notifications.append(replace(done, id="sample:failed", level="attention", title="FAILED",
                                  detail="demo build: exit 1", icon=badge(terminal.GLYPH, terminal.COLOR)))
-    names = ["codex-cycle", "your-dot", "claude", "state-colors", "clock-network", "start-pause", "reduced-motion"]
+    names = ["codex-cycle", "your-dot", "claude", "state-colors", "clock-tokens", "start-pause", "reduced-motion"]
     names += ["adsbao", "github", "datadog", "jira", "metaflow", "terminal", "credentials", "calendar", "shared-display"]
     if args.only and set(args.only) - set(names):
         parser.error("Unknown clip names: " + ", ".join(sorted(set(args.only) - set(names))))

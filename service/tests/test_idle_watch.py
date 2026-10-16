@@ -28,7 +28,7 @@ class LocalDisplayTest(unittest.TestCase):
 
 
 class IdleWatchTests(LocalDisplayTest):
-    def test_observer_keeps_clock_and_speed_visible_with_no_active_task(self):
+    def test_observer_keeps_clock_and_unknown_tokens_with_no_network_sampling(self):
         with tempfile.TemporaryDirectory() as directory:
             api=Mock()
             with patch('busybar_service.cli.RUNTIME',Path(directory)), \
@@ -36,12 +36,11 @@ class IdleWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.BusyAPI',return_value=api), \
                  patch('busybar_service.cli.RolloutWatcher'), \
                  patch('busybar_service.cli.configured_input_monitor') as monitor, \
-                 patch('busybar_service.cli.NetworkSampler') as sampler, \
+                 patch('busybar_agents.network.NetworkSampler',side_effect=AssertionError('network sampling is forbidden')) as sampler, \
                  patch('busybar_service.cli.load_dot_thread_ids',return_value=set()), \
                  patch('busybar_service.cli.read_spool',return_value=[]), \
                  patch('busybar_service.cli.time.sleep',side_effect=KeyboardInterrupt), \
                  patch('busybar_service.cli.signal.signal'):
-                sampler.return_value.sample.return_value=None
                 monitor.return_value.pop_start_pressed.return_value=False
                 with self.assertRaises(KeyboardInterrupt):
                     watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
@@ -73,7 +72,7 @@ class ButtonWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.TaskRegistry',return_value=registry), \
                  patch('busybar_service.cli.RolloutWatcher',return_value=watcher), \
                  patch('busybar_service.cli.configured_input_monitor') as monitor, \
-                 patch('busybar_service.cli.NetworkSampler') as sampler, \
+                 patch('busybar_agents.network.NetworkSampler',side_effect=AssertionError('network sampling is forbidden')) as sampler, \
                  patch('busybar_service.cli.load_dot_thread_ids',return_value=set()), \
                  patch('busybar_service.cli.read_spool',return_value=[]), \
                  patch('busybar_service.cli.time.time',side_effect=[100,2000,2001,2002]), \
@@ -81,7 +80,6 @@ class ButtonWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.signal.signal'):
                 watcher.dot_thread_ids=set()
                 monitor.return_value.pop_start_pressed.side_effect=[False,True,False,False]
-                sampler.return_value.sample.return_value=None
                 with self.assertRaises(KeyboardInterrupt):
                     watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
             self.assertEqual(api.draw.call_count,2)
@@ -106,7 +104,7 @@ class ButtonWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.TaskRegistry',return_value=registry), \
                  patch('busybar_service.cli.RolloutWatcher',return_value=watcher), \
                  patch('busybar_service.cli.configured_input_monitor',create=True) as monitor, \
-                 patch('busybar_service.cli.NetworkSampler') as sampler, \
+                 patch('busybar_agents.network.NetworkSampler',side_effect=AssertionError('network sampling is forbidden')) as sampler, \
                  patch('busybar_service.cli.load_dot_thread_ids',return_value=set()), \
                  patch('busybar_service.cli.read_spool',return_value=[]), \
                  patch('busybar_service.cli.time.time',side_effect=[100,101,102,103]), \
@@ -114,7 +112,6 @@ class ButtonWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.signal.signal'):
                 watcher.dot_thread_ids=set()
                 monitor.return_value.pop_start_pressed.side_effect=[False,True,False,False]
-                sampler.return_value.sample.return_value=None
                 with self.assertRaises(KeyboardInterrupt):
                     watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
             self.assertEqual(api.draw.call_count,2)
@@ -146,7 +143,7 @@ class StandbyWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.TaskRegistry',return_value=registry), \
                  patch('busybar_service.cli.RolloutWatcher',return_value=watcher), \
                  patch('busybar_service.cli.configured_input_monitor') as monitor, \
-                 patch('busybar_service.cli.NetworkSampler') as sampler, \
+                 patch('busybar_agents.network.NetworkSampler',side_effect=AssertionError('network sampling is forbidden')) as sampler, \
                  patch('busybar_service.cli.load_dot_thread_ids',return_value=set()), \
                  patch('busybar_service.cli.read_spool',return_value=[]), \
                  patch('busybar_service.cli.time.time',side_effect=wall_time), \
@@ -155,7 +152,6 @@ class StandbyWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.signal.signal'):
                 watcher.dot_thread_ids=set()
                 monitor.return_value.pop_start_pressed.return_value=False
-                sampler.return_value.sample.return_value=None
                 with self.assertRaises(KeyboardInterrupt):
                     watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
             self.assertEqual(draws,[100,101,107,117])
@@ -183,7 +179,7 @@ class MotionWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.TaskRegistry',return_value=registry), \
                  patch('busybar_service.cli.RolloutWatcher',return_value=watcher), \
                  patch('busybar_service.cli.configured_input_monitor') as monitor, \
-                 patch('busybar_service.cli.NetworkSampler') as sampler, \
+                 patch('busybar_agents.network.NetworkSampler',side_effect=AssertionError('network sampling is forbidden')) as sampler, \
                  patch('busybar_service.cli.load_dot_thread_ids',return_value=set()), \
                  patch('busybar_service.cli.read_spool',return_value=[]), \
                  patch('busybar_service.cli.time.time',side_effect=wall_time), \
@@ -192,10 +188,9 @@ class MotionWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.signal.signal'):
                 watcher.dot_thread_ids=set()
                 monitor.return_value.pop_start_pressed.return_value=False
-                sampler.return_value.sample.return_value=None
                 with self.assertRaises(KeyboardInterrupt):watch(SimpleNamespace(dot_thread=[]))
             self.assertEqual(clears,[111.9,113])
-            self.assertEqual(sampler.return_value.sample.call_count,2)
+            sampler.assert_not_called()
             self.assertTrue(any(t==101 and [e['id'] for e in p['elements']]==['motion-bar']
                                 for t,p in draws))
             self.assertTrue(any(t==113 and any(e['id']=='motion-view' for e in p['elements'])
@@ -210,7 +205,7 @@ class MotionWatchTests(LocalDisplayTest):
                  patch('busybar_service.cli.BusyAPI',return_value=api), \
                  patch('busybar_service.cli.RolloutWatcher'), \
                  patch('busybar_service.cli.configured_input_monitor') as monitor, \
-                 patch('busybar_service.cli.NetworkSampler'), \
+                 patch('busybar_agents.network.NetworkSampler',side_effect=AssertionError('network sampling is forbidden')), \
                  patch('busybar_service.cli.load_dot_thread_ids',return_value=set()), \
                  patch('busybar_service.cli.read_spool',return_value=[]), \
                  patch('busybar_service.cli.signal.signal'), \

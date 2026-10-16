@@ -52,10 +52,9 @@ class SharedDisplayTests(unittest.TestCase):
                        "read_token": Mock(return_value="test-only"), "BusyAPI": Mock(return_value=api),
                        "TaskRegistry": Mock(return_value=registry), "RolloutWatcher": Mock(dot_thread_ids=set()),
                        "configured_input_monitor": Mock(return_value=Mock(pop_start_pressed=Mock(side_effect=pressed))),
-                       "configured_checker": Mock(return_value=None), "NetworkSampler": Mock(),
+                       "configured_checker": Mock(return_value=None),
                        "load_dot_thread_ids": Mock(return_value=set()), "read_spool": Mock(return_value=[]),
                        "notifier_sources": Mock(return_value=[source] if enabled else []), "SPAWN": lambda work: work()}
-            patches["NetworkSampler"].return_value.sample.return_value = None
             for name, value in patches.items():
                 stack.enter_context(patch("busybar_service.cli." + name, value))
             stack.enter_context(patch("busybar_service.cli.time.time", side_effect=lambda: clock["now"]))

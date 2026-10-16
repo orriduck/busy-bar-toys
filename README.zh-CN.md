@@ -34,7 +34,7 @@ Configuration 使用 Interception、Follow queue、Dispensable 三个全局组�
 |---|---|
 | **Codex：运行 → 批准 → 待机 → 日历** · [MP4](docs/demos/codex-cycle.mp4)<br>![Codex：运行 → 批准 → 待机 → 日历; offline DEMO](docs/demos/codex-cycle.gif) | **ADSBao：飞机提示 → 恢复当前 Codex** · [MP4](docs/demos/adsbao.mp4)<br>![ADSBao：飞机提示 → 恢复当前 Codex; offline DEMO](docs/demos/adsbao.gif) |
 | **Your dot：独立来源图标** · [MP4](docs/demos/your-dot.mp4)<br>![Your dot：独立来源图标; offline DEMO](docs/demos/your-dot.gif) | **Start/Pause → 日历 → 新一轮任务** · [MP4](docs/demos/start-pause.mp4)<br>![Start/Pause → 日历 → 新一轮任务; offline DEMO](docs/demos/start-pause.gif) |
-| **时钟与上下行流量** · [MP4](docs/demos/clock-network.mp4)<br>![时钟与上下行流量; offline DEMO](docs/demos/clock-network.gif) | **运行、批准、错误、过期、待机** · [MP4](docs/demos/state-colors.mp4)<br>![运行、批准、错误、过期、待机; offline DEMO](docs/demos/state-colors.gif) |
+| **时钟与输入／输出 token** · [MP4](docs/demos/clock-tokens.mp4)<br>![时钟与输入／输出 token; offline DEMO](docs/demos/clock-tokens.gif) | **运行、批准、错误、过期、待机** · [MP4](docs/demos/state-colors.mp4)<br>![运行、批准、错误、过期、待机; offline DEMO](docs/demos/state-colors.gif) |
 
 Codex 短片保留完整的十秒待机。
 飞机短片保留完整的十秒航班显示。
@@ -64,7 +64,7 @@ Codex 短片保留完整的十秒待机。
 
 | 组件 | 显示内容 | App |
 |---|---|---|
-| [Agent checker](agent-checker/README.md) | 任务状态、来源图标、时钟、网络速度。 | Codex、Your dot、Claude Code |
+| [Agent checker](agent-checker/README.md) | 任务状态、来源图标、时钟、当前轮 token 数。 | Codex、Your dot、Claude Code |
 | [Notifier](notifier/README.md) | 带逐字滚动入场动画的简短通知。 | ADSBao、Datadog、GitHub、Jira、Metaflow、Terminal、Credentials、Calendar |
 
 见[全部 app 及其要求](apps/README.md)。
@@ -73,8 +73,10 @@ Codex 短片保留完整的十秒待机。
 
 在已配置的 agent app 中开始一个任务，即可显示状态界面。
 时钟使用纽约时区和 24 小时制。
-彩色箭头表示上传和下载是否活跃。
-数字表示 Mac 默认网络接口的上下行总速度。
+琥珀色 ↑ 数字表示输入 token，青色 ↓ 数字表示输出 token。
+数字累计当前这轮 Codex 任务的用量，下一轮开始时归零。
+Codex 上报用量时才会更新；`--` 表示暂时没有可用数据。
+正面显示缩写，背面显示精确计数。
 
 | 光条 | 状态 |
 |---|---|
