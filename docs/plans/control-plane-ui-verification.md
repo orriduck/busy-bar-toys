@@ -107,3 +107,20 @@ Throughput is still a limitation. One20.718-second formal navigation window rece
 At the user's request, application typography and geometry now use a90% root scale, with fixed layout dimensions expressed in rem so Tailwind/shadcn controls, spacing, logo and preview scale together. One-pixel outlines and conservative responsive cutoffs remain unchanged. Browser zoom stays100%; viewport-height calculations still fill the screen.
 
 Formal Worker0940a5c0-646f-423f-a917-c69b3773c3ab, CSS index-h2po1mKZ.css. At1159×1048, root font14.4px; logo72×23.4 at(21.6,31.5), workspace x295.2/y86.4, no horizontal overflow. Display→Services kept the actual pixel preview in the bottom-left dock; console errors/warnings empty. At390×844, no horizontal overflow and preview remained before forms. Private screenshot evidence is in /tmp/busy-bar-density-desktop.png and /tmp/busy-bar-density-mobile.png, excluded from Git. Typecheck, build, production dry-run and143 Worker/UI tests passed. This CSS-only change does not address the separately tracked producer throughput issue.
+
+
+## Compact service management — 2026-10-15
+
+User explicitly paused FPS work in favor of fast UI iteration. Existing producer-serialization WIP is preserved separately and is not part of this release. The default90% density, official assets, Tailwind/shadcn/TanStack foundation and one persistent Preview remain.
+
+Services groups explicitly registered source-device names, with unprefixed legacy names under Ungrouped. Compact child rows have enable and one credential/revoke menu; Bar buttons and Live preview switches are named and explained there. Configuration starts as a ranked dnd-kit list with mouse and keyboard grips. Clicking expands advanced policy fields. Hidden forms remain mounted; stale revisions are rejected rather than overwritten. Atomic admin-only service-order POST validates the complete permutation before changing priorities or ticking once.
+
+Queue adds HH:mm:ss receipts, priority badges and a thin confirmed-playback indicator. Finite duration uses remaining time after entry animation. Source-controlled/unknown duration is indeterminate. Expired ownership and legacy snapshots fail closed. Sign out uses the destructive shared variant.
+
+At code71844e1:175 Worker/UI tests, typecheck, build and dry-run passed. Independent specification and quality reviews both passed; focused32 tests passed. Push CI38832733096 and PR CI38832758762 passed all Python3.10/3.14 and control-plane jobs. The JS bundle has a Vite size warning after adding dnd-kit; it is recorded rather than suppressed.
+
+Local synthetic browser acceptance verified mouse and keyboard reordering with Order saved, immediate Bar buttons toggle, common action menu, and an unsaved heartbeat91 value surviving Services→Configuration. Production settings and credentials were not changed.
+
+Formal Worker619cdf3b-fd17-4246-9f5f-b825cd5228b9 serves JS index-nzHzWEAS.js and CSS index-CTGcA5qi.css. Formal browser shows This Mac/MacBook groups, collapsed config rows with detail on click, priority badges and second-resolution receipts, destructive sign-out classes, one live canvas and increasing frame counters across navigation. A source stream reconnect was also observed; this does not establish uninterrupted transport or an FPS improvement. Mobile390×844 has no horizontal overflow; actual pixel preview stays before the form. Private screenshots /tmp/busy-compact-{services,config,display,mobile}-production.png were visually inspected and excluded from Git.
+
+Deployment propagation briefly mixed old HTML and missing new JS. A fresh release query subsequently loaded the new UI. The device Durable Object initially continued serving the older additive-metadata-free snapshot, which the new UI handles without a crash or invented progress. Final playback/DO rollout acceptance is tracked separately from static-asset success. No automatic GitHub deployment job exists yet: this release was explicitly deployed with authenticated Wrangler after green CI.
