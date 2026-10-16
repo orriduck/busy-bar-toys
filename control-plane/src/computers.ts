@@ -1,4 +1,8 @@
-import { PRIORITY_GROUPS, type PriorityGroup } from "./priority-groups";
+import {
+  PRIORITY_GROUPS,
+  priorityGroupOf,
+  type PriorityGroup,
+} from "./priority-groups";
 import { identifier, requireThat, type Computer, type State } from "./model";
 
 /** One-time upgrade of declared legacy groups. These IDs are not hardware proof.
@@ -140,11 +144,31 @@ export function reorderOwnedGroups(
     "INVALID_SERVICE_ORDER",
   );
   const ids = PRIORITY_GROUPS.flatMap((group) => mapping[group] as unknown[]);
-  // This validates complete membership and ownership before its sole order mutation.
-  reorderOwnedServices(s, computerId, ids, expectedRevision);
+  const owned = Object.values(s.services).filter(
+    (service) => service.computerId === computerId,
+  );
+  requireThat(
+    ids.length === owned.length &&
+      new Set(ids).size === owned.length &&
+      ids.every(
+        (id) =>
+          typeof id === "string" &&
+          has(s.services, id) &&
+          s.services[id].computerId === computerId,
+      ),
+    "INVALID_SERVICE_ORDER",
+  );
+  let changed = false;
   for (const group of PRIORITY_GROUPS)
     for (const id of mapping[group] as string[])
-      s.services[id].priorityGroup = group;
+      if (priorityGroupOf(s.services[id]) !== group) {
+        s.services[id].priorityGroup = group;
+        changed = true;
+      }
+  if (changed) {
+    s.configRevision++;
+    s.revision++;
+  }
 }
 /** Remove expired control codes only after a successful operation's validation. */
 export function expireComputerCodes(s: State, now: number) {

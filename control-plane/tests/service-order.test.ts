@@ -73,20 +73,20 @@ describe("explicit per-computer service order", () => {
     ).toEqual(["c", "a"]);
     expect(JSON.stringify(view)).not.toContain("credentialHash");
   });
-  it("uses explicit own order and ignores changed legacy priorities", () => {
+  it("treats reversed stored serviceOrder and legacy priorities as inert display metadata", () => {
     const s = state();
     s.services.a.priorityGroup = s.services.c.priorityGroup = "dispensable";
     send(s, "a");
     send(s, "c");
-    expect(selected(s)).toBe("c");
+    expect(selected(s)).toBe("a");
     s.services.a.config.priority = 1000;
     model.tick(s, now + 1);
-    expect(selected(s)).toBe("c");
+    expect(selected(s)).toBe("a");
     s.computers["computer-a"].serviceOrder = ["a", "c"];
     model.tick(s, now + 2);
     expect(selected(s)).toBe("a");
   });
-  it("keeps FIFO computer turns within a group and advances on completion", () => {
+  it("keeps global FIFO within a group and advances on completion", () => {
     const s = state();
     send(s, "c", "active", { kind: "agent", exit: "source" });
     model.acceptDisplay(s, s.generation, now);
@@ -96,15 +96,15 @@ describe("explicit per-computer service order", () => {
     expect(selected(s)).toBe("c");
     expect(model.groups(s).map((g) => g.representative.serviceId)).toEqual([
       "c",
-      "b",
       "a",
+      "b",
       "d",
     ]);
     model.finishItem(s, s.selected!, "resolved", 1, now + 1);
-    expect(selected(s)).toBe("b");
+    expect(selected(s)).toBe("a");
     model.acceptDisplay(s, s.generation, now + 1);
     model.finishItem(s, s.selected!, "resolved", 1, now + 2);
-    expect(selected(s)).toBe("a");
+    expect(selected(s)).toBe("b");
   });
   it("resumes a lower group only after all higher-group work clears", () => {
     const s = state();

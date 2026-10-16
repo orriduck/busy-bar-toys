@@ -54,7 +54,7 @@ A custom publisher follows [PROTOCOL.md](PROTOCOL.md). Registering a service doe
 
 - **Display:** see current front-display pixels and the queue. Rows show App, Sender, and Received. Open an app to read details, expand grouped members, pause, resume, end, or run an advertised action.
 - **Services:** register collectors. Replace or revoke publisher credentials here. Replacement ends that service's old items. Update the local client before it can publish again.
-- **Configuration:** drag your services into Interception, Follow queue or Dispensable, then order your own queue within each group. Other computers stay visible and read only. Group moves save immediately. Edit Hold and Heartbeat in the detail panel and select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
+- **Configuration:** drag your services into Interception, Follow queue or Dispensable, keep every service in that group at equal priority. Other computers stay visible and read only. Drag changes groups only. Group moves save immediately. Edit Hold and Heartbeat in the detail panel and select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
 - **Device:** inspect connection, current controller, API confirmation and preview diagnostics. Sign out here. An API acknowledgment does not prove physical pixels.
 
 Sender is the service name, with an instance when needed. It is not the notification's business author. Received is the occurrence's first server receipt time. Updates retain it. Open the row for full provenance and time.

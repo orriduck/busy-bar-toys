@@ -1,5 +1,7 @@
 # Global priority groups implementation plan
 
+> Superseded within-group ordering: see [equal-group correction](../specs/2026-10-16-equal-group-services.md). All services in a group now have equal priority; dragging only changes groups.
+
 > For agentic workers: use subagent-driven-development with isolated backend and UI ownership, then spec and quality reviews. User requested direct implementation/configuration; no additional approval step.
 
 Goal: three actual global priority groups, own-computer drag management, and production groups configured as requested.

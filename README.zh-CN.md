@@ -12,7 +12,7 @@
 浏览器分为 Display、Services、Configuration 和 Device 四页。
 Display 只显示真实正面画面和 App / Sender / Received 三列队列。
 可选的本地 Wi-Fi 预览桥以 30 fps 为目标，Device 显示实际测量帧率。
-Configuration 使用 Interception、Follow queue、Dispensable 三个全局组。每台电脑只能移动自己的服务，并设置组内队列、Hold 和 Heartbeat；Services 提供服务开关。
+Configuration 使用 Interception、Follow queue、Dispensable 三个全局组。每台电脑只能移动自己的服务，并设置分组、Hold 和 Heartbeat；同组服务同级，行序不影响调度。Services 提供服务开关。
 每条消息由发送端声明结束方式。定时消息显示完成后结束，宿主决定何时再次发送。
 本地采集器使用独立服务凭证发布画面，管理页通过 SSE 同步。
 

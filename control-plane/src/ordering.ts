@@ -31,13 +31,6 @@ export function migrateServiceOrders(s: State, now: number) {
   if (changed) s.revision++;
   return changed;
 }
-export function servicePosition(s: State, id: string) {
-  const computer = s.services[id]?.computerId;
-  const index = computer
-    ? (s.computers[computer]?.serviceOrder.indexOf(id) ?? -1)
-    : -1;
-  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-}
 export function computerOf(s: State, item: Item) {
   return s.services[item.serviceId]?.computerId ?? item.serviceId;
 }
@@ -49,9 +42,6 @@ export function prepareTurns(s: State) {
   const eligible = Object.values(s.items)
     .filter((i) => i.state !== "paused" && i.state !== "snoozed")
     .sort((a, b) => a.enqueueSeq - b.enqueueSeq);
-  const liveComputers = new Set(eligible.map((i) => computerKey(s, i)));
-  for (const key of Object.keys(s.priorityComputerTurns))
-    if (!liveComputers.has(key)) delete s.priorityComputerTurns[key];
   for (const group of PRIORITY_GROUPS) {
     const lease = s.priorityLeases[group];
     if (
@@ -63,10 +53,6 @@ export function prepareTurns(s: State) {
       )
     )
       delete s.priorityLeases[group];
-  }
-  for (const i of eligible) {
-    const key = computerKey(s, i);
-    s.priorityComputerTurns[key] ??= ++s.turnSeq;
   }
   s.serviceTurns ??= {};
   const live = new Set(
@@ -94,7 +80,7 @@ export function hasTurnPeer(s: State, item: Item) {
     priorityGroupOf(s.services[item.serviceId]) === "dispensable" &&
     Object.values(s.items).some(
       (i) =>
-        computerOf(s, i) !== computerOf(s, item) &&
+        i.serviceId !== item.serviceId &&
         priorityGroupOf(s.services[i.serviceId]) === "dispensable" &&
         i.state !== "paused" &&
         i.state !== "snoozed",
@@ -106,63 +92,62 @@ export function yieldTurn(s: State, id: string) {
   s.serviceTurns[id] = { totalMs, remainingMs: totalMs, ticket: ++s.turnSeq };
   s.revision++;
 }
-const computerKey = (s: State, item: Item) =>
-  JSON.stringify([
-    priorityGroupOf(s.services[item.serviceId]),
-    computerOf(s, item),
-  ]);
+/** Legacy name retained internally; only release this occurrence's group lease. */
 export function yieldComputer(s: State, item: Item) {
-  s.priorityComputerTurns ??= {};
   s.priorityLeases ??= {};
-  s.priorityComputerTurns[computerKey(s, item)] = ++s.turnSeq;
-  delete s.priorityLeases[priorityGroupOf(s.services[item.serviceId])];
+  const group = priorityGroupOf(s.services[item.serviceId]);
+  if (s.priorityLeases[group] === item.itemKey) delete s.priorityLeases[group];
   s.revision++;
 }
-/** Global group, fair computer, that computer's ordered service head. The two
- * completion groups retain their occurrence lease across higher interruptions. */
-export function normalOrder<T extends { representative: Item }>(
-  s: State,
-  groups: T[],
-): T[] {
-  const result: T[] = [];
-  for (const group of PRIORITY_GROUPS) {
-    const byComputer = new Map<string, T[]>();
+/** Completion groups retain their occurrence lease across interruptions, then
+ * use global FIFO. Dispensable services share global Hold tickets, regardless of
+ * computer; later messages from one service wait for the next service round. */
+export function normalOrder<
+  T extends { representative: Item; members: Item[] },
+>(s: State, groups: T[]): T[] {
+  return PRIORITY_GROUPS.flatMap((group) => {
     const lease = s.priorityLeases[group];
-    for (const g of groups.filter(
+    const eligible = groups.filter(
       (g) => priorityGroupOf(s.services[g.representative.serviceId]) === group,
-    )) {
-      const key = computerKey(s, g.representative);
-      byComputer.set(key, [...(byComputer.get(key) ?? []), g]);
-    }
-    for (const own of byComputer.values())
-      own.sort(
-        (a, b) =>
-          (group === "dispensable"
-            ? 0
-            : Number(b.representative.itemKey === lease) -
-              Number(a.representative.itemKey === lease)) ||
-          servicePosition(s, a.representative.serviceId) -
-            servicePosition(s, b.representative.serviceId) ||
-          Number(b.representative.itemKey === lease) -
-            Number(a.representative.itemKey === lease) ||
-          a.representative.enqueueSeq - b.representative.enqueueSeq,
-      );
-    const computers = [...byComputer].sort(
-      ([a, xs], [b, ys]) =>
-        (group === "dispensable"
-          ? 0
-          : Number(ys.some((g) => g.representative.itemKey === lease)) -
-            Number(xs.some((g) => g.representative.itemKey === lease))) ||
-        s.priorityComputerTurns[a] - s.priorityComputerTurns[b] ||
-        a.localeCompare(b),
     );
-    // One occurrence from each computer per round; later own messages cannot
-    // jump past that computer's service head on the next scheduling boundary.
-    while (computers.some(([, own]) => own.length))
-      for (const [, own] of computers) {
+    // Display severity may select a later representative. The bundle's place
+    // belongs to its first eligible occurrence, independent of display content.
+    const arrival = (g: T) => Math.min(...g.members.map((i) => i.enqueueSeq));
+    const fifo = (a: T, b: T) => arrival(a) - arrival(b);
+    if (group !== "dispensable")
+      return eligible.sort(
+        (a, b) =>
+          Number(b.representative.itemKey === lease) -
+            Number(a.representative.itemKey === lease) || fifo(a, b),
+      );
+    const leasedService = eligible.find(
+      (g) => g.representative.itemKey === lease,
+    )?.representative.serviceId;
+    const hasBudget =
+      !!leasedService && s.serviceTurns[leasedService]?.remainingMs > 0;
+    const byService = new Map<string, T[]>();
+    for (const item of eligible.sort(
+      (a, b) =>
+        Number(hasBudget && b.representative.itemKey === lease) -
+          Number(hasBudget && a.representative.itemKey === lease) || fifo(a, b),
+    )) {
+      const id = item.representative.serviceId;
+      byService.set(id, [...(byService.get(id) ?? []), item]);
+    }
+    const services = [...byService].sort(
+      ([a, xs], [b, ys]) =>
+        Number(hasBudget && b === leasedService) -
+          Number(hasBudget && a === leasedService) ||
+        (s.serviceTurns[a]?.ticket ?? Number.MAX_SAFE_INTEGER) -
+          (s.serviceTurns[b]?.ticket ?? Number.MAX_SAFE_INTEGER) ||
+        fifo(xs[0], ys[0]),
+    );
+    const result: T[] = [];
+    while (services.some(([, own]) => own.length))
+      for (const [, own] of services) {
         const next = own.shift();
         if (next) result.push(next);
       }
-  }
-  return result;
+    return result;
+  });
 }

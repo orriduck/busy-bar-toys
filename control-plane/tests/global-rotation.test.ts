@@ -137,7 +137,7 @@ describe("global priority groups and confirmed visible-time turns", () => {
     expect(active(s)).toBe("peer");
     expect(Object.keys(s.items)).toHaveLength(2);
   });
-  it("exposes turn progress and an peer ETA, but no later own service ETA past a source", () => {
+  it("exposes Hold ETA for every equal service including a later same-computer source", () => {
     const s = setup();
     send(s, "a");
     m.acceptDisplay(s, s.generation, now);
@@ -151,9 +151,10 @@ describe("global priority groups and confirmed visible-time turns", () => {
       kind: "estimate",
       at: now + 5000,
     });
-    expect(view.items.find((i) => i.serviceId === "low")?.eta.kind).toBe(
-      "await-resolution",
-    );
+    expect(view.items.find((i) => i.serviceId === "low")?.eta).toEqual({
+      kind: "estimate",
+      at: now + 10000,
+    });
   });
   it("records idle source heartbeats without deriving online status from global health", () => {
     const s = setup();
@@ -225,4 +226,42 @@ it("does not promise a Follow queue ETA past a source-ended occurrence", () => {
   expect(
     m.snapshot(s, now + 4000).items.find((i) => i.serviceId === "b")?.eta.kind,
   ).toBe("await-resolution");
+});
+
+it("rotates same-computer services and resumes a partial Hold after interruption", () => {
+  const s = setup();
+  s.services.b.priorityGroup = "interception";
+  send(s, "a");
+  m.acceptDisplay(s, s.generation, now);
+  send(s, "low");
+  send(s, "b", now + 2000);
+  m.acceptDisplay(s, s.generation, now + 2000);
+  m.finishItem(s, s.selected!, "resolved", 1, now + 4000);
+  expect(active(s)).toBe("a");
+  m.acceptDisplay(s, s.generation, now + 4000);
+  m.tick(s, now + 6999);
+  expect(active(s)).toBe("a");
+  m.tick(s, now + 7000);
+  expect(active(s)).toBe("low");
+  m.acceptDisplay(s, s.generation, now + 7000);
+  m.tick(s, now + 12000);
+  expect(active(s)).toBe("a");
+});
+
+it("preserves a persisted active Hold and budget even if old computer ordering chose a later ticket", () => {
+  let s = setup();
+  send(s, "low");
+  m.acceptDisplay(s, s.generation, now);
+  send(s, "a");
+  m.tick(s, now + 2000);
+  // A pre-upgrade computer/service order could select a later global ticket.
+  s.serviceTurns.low.ticket = ++s.turnSeq;
+  const before = structuredClone(s.serviceTurns);
+  const occurrence = s.selected;
+  s = JSON.parse(JSON.stringify(s));
+  m.tick(s, now + 2000);
+  expect(s.selected).toBe(occurrence);
+  expect(s.serviceTurns).toEqual(before);
+  m.tick(s, now + 5000);
+  expect(active(s)).toBe("a");
 });

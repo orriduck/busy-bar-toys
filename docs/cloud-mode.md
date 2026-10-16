@@ -57,13 +57,13 @@ One computer credential can publish arbitrary app labels and content to any of i
 
 Paste the five-minute, one-use code into **Connect computer → Pairing code**. The server records the binding. A browser preference cannot grant access. Sign out before pairing a different computer. Sign out removes the browser binding; it does not stop local services.
 
-**Configuration** shows three global groups and every computer's services. Drag only your own services between groups or within your own group queue. Other computers remain visible and read only.
+**Configuration** shows three global groups and every computer's services. Drag only your own services between groups. All services in a group have equal priority. Other computers remain visible and read only.
 
 - **Interception** interrupts either lower group immediately. Use it for pages that need the screen now.
-- **Follow queue** plays queued work without interrupting the active message in that group. Each computer follows its own service order; computers alternate at completed-message boundaries. A source-ended message must be ended by its host before the queue advances.
-- **Dispensable** shows background status while the higher groups are empty. Eligible computers alternate by each service's Hold; each computer follows its own service order.
+- **Follow queue** plays queued work without interrupting the active message in that group. Equal services queue by arrival time. A new arrival does not interrupt the current same-group occurrence. A source-ended message must be ended by its host before the queue advances.
+- **Dispensable** shows background status while the higher groups are empty. All eligible services alternate by each service's Hold, including services on the same computer.
 
-A service's group is global. A row's position on one computer no longer creates a cross-computer priority tier. Higher groups preserve the interrupted occurrence and its remaining budget. Source urgency cannot promote a message above its registered group. Only native-confirmed visible time after entrance consumes Hold. Source messages stay alive across turns; timed messages keep their original cumulative lifetime. Services and Configuration show source connectivity, last heartbeat, group, display state and queue count. A source that has never checked in is not marked online.
+A service's group is global. A row's position and its computer do not create another priority within a group. Higher groups preserve the interrupted occurrence and its remaining budget. Source urgency cannot promote a message above its registered group. Only native-confirmed visible time after entrance consumes Hold. Source messages stay alive across turns; timed messages keep their original cumulative lifetime. Services and Configuration show source connectivity, last heartbeat, group, display state and queue count. A source that has never checked in is not marked online.
 
 The sender declares `exit: finite|source` for each occurrence. Hold sets the Dispensable visible turn and the cumulative lifetime of finite messages. The sender decides when to send a new occurrence. Register an explicit `priorityGroup` through the API, or move the owned service in Configuration; agents initially default to Dispensable and other templates to Follow queue.
 
@@ -113,6 +113,6 @@ Register a separate Notifier before starting an upgraded observer:
 .venv/bin/busy-bar cloud-register agent-notifier --template notifier --name "Agent requests" --source agent-notifier
 ```
 
-Put Agent requests and ADSBao in Follow queue, and Agent status in Dispensable. Put a dedicated Page service in Interception when it must interrupt queued work. Order only your own services inside each group. Status and input requests use separate registrations. Each waiting task retains its own notification; the source removes it when input is resolved. Other computers must register and route their own Notifier; this command does not change them.
+Put Agent requests and ADSBao in Follow queue, and Agent status in Dispensable. Put a dedicated Page service in Interception when it must interrupt queued work. Move only your own services between groups. There is no ranking inside a group. Status and input requests use separate registrations. Each waiting task retains its own notification; the source removes it when input is resolved. Other computers must register and route their own Notifier; this command does not change them.
 
 To withdraw a notification, call `CloudQueue.withdraw(source, item_id)` or `RoutedCloudQueue.withdraw(source, item_id)`. The durable local outbox retries `POST /api/withdraw` until acknowledged. The HTTP body contains `instanceId`, `epoch`, `itemId`, `version`, authenticated for the matching owned service. Withdrawal retires that occurrence; a later notification needs a new occurrence.
