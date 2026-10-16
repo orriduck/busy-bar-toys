@@ -514,3 +514,20 @@ class CloudThreadTest(unittest.TestCase):
             frozen=snapshot(10,310000)
             now[0]=319; guard.snapshot(frozen); guard.check(); self.assertEqual(notices,[])
             now[0]=320; guard.snapshot(frozen); guard.check(); self.assertEqual(len(notices),1)
+
+class IdleHeartbeatTest(unittest.TestCase):
+    def test_idle_publisher_reports_liveness_without_renewing_any_occurrence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clock=[100];calls=[]
+            class HTTP:
+                def request(self,method,path,body=None):
+                    calls.append((path,body));return {'ok':True}
+            producer=cloud.Producer(Path(directory),{'role':'notifier','serviceId':'notifier','instanceId':'mac','epoch':'e'},HTTP(),clock=lambda:clock[0],notify=lambda *args:None)
+            producer.flush()
+            beats=[body for path,body in calls if path=='/api/heartbeat']
+            self.assertEqual(len(beats),1)
+            self.assertEqual(beats[0]['itemIds'],[])
+            producer.flush();self.assertEqual(len(calls),1)
+            clock[0]+=5;producer.flush();self.assertEqual(len(calls),2)
+            self.assertTrue(all(body['itemIds']==[] for _,body in calls))
+            self.assertFalse(producer.state.records)
