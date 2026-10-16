@@ -58,10 +58,10 @@ describe("own priority group movement", () => {
       dispensable: [],
     });
   });
-  it("reorders only the own queue and supports moving to an empty global group", () => {
+  it("ignores same-group positions and supports moving to an empty global group", () => {
     const base = ownedPriorityGroups(snapshot, "own");
     const reordered = moveOwnedService(base, "a", "follow-queue", "b");
-    expect(reordered["follow-queue"]).toEqual(["a", "b"]);
+    expect(reordered).toBe(base);
     const next = moveOwnedService(reordered, "b", "interception");
     expect(next).toEqual({
       interception: ["b"],
@@ -104,4 +104,11 @@ describe("own priority group movement", () => {
       ["foreign-b", "follow-queue"],
     ]);
   });
+});
+
+it("ignores insertion positions when moving into another group", () => {
+  const base = ownedPriorityGroups(snapshot, "own");
+  expect(
+    moveOwnedService(base, "c", "follow-queue", "b")["follow-queue"],
+  ).toEqual(["b", "a", "c"]);
 });

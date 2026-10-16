@@ -1,5 +1,7 @@
 # Global priority groups
 
+> Superseded within-group ordering: see [equal-group correction](../specs/2026-10-16-equal-group-services.md). All services in a group now have equal priority; dragging only changes groups.
+
 User explicitly requested implementation and production configuration in one pass. This supersedes global priority inferred from each computer's list index. All services remain visible; computers can move and reorder only their own services.
 
 Three global groups, highest first:

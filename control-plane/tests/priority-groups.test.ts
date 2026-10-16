@@ -97,7 +97,7 @@ describe("priority group protocol", () => {
       s.configRevision,
     );
     expect(s.services.a2.priorityGroup).toBe("interception");
-    expect(s.computers.A.serviceOrder).toEqual(["a2", "a"]);
+    expect(s.computers.A.serviceOrder).toEqual(["a", "a2"]);
     computers.reorderOwnedServices(s, "A", ["a", "a2"], s.configRevision);
     expect(s.services.a2.priorityGroup).toBe("interception");
     for (const invalid of [
@@ -165,20 +165,25 @@ describe("global priority group scheduling", () => {
       expect(active(s)).toBe("b");
     },
   );
-  it("Follow queue alternates computers at completion and uses each computer service order", () => {
-    const s = state();
-    send(s, "a");
-    m.acceptDisplay(s, s.generation, now);
-    send(s, "a2");
-    send(s, "b2");
-    send(s, "b");
-    m.tick(s, now + 5000);
-    expect(active(s)).toBe("b");
-    m.acceptDisplay(s, s.generation, now + 5000);
-    m.tick(s, now + 10000);
-    expect(active(s)).toBe("a2");
-  });
-  it("Dispensable alternates computers by confirmed Hold while keeping own live head first", () => {
+  it.each(["interception", "follow-queue"] as const)(
+    "%s uses global FIFO across equal same-computer services",
+    (group) => {
+      const s = state();
+      for (const service of Object.values(s.services))
+        service.priorityGroup = group;
+      send(s, "a");
+      m.acceptDisplay(s, s.generation, now);
+      send(s, "a2");
+      send(s, "b2");
+      send(s, "b");
+      m.tick(s, now + 5000);
+      expect(active(s)).toBe("a2");
+      m.acceptDisplay(s, s.generation, now + 5000);
+      m.tick(s, now + 10000);
+      expect(active(s)).toBe("b2");
+    },
+  );
+  it("Dispensable rotates all services by confirmed Hold including same-computer peers", () => {
     const s = state();
     for (const service of Object.values(s.services))
       service.priorityGroup = "dispensable";
@@ -187,10 +192,10 @@ describe("global priority group scheduling", () => {
     send(s, "a2", { level: "urgent" });
     send(s, "b", { kind: "agent", exit: "source" });
     m.tick(s, now + 5000);
-    expect(active(s)).toBe("b");
+    expect(active(s)).toBe("a2");
     m.acceptDisplay(s, s.generation, now + 5000);
     m.tick(s, now + 10000);
-    expect(active(s)).toBe("a");
+    expect(active(s)).toBe("b");
     expect(Object.keys(s.items)).toHaveLength(3);
   });
 });
@@ -244,4 +249,40 @@ it("bounds admitted-version coverage by the shorter health proof", () => {
     m.snapshot(s, now + 1001).items.find((i) => i.itemKey === a.itemKey)
       ?.coverageProof,
   ).toBeUndefined();
+});
+
+it("ignores same-group array permutations without changing order or revision", () => {
+  const s = state(),
+    before = structuredClone(s);
+  computers.reorderOwnedGroups(
+    s,
+    "A",
+    { interception: [], "follow-queue": ["a2", "a"], dispensable: [] },
+    s.configRevision,
+  );
+  expect(s).toEqual(before);
+});
+
+it("orders a grouped bundle by its earliest member while displaying its highest severity", () => {
+  const s = state();
+  s.services.b2.priorityGroup = "interception";
+  send(s, "b2", { itemId: "high", kind: "agent", exit: "source" });
+  m.acceptDisplay(s, s.generation, now);
+  const first = send(s, "a", { itemId: "first", groupKey: "bundle" });
+  const peer = send(s, "b", { itemId: "peer" });
+  const urgent = send(s, "a", {
+    itemId: "urgent",
+    groupKey: "bundle",
+    level: "urgent",
+  });
+  expect(
+    m.groups(s).find((g) => g.members.some((i) => i.itemKey === first.itemKey))
+      ?.representative.itemKey,
+  ).toBe(urgent.itemKey);
+  m.finishItem(s, s.selected!, "resolved", 1, now + 1000);
+  expect(s.selected).toBe(urgent.itemKey);
+  expect(m.groups(s).map((g) => g.representative.itemKey)).toEqual([
+    urgent.itemKey,
+    peer.itemKey,
+  ]);
 });

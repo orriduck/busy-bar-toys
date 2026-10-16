@@ -432,10 +432,9 @@ describe("global priority group mutation HTTP boundary", () => {
     expect(after.services.datadog.priorityGroup).toBe("interception");
     expect(after.services.github.priorityGroup).toBe("dispensable");
     expect(after.services.foreign).toEqual(before.services.foreign);
-    expect(after.computers["computer-a"].serviceOrder).toEqual([
-      "datadog",
-      "github",
-    ]);
+    expect(after.computers["computer-a"].serviceOrder).toEqual(
+      before.computers["computer-a"].serviceOrder,
+    );
     expect(after.services.github.credentialHash).toBe(
       before.services.github.credentialHash,
     );

@@ -54,7 +54,7 @@ Setup 只保存连接信息，不替换正在运行的独立观察服务。准�
 
 - **Display：**查看当前正面像素和队列，每行只显示 App、Sender、Received。点击 app 展开详情和分组成员，并暂停、恢复、结束通知或执行已声明的动作。
 - **Services：**开关服务及其按键和预览桥，注册采集器，替换或撤销 publisher credential。替换会结束该服务的旧项目；本地更新凭据后才能继续发布。
-- **Configuration：**把本机服务拖到 Interception、Follow queue 或 Dispensable，并调整本机在组内的队列。其他电脑可查看、不可拖动。分组拖动立即保存；详情中的 Hold 和 Heartbeat 需要选择 **Save changes**。旧版本修改会被拒绝；重新加载表单后再保存。
+- **Configuration：**把本机服务拖到 Interception、Follow queue 或 Dispensable；同组服务同级，拖拽只用于换组。其他电脑可查看、不可拖动。分组拖动立即保存；详情中的 Hold 和 Heartbeat 需要选择 **Save changes**。旧版本修改会被拒绝；重新加载表单后再保存。
 - **Device：**查看连接、当前控制者、API 确认和预览诊断，并退出登录。API 成功不等于实体像素验收。
 
 Sender 是注册服务名，必要时附上 instance，不代表来源通知的作者。Received 是首次收到该 occurrence 的服务端时间，更新后保留。展开行可查看每位成员的来源和完整时间。

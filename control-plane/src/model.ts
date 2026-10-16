@@ -929,7 +929,9 @@ export function tick(s: State, now: number) {
     if (a.createdAt + 86400000 <= now) delete s.actions[key];
   }
   prepareTurns(s);
-  const turnOwner = s.selected ? s.items[s.selected] : null;
+  // The finite occurrence may just have completed while its service still has
+  // another queued occurrence. Its exhausted Hold must yield before that one.
+  const turnOwner = (s.selected ? s.items[s.selected] : null) ?? current;
   if (
     turnOwner &&
     s.serviceTurns[turnOwner.serviceId]?.remainingMs === 0 &&
@@ -1131,13 +1133,12 @@ export function snapshot(s: State, now: number, serviceId?: string) {
     controller = s.selected ? s.items[s.selected] : null;
   let eta = now;
   let unresolved = false;
-  const seenComputers = new Set<string>();
+  const seenServices = new Set<string>();
   const estimates = new Map<string, { kind: string; at?: number }>();
   for (const g of queue) {
     const i = g.representative;
     const group = priorityGroupOf(s.services[i.serviceId]);
-    const computer = JSON.stringify([group, computerOf(s, i)]);
-    const ownBlocked = group === "dispensable" && seenComputers.has(computer);
+    const ownBlocked = group === "dispensable" && seenServices.has(i.serviceId);
     estimates.set(
       g.id,
       unresolved || ownBlocked
@@ -1151,7 +1152,7 @@ export function snapshot(s: State, now: number, serviceId?: string) {
         ? Math.max(0, s.visibleSince - now)
         : i.scene.entryDurationMs;
     if (group === "dispensable") {
-      seenComputers.add(computer);
+      seenServices.add(i.serviceId);
       const budget = Math.max(
         0,
         (s.serviceTurns?.[i.serviceId]?.remainingMs ??

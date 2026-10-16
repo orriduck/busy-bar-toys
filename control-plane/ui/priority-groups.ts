@@ -13,10 +13,12 @@ export const priorityGroupLabels: Record<PriorityGroup, string> = {
   dispensable: "Dispensable",
 };
 export const priorityGroupDescriptions: Record<PriorityGroup, string> = {
-  interception: "Interrupts lower groups. Stays until completed.",
+  interception:
+    "Equal services. Interrupts lower groups; stays until completed.",
   "follow-queue":
-    "Waits for work ahead to finish. Resumes after interruptions.",
-  dispensable: "Background status. Computers take turns by Hold.",
+    "Equal services in arrival order. Resumes after interruptions.",
+  dispensable:
+    "Equal services take turns by Hold, including this computer’s services.",
 };
 const emptyGroups = (): OwnedPriorityGroups => ({
   interception: [],
@@ -75,20 +77,13 @@ export function moveOwnedService(
     targetId === serviceId
   )
     return groups;
-  if (sourceGroup === targetGroup && !targetId) return groups;
+  if (sourceGroup === targetGroup) return groups;
   const next = Object.fromEntries(
     PRIORITY_GROUPS.map((group) => [
       group,
       groups[group].filter((id) => id !== serviceId),
     ]),
   ) as OwnedPriorityGroups;
-  const targetIndex = targetId
-    ? groups[targetGroup].indexOf(targetId)
-    : next[targetGroup].length;
-  next[targetGroup].splice(
-    Math.min(targetIndex, next[targetGroup].length),
-    0,
-    serviceId,
-  );
+  next[targetGroup].push(serviceId);
   return next;
 }

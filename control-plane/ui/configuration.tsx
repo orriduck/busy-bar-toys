@@ -4,8 +4,10 @@ import {
   KeyboardSensor,
   PointerSensor,
   closestCenter,
+  rectIntersection,
   pointerWithin,
   useDroppable,
+  useDraggable,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -13,11 +15,6 @@ import {
   type KeyboardCoordinateGetter,
   type Modifier,
 } from "@dnd-kit/core";
-import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
   ArrowLeft,
@@ -58,46 +55,35 @@ const verticalOrder: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 const orderModifiers = [verticalOrder];
 const groupDropId = (group: PriorityGroup) => `priority-group:${group}`;
 const groupCollision: CollisionDetection = (args) => {
+  const targets = {
+    ...args,
+    droppableContainers: args.droppableContainers.filter(
+      (entry) => entry.data.current?.group !== undefined,
+    ),
+  };
+  // Whole-section centers can be nearer to an adjacent group than a row's
+  // actual group. Keyboard drags follow the section containing the moved row.
   if (!args.pointerCoordinates) {
-    const group = args.active.data.current?.group;
-    return closestCenter({
-      ...args,
-      droppableContainers: args.droppableContainers.filter(
-        (entry) =>
-          entry.data.current?.owned === true &&
-          entry.data.current?.group === group,
-      ),
-    });
+    const overlaps = rectIntersection(targets);
+    return overlaps.length ? overlaps : closestCenter(targets);
   }
-  const pointer = pointerWithin(args);
-  return pointer.length ? pointer : closestCenter(args);
+  const pointer = pointerWithin(targets);
+  return pointer.length ? pointer : closestCenter(targets);
 };
-/** Arrow keys sort the owned queue. The library menu handles global group moves. */
-const ownQueueKeyboardCoordinates: KeyboardCoordinateGetter = (
+/** Arrow keys select a group; the same destination is available in the row menu. */
+const groupKeyboardCoordinates: KeyboardCoordinateGetter = (
   event,
   { context, currentCoordinates },
 ) => {
   if (event.code !== "ArrowDown" && event.code !== "ArrowUp") return undefined;
   event.preventDefault();
-  const { active, over, collisionRect, droppableContainers, droppableRects } =
-    context;
+  const { active, over, collisionRect, droppableRects } = context;
   if (!active || !collisionRect) return undefined;
-  const group = active.data.current?.group;
-  const own = droppableContainers
-    .getEnabled()
-    .filter(
-      (entry) =>
-        entry.data.current?.owned === true &&
-        entry.data.current?.group === group,
-    )
-    .sort(
-      (a, b) => a.data.current?.sortable.index - b.data.current?.sortable.index,
-    );
-  const current = own.findIndex(
-    (entry) => entry.id === (over?.id ?? active.id),
-  );
-  const target = own[current + (event.code === "ArrowDown" ? 1 : -1)];
-  const rect = target && droppableRects.get(target.id);
+  const group = over?.data.current?.group ?? active.data.current?.group;
+  const current = PRIORITY_GROUPS.indexOf(group);
+  const target =
+    PRIORITY_GROUPS[current + (event.code === "ArrowDown" ? 1 : -1)];
+  const rect = target && droppableRects.get(groupDropId(target));
   return rect
     ? {
         x: currentCoordinates.x,
@@ -123,12 +109,12 @@ function PrioritySection({
   });
   return (
     <section
+      ref={drop.setNodeRef}
       className="configuration-priority-group"
       data-priority-group={group}
       aria-label={`${priorityGroupLabels[group]} services`}
     >
       <div
-        ref={drop.setNodeRef}
         className={cn("configuration-group-target", drop.isOver && "is-over")}
         data-group-target={group}
       >
@@ -155,7 +141,6 @@ function PrioritySection({
 function ConfigurationRow({
   service,
   group,
-  rank,
   selected,
   onSelect,
   editable,
@@ -164,33 +149,31 @@ function ConfigurationRow({
 }: {
   service: Service;
   group: PriorityGroup;
-  rank: number;
   selected: boolean;
   onSelect: () => void;
   editable: boolean;
   pending: boolean;
   onMove: (group: PriorityGroup) => void;
 }) {
-  const sortable = useSortable({
+  const draggable = useDraggable({
     id: service.id,
-    disabled: { draggable: !editable || pending, droppable: pending },
+    disabled: !editable || pending,
     data: { group, owned: editable },
   });
   return (
     <div
-      ref={sortable.setNodeRef}
+      ref={draggable.setNodeRef}
       style={
         editable
           ? {
-              transform: CSS.Transform.toString(sortable.transform),
-              transition: sortable.transition,
+              transform: CSS.Translate.toString(draggable.transform),
             }
           : undefined
       }
       className={cn(
         "configuration-order-row",
         selected && "is-selected",
-        sortable.isDragging && "is-dragging",
+        draggable.isDragging && "is-dragging",
       )}
       data-service-id={service.id}
       data-owned={editable}
@@ -204,20 +187,14 @@ function ConfigurationRow({
             className="drag-handle"
             aria-label={`Move ${service.name}`}
             disabled={pending}
-            {...sortable.attributes}
-            {...sortable.listeners}
+            {...draggable.attributes}
+            {...draggable.listeners}
           >
             <GripVertical />
           </Button>
         ) : (
           <LockKeyhole className="configuration-lock" aria-label="Read only" />
         )}
-        <span
-          className="configuration-rank"
-          aria-label={`Computer queue position ${rank}`}
-        >
-          <SettingNumber value={rank} />
-        </span>
         <Button
           type="button"
           variant="ghost"
@@ -369,7 +346,7 @@ export function ConfigurationList({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
-      coordinateGetter: ownQueueKeyboardCoordinates,
+      coordinateGetter: groupKeyboardCoordinates,
     }),
   );
   useListMotion(
@@ -431,28 +408,13 @@ export function ConfigurationList({
     setDragging(false);
     setDraft(null);
     if (!base || !event.over || event.active.id === event.over.id) return;
-    const activeId = String(event.active.id),
-      targetId = String(event.over.id);
-    // Foreign rows identify a global destination, never an insertion position.
-    const foreignTarget = event.over.data.current?.owned === false;
-    const targetGroup =
-      PRIORITY_GROUPS.find((group) => groupDropId(group) === targetId) ??
-      PRIORITY_GROUPS.find((group) => base.groups[group].includes(targetId)) ??
-      (foreignTarget
-        ? PRIORITY_GROUPS.find(
-            (group) => group === event.over!.data.current?.group,
-          )
-        : undefined);
+    const activeId = String(event.active.id);
+    const targetGroup = PRIORITY_GROUPS.find(
+      (group) => group === event.over!.data.current?.group,
+    );
     if (!targetGroup) return;
     await persist(
-      moveOwnedService(
-        base.groups,
-        activeId,
-        targetGroup,
-        targetId === groupDropId(targetGroup) || foreignTarget
-          ? undefined
-          : targetId,
-      ),
+      moveOwnedService(base.groups, activeId, targetGroup),
       base.groups,
       base.revision,
       base.owner,
@@ -464,14 +426,36 @@ export function ConfigurationList({
   return (
     <div className="configuration-workspace" data-detail={mobileDetail}>
       <div className="configuration-order-pane">
+        <p className="configuration-status">
+          Services within a group are equal. Drag to change group.
+        </p>
         <DndContext
           modifiers={orderModifiers}
           sensors={sensors}
           collisionDetection={groupCollision}
           accessibility={{
+            announcements: {
+              onDragStart: ({ active }) =>
+                `Moving ${snapshot.services.find((s) => s.id === active.id)?.name ?? "service"} between groups.`,
+              onDragOver: ({ active, over }) => {
+                const group = over?.data.current?.group as
+                  PriorityGroup | undefined;
+                return group && group !== active.data.current?.group
+                  ? `Move to ${priorityGroupLabels[group]}.`
+                  : undefined;
+              },
+              onDragEnd: ({ active, over }) => {
+                const group = over?.data.current?.group as
+                  PriorityGroup | undefined;
+                return group && group !== active.data.current?.group
+                  ? `Moved to ${priorityGroupLabels[group]}.`
+                  : "Priority group unchanged.";
+              },
+              onDragCancel: () => "Priority group move cancelled.",
+            },
             screenReaderInstructions: {
               draggable:
-                "Press Space to pick up your service. Use arrow keys to reorder, then Space to save. Use the priority group menu to move to any group, including an empty group.",
+                "Services within a group are equal. Press Space to pick up your service, use Up or Down to choose a group, then Space to save. You can also use the priority group menu.",
             },
           }}
           onDragStart={({ active }) => {
@@ -491,61 +475,51 @@ export function ConfigurationList({
           }}
           onDragEnd={(event) => void end(event)}
         >
-          <SortableContext
-            items={ownIds}
-            strategy={verticalListSortingStrategy}
+          <div
+            ref={list}
+            className="configuration-priority-groups"
+            aria-label="Global service priority groups"
           >
-            <div
-              ref={list}
-              className="configuration-priority-groups"
-              aria-label="Global service priority groups"
-            >
-              {groups.map((group) => {
-                const ranks = new Map<string, number>();
-                return (
-                  <PrioritySection
-                    key={group.id}
-                    group={group.id}
-                    count={group.services.length}
-                    pending={blocked}
-                  >
-                    {group.services.map((service) => {
-                      const computer = service.computerId ?? service.id;
-                      const rank = (ranks.get(computer) ?? 0) + 1;
-                      ranks.set(computer, rank);
-                      return (
-                        <ConfigurationRow
-                          key={service.id}
-                          service={service}
-                          group={group.id}
-                          rank={rank}
-                          editable={
-                            !!ownerComputerId &&
-                            service.computerId === ownerComputerId
-                          }
-                          selected={service.id === visibleId}
-                          pending={blocked}
-                          onSelect={() => {
-                            setSelected(service.id);
-                            setMobileDetail(true);
-                          }}
-                          onMove={(target) =>
-                            void persist(
-                              moveOwnedService(ownGroups, service.id, target),
-                              ownGroups,
-                              snapshot.configRevision,
-                              ownerComputerId,
-                              { serviceId: service.id, target: "menu" },
-                            )
-                          }
-                        />
-                      );
-                    })}
-                  </PrioritySection>
-                );
-              })}
-            </div>
-          </SortableContext>
+            {groups.map((group) => {
+              return (
+                <PrioritySection
+                  key={group.id}
+                  group={group.id}
+                  count={group.services.length}
+                  pending={blocked}
+                >
+                  {group.services.map((service) => {
+                    return (
+                      <ConfigurationRow
+                        key={service.id}
+                        service={service}
+                        group={group.id}
+                        editable={
+                          !!ownerComputerId &&
+                          service.computerId === ownerComputerId
+                        }
+                        selected={service.id === visibleId}
+                        pending={blocked}
+                        onSelect={() => {
+                          setSelected(service.id);
+                          setMobileDetail(true);
+                        }}
+                        onMove={(target) =>
+                          void persist(
+                            moveOwnedService(ownGroups, service.id, target),
+                            ownGroups,
+                            snapshot.configRevision,
+                            ownerComputerId,
+                            { serviceId: service.id, target: "menu" },
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </PrioritySection>
+              );
+            })}
+          </div>
         </DndContext>
         <p className="configuration-status" role="status">
           {status}
