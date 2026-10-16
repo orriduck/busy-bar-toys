@@ -79,6 +79,7 @@ Start a task in a configured agent app to show its status.
 The clock uses New York time in 24-hour format.
 The amber ↑ value shows input tokens. The cyan ↓ value shows output tokens.
 Both values are tokens per second, measured over the last 10 seconds of reported usage.
+Input excludes cache reads, which re-send earlier context on every request; it keeps new input and first-time cache writes.
 Codex and Claude Code report usage. `--` means that the rate is unknown, for example during the first second or when a source reports no usage.
 The front display uses compact values. The back display shows whole tokens per second.
 

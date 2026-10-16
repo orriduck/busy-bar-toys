@@ -1,4 +1,4 @@
-"""Model token rates from cumulative session totals. Inputs include cache; outputs include reasoning."""
+"""Model token rates from cumulative session totals. Inputs exclude cache reads; outputs include reasoning."""
 from collections import deque
 from dataclasses import dataclass
 import time

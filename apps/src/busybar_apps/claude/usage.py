@@ -1,4 +1,7 @@
-"""Cumulative Claude Code token totals read from local transcripts. Usage fields only, never message text."""
+"""Cumulative Claude Code token totals read from local transcripts. Usage fields only, never message text.
+
+Input is fresh input plus cache writes; cache reads re-send earlier context and are excluded.
+"""
 from collections import OrderedDict
 import json
 import os
@@ -78,7 +81,7 @@ class TranscriptUsage:
         def count(name):
             value = usage.get(name, 0)
             return value if type(value) is int and value >= 0 else 0
-        current = (count("input_tokens") + count("cache_read_input_tokens") + count("cache_creation_input_tokens"),
+        current = (count("input_tokens") + count("cache_creation_input_tokens"),
                    count("output_tokens"))
         messages = state["messages"]
         previous = messages.pop(key, (0, 0))

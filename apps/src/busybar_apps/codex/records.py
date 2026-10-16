@@ -5,10 +5,20 @@ from pathlib import Path
 import re
 
 from busybar_agents.events import FLASH_SECONDS, STALE_SECONDS, STATES, TaskRegistry, parse_timestamp
-from busybar_agents.tokens import parse_usage
+from busybar_agents.tokens import TokenUsage
 
 TAIL_BYTES = 1024 * 1024
 WAITING_TOOLS = frozenset({"request_user_input", "request_user_input_async"})
+
+
+def codex_usage(value):
+    """Codex input_tokens includes cached_input_tokens; count only the uncached part."""
+    if not isinstance(value, dict):
+        return None
+    counts = [value.get("input_tokens"), value.get("cached_input_tokens", 0), value.get("output_tokens")]
+    if any(type(count) is not int or count < 0 for count in counts) or counts[1] > counts[0]:
+        return None
+    return TokenUsage(counts[0] - counts[1], counts[2])
 
 
 class CodexTaskRegistry(TaskRegistry):
@@ -51,7 +61,7 @@ class CodexTaskRegistry(TaskRegistry):
         current = self.task(session)
         state = record.get("state")
         kind = payload.get("type")
-        usage = (parse_usage(payload["info"].get("total_token_usage"))
+        usage = (codex_usage(payload["info"].get("total_token_usage"))
                  if record.get("type") == "event_msg" and kind == "token_count" and isinstance(payload.get("info"), dict) else None)
         if state is None and record.get("type") == "event_msg":
             state = {"task_started": "working", "task_complete": "done", "turn_aborted": "stopped", "error": "error"}.get(kind)
