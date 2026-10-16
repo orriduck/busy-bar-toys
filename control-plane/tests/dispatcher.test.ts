@@ -1542,3 +1542,38 @@ it("retires a preempted draw even when its response is lost after the device app
   expect(final.displaying.itemKey).toContain("two");
   expect([...screen]).toEqual(["text"]);
 });
+
+it("retains bounded content-free display diagnostics across eviction for management only", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  await send("/publish", presentation(epoch));
+  await displayed(admin);
+  expect((await send("/diagnostics/display")).status).toBe(403);
+  const response = await admin("/diagnostics/display");
+  expect(response.status).toBe(200);
+  const diagnostic = (await response.json()) as {
+    implementation: string;
+    events: { at: number; kind: string; data: Record<string, unknown> }[];
+  };
+  expect(diagnostic.implementation).toBe("continuous-handoff-v3");
+  expect(diagnostic.events.some((e) => e.kind === "command_ack")).toBe(true);
+  const serialized = JSON.stringify(diagnostic);
+  expect(serialized).not.toContain("Hello");
+  expect(serialized).not.toContain(fixtureToken);
+  await runInDurableObject(
+    env.DEVICES.getByName(deviceId),
+    async (instance) => {
+      const trace = instance as unknown as {
+        traceDisplay(kind: "handoff", data: { generation: number }): void;
+      };
+      for (let i = 0; i < 140; i++)
+        trace.traceDisplay("handoff", { generation: i });
+    },
+  );
+  await evictDurableObject(env.DEVICES.getByName(deviceId));
+  const retained = (await (
+    await admin("/diagnostics/display")
+  ).json()) as typeof diagnostic;
+  expect(retained.events).toHaveLength(128);
+  expect(retained.events[0].data.generation).toBe(12);
+  expect(retained.events.at(-1)!.data.generation).toBe(139);
+});

@@ -108,6 +108,9 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, revision INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL)",
     );
+    ctx.storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS display_diagnostics (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL)",
+    );
     const s = this.load();
     if (s) {
       const identities = migrateComputerIds(s);
@@ -122,12 +125,52 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       this.save(s);
     }
   }
+  private traceDisplay(
+    kind:
+      | "handoff"
+      | "reclaim"
+      | "recovery"
+      | "clear"
+      | "command_ack"
+      | "command_failed",
+    data: {
+      generation: number;
+      command?: Command["kind"];
+      reason?: "inflight_restart" | "uncertain_draw";
+      scope?: "selective" | "full";
+      outgoingElements?: number;
+      incomingElements?: number;
+      typeConflicts?: number;
+      obsoleteElements?: number;
+      outgoingExpiryMs?: number | null;
+      elementCount?: number | null;
+      hasNextScene?: boolean;
+      elapsedMs?: number;
+      code?: string;
+    },
+  ) {
+    const at = Date.now();
+    if (kind === "command_failed") console.warn("Device command failed", data);
+    else if (kind !== "command_ack") console.info("Display " + kind, data);
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO display_diagnostics(at,kind,data) VALUES(?,?,?)",
+        at,
+        kind,
+        JSON.stringify(data),
+      );
+      this.ctx.storage.sql.exec(
+        "DELETE FROM display_diagnostics WHERE at<? OR id NOT IN (SELECT id FROM display_diagnostics ORDER BY id DESC LIMIT 128)",
+        at - 3600000,
+      );
+    });
+  }
   private recoverScene(
     s: State,
     now: number,
     reason: "inflight_restart" | "uncertain_draw",
   ) {
-    console.info("Display recovery", { reason, generation: s.generation });
+    this.traceDisplay("recovery", { reason, generation: s.generation });
     tick(s, now);
     const item = s.selected ? s.items[s.selected] : null;
     s.nativeRecoveryRequired = false;
@@ -573,7 +616,36 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           ...snapshot(s, now, serviceId),
           demo: !!this.env.BUSY_UPSTREAM,
         });
-      else if (path === "/api/events" && method === "GET") {
+      else if (path === "/api/diagnostics/display" && method === "GET") {
+        requireThat(
+          !serviceId && (auth.kind === "session" || auth.kind === "computer"),
+          "FORBIDDEN",
+          403,
+        );
+        response = json({
+          implementation: "continuous-handoff-v3",
+          generation: s.generation,
+          nativeElements: Object.keys(s.nativeElements).length,
+          earliestExpiryMs: Object.keys(s.nativeElements).length
+            ? Math.min(
+                ...Object.values(s.elementExpiries).map((e) => e.expiresAt),
+              ) - now
+            : null,
+          pending: s.commands.map((c) => ({
+            kind: c.kind,
+            status: c.status,
+            attempts: c.attempts,
+            dueInMs: c.dueAt - now,
+          })),
+          events: this.ctx.storage.sql
+            .exec<{ at: number; kind: string; data: string }>(
+              "SELECT at,kind,data FROM display_diagnostics WHERE at>=? ORDER BY id",
+              now - 3600000,
+            )
+            .toArray()
+            .map((e) => ({ ...e, data: JSON.parse(e.data) })),
+        });
+      } else if (path === "/api/events" && method === "GET") {
         this.save(s);
         await this.arm();
         return this.openStream(s, auth);
@@ -1210,7 +1282,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     command.handoffReclaimed = true;
     const anchor = this.handoffAnchor(s);
     const old = Object.keys(s.nativeElements);
-    console.info("Display handoff reclaim", {
+    this.traceDisplay("reclaim", {
       generation: s.generation,
       outgoingElements: old.length,
     });
@@ -1246,7 +1318,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       .filter((e) => incoming.has(e.id) && incoming.get(e.id)!.type !== e.type)
       .map((e) => e.id);
     const obsolete = old.filter((e) => !incoming.has(e.id)).map((e) => e.id);
-    console.info("Display handoff prepared", {
+    this.traceDisplay("handoff", {
       generation: s.generation,
       outgoingElements: old.length,
       incomingElements: incoming.size,
@@ -1520,7 +1592,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             );
           });
           if (cmd.kind === "clear") {
-            console.info("Display clear", {
+            this.traceDisplay("clear", {
               generation: cmd.generation,
               scope: cmd.elementIds ? "selective" : "full",
               elementCount: cmd.elementIds?.length ?? null,
@@ -1603,8 +1675,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               ].includes(failed.code))
           )
             live.nativeRecoveryRequired = true;
-          console.warn("Device command failed", {
-            kind: cmd.kind,
+          this.traceDisplay("command_failed", {
+            generation: cmd.generation,
+            command: cmd.kind,
+            elapsedMs: Date.now() - now,
             code:
               failed instanceof ProtocolError ? failed.code : "UNKNOWN_FAILURE",
           });
@@ -1633,6 +1707,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           if (slot) slot.uploaded = true;
         }
         const acceptedAt = Date.now();
+        if (!cmd.refresh || cmd.kind !== "draw")
+          this.traceDisplay("command_ack", {
+            generation: cmd.generation,
+            command: cmd.kind,
+            elapsedMs: acceptedAt - now,
+            elementCount:
+              cmd.elements?.length ?? cmd.elementIds?.length ?? null,
+          });
         if (
           cmd.kind === "draw" &&
           drawExpiresAt !== undefined &&
