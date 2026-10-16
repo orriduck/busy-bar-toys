@@ -298,6 +298,12 @@ describe("generation races and content revisions", () => {
     await entered;
     const urgent = { ...presentation(epoch, "two"), level: "urgent" };
     await send("/publish", urgent);
+    await send("/withdraw", {
+      epoch,
+      instanceId: "mac",
+      itemId: "one",
+      version: 1,
+    });
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     release();
     const final = (await displayed(admin)) as unknown as {
@@ -1064,6 +1070,7 @@ it("rotates source turns on a durable alarm after eviction without a producer ti
     const store = new StateStore(ctx.storage),
       s = store.load()!;
     s.services.test.config.visibleMs = 5000;
+    s.services.test.priorityGroup = "dispensable";
     s.computers[s.services.test.computerId!].serviceOrder = ["test"];
     registerService(
       s,
@@ -1133,6 +1140,12 @@ it("does not charge a confirmation gap when renewal ACK precedes a late alarm", 
   const { send, admin, epoch, deviceId } = await setup();
   const start = Date.now(),
     stub = env.DEVICES.getByName(deviceId);
+  await runInDurableObject(stub, (_instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    s.services.test.priorityGroup = "dispensable";
+    store.save(s);
+  });
   await send("/publish", {
     ...presentation(epoch),
     kind: "agent",

@@ -1,3 +1,4 @@
+import { priorityGroupOf } from "./priority-groups";
 import { State } from "./model";
 const collections = [
   "items",
@@ -30,6 +31,9 @@ export class StateStore {
     header.nativeElements ??= {};
     header.serviceTurns ??= {};
     header.turnSeq ??= 0;
+    header.priorityComputerTurns ??= {};
+    const needsPriorityLease = header.priorityLeases === undefined;
+    header.priorityLeases ??= {};
     const needsLease = header.normalLeaseItem === undefined;
     header.lastNormalComputer ??= null;
     header.computers ??= {};
@@ -60,6 +64,17 @@ export class StateStore {
             .map((v) => (v as { command: State["commands"][number] }).command);
         else Object.assign(header, { [name]: records });
       }
+    }
+    if (
+      needsPriorityLease &&
+      header.selected &&
+      header.items[header.selected]
+    ) {
+      const active = header.items[header.selected];
+      if (active.state !== "paused" && active.state !== "snoozed")
+        header.priorityLeases[
+          priorityGroupOf(header.services[active.serviceId])
+        ] = active.itemKey;
     }
     if (needsLease) {
       const active = header.selected ? header.items[header.selected] : null;

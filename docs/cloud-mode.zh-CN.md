@@ -57,9 +57,15 @@ Notifier 是通用发送引擎。同一电脑凭据可以向本机名下任意�
 
 把五分钟有效的一次性代码粘贴到 **Connect computer → Pairing code**。绑定记录保存在服务端；浏览器偏好不能赋予权限。需要管理另一台电脑时，先退出登录。退出不会停止 Mac 上的采集服务。
 
-**Configuration** 展示全部电脑，只能拖动及编辑本机服务。排序位置是全局层级：A 的第 1 位高于 B 的第 2 位。高层级临时打断低层级，结束后恢复原消息及剩余轮次；同层级按各服务的 Hold 交替。Hold 仅计入入场结束后经设备确认的可见时间。源状态轮转时不会结束，定时消息仍按原有累计时长结束。Services 和 Configuration 展示来源连接、最近心跳、层级、当前展示与排队数；未汇报过的来源不会显示成已连接。
+**Configuration** 按三个全局组展示全部电脑的服务。只能把本机服务拖到其他组，或调整本机在组内的队列；其他电脑可查看、不可拖动。
 
-发送端逐条声明 `exit: finite|source`。Hold 决定同级服务每轮可见时长，以及定时消息的累计可见时长。何时产生下一次消息由发送端决定。
+- **Interception**：立即打断下面两个组，适合需要马上显示的 Page。
+- **Follow queue**：按队列播放，同组新消息不打断当前消息。各电脑使用自己的服务顺序，电脑之间在当前消息结束后公平轮转。源端结束型消息需要宿主主动结束，队列才会继续。
+- **Dispensable**：前两个组空闲时显示后台状态。电脑之间按各服务的 Hold 交替，每台电脑仍遵循自己的组内顺序。
+
+服务所属组决定全局优先级，本机列表位置不再形成跨电脑层级。高组打断后保留原消息及剩余时间；发送端的 urgent 不能越过注册服务所属的组。Hold 仅计入入场结束后经设备确认的可见时间。源状态轮转时不会结束，定时消息仍按原有累计时长结束。Services 和 Configuration 展示来源连接、最近心跳、分组、当前展示与排队数；未汇报过的来源不会显示成已连接。
+
+发送端逐条声明 `exit: finite|source`。Hold 控制 Dispensable 的可见轮次，以及定时消息的累计展示寿命。宿主决定什么时候再发送新消息。注册 API 可显式指定 `priorityGroup`，也可在 Configuration 中拖动本机服务；新 Agent 默认进入 Dispensable，其他模板默认进入 Follow queue。
 
 ## 升级已接入的 Mac
 
@@ -107,6 +113,6 @@ Register a separate Notifier before starting an upgraded observer:
 .venv/bin/busy-bar cloud-register agent-notifier --template notifier --name "Agent requests" --source agent-notifier
 ```
 
-在网页中把 Agent requests 排在 Agent 状态之前。ADSBao 等通知可按需要排序。日常状态与输入请求使用两个注册服务；每个等待任务都有独立消息。问题解决后源端撤下提示，工作状态继续。其他电脑也须单独注册和路由自己的 Notifier；此命令不改动其他电脑。
+在网页中把 Agent requests、ADSBao 放入 Follow queue，把 Agent 状态放入 Dispensable；需要立即打断的独立 Page 服务放入 Interception。各组只调整本机服务的队列。日常状态与输入请求使用两个注册服务；每个等待任务都有独立消息。问题解决后源端撤下提示，工作状态继续。其他电脑也须单独注册和路由自己的 Notifier；此命令不改动其他电脑。
 
 撤回通知：调用 `CloudQueue.withdraw(source, item_id)` 或 `RoutedCloudQueue.withdraw(source, item_id)`。本地 outbox 持久重试 `POST /api/withdraw`，成功后才删除待发送记录。HTTP 字段为 `instanceId`、`epoch`、`itemId`、`version`，使用对应 owned service 的发布身份。撤回会终止当前 occurrence；下一次发送须创建新 occurrence。

@@ -108,6 +108,7 @@ describe("compact queue provenance", () => {
       appId: "codex",
       sender: "laptop · Home Mac",
       receivedAt: 42,
+      priorityGroup: "follow-queue",
     });
   });
   it("does not guess app or sender from the notification body", () => {
@@ -116,10 +117,27 @@ describe("compact queue provenance", () => {
       appId: "notifier",
       sender: "laptop · Home Mac",
       receivedAt: 42,
+      priorityGroup: "follow-queue",
     });
     expect(
       client.queueMetadata({ ...item, app: "my-custom-app" }, snapshot).app,
     ).toBe("my-custom-app");
+  });
+  it("reports the service group independently of source urgency and app metadata", () => {
+    const grouped = {
+      ...snapshot,
+      services: [
+        { ...snapshot.services[0], priorityGroup: "dispensable" as const },
+      ],
+    };
+    expect(
+      client.queueMetadata({ ...item, level: "urgent", app: "codex" }, grouped)
+        .priorityGroup,
+    ).toBe("dispensable");
+    expect(
+      client.queueMetadata({ ...item, serviceId: "missing" }, grouped)
+        .priorityGroup,
+    ).toBeNull();
   });
   it("distinguishes multiple instances sharing a registered service", () => {
     const shared = {

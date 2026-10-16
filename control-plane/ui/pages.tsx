@@ -220,7 +220,8 @@ export function ConfigurationPage({
         onPaired={onPaired}
       />
       <p className="configuration-hint">
-        Order your computer’s services. Other computers are read only.
+        Global priority groups. Move only your computer’s services; other
+        computers remain visible.
       </p>
       <ConfigurationList
         ownerComputerId={ownerComputerId}

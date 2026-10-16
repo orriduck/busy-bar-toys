@@ -1,5 +1,6 @@
 import type { QueueItem, Snapshot } from "./api";
 import { serviceLabel } from "./service-layout";
+import { priorityGroupOf } from "./priority-groups";
 
 const apps: Record<string, string> = {
   codex: "Codex",
@@ -30,7 +31,13 @@ export function queueMetadata(item: QueueItem, snapshot: Snapshot) {
         : service?.name || "Unknown app";
   const name = service ? serviceLabel(service) : item.serviceId;
   const sender = `${service?.computerId || item.instanceId} · ${name}`;
-  return { app, appId, sender, receivedAt: item.receivedAt };
+  return {
+    app,
+    appId,
+    sender,
+    receivedAt: item.receivedAt,
+    priorityGroup: service ? priorityGroupOf(service) : null,
+  };
 }
 
 /** Compact table label; detailed provenance and the source identity stay intact. */

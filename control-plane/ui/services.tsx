@@ -32,6 +32,7 @@ import {
 } from "./components/ui/dropdown-menu";
 import { serviceLabel } from "./service-layout";
 import { serviceRuntime } from "./service-runtime";
+import { PriorityGroupBadge } from "./priority-group-badge";
 import { time, type Snapshot } from "./api";
 import { Badge } from "./components/ui/badge";
 import { SettingNumber } from "./setting-number";
@@ -332,11 +333,7 @@ function ServiceAccess({
             <span>
               · <SettingNumber value={runtime.queued} /> queued
             </span>
-            {runtime.tier !== null && (
-              <span>
-                · Tier <SettingNumber value={runtime.tier} />
-              </span>
-            )}
+            <PriorityGroupBadge group={runtime.priorityGroup} />
             <span title="Last source heartbeat">
               · {time(runtime.lastHeartbeat)}
             </span>
@@ -506,9 +503,9 @@ export function Register({
               />
               <FieldDescription>
                 Each message declares whether it ends with its source or after a
-                fixed time. Hold sets a turn for equal-tier services and the
-                total lifetime of timed messages. The publisher decides when to
-                send again.
+                fixed time. Hold sets background turns in Dispensable and the
+                total lifetime of timed messages. Agents start in Dispensable;
+                other templates start in Follow queue.
               </FieldDescription>
             </Field>
           </FieldGroup>

@@ -71,6 +71,7 @@ describe("v5 scheduling", () => {
   });
   it("pauses finite visible time under preemption and resumes latest scene without resetting duration", () => {
     const s = state();
+    s.services.b.priorityGroup = "interception";
     publish(s, "a", p("one"), now);
     acceptDisplay(s, s.generation, now);
     tick(s, now + 4000);

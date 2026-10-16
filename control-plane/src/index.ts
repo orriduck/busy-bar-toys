@@ -1,3 +1,4 @@
+import { migratePriorityGroups } from "./priority-groups";
 import { migrateServiceOrders } from "./ordering";
 import { retireApprovedLegacyRegistrations } from "./retirements";
 import { StateStore } from "./store";
@@ -13,6 +14,7 @@ import {
   redeemEnrollment,
   redeemPairing,
   reorderOwnedServices,
+  reorderOwnedGroups,
   sessionComputer,
 } from "./computers";
 import { PreviewRelay } from "./preview";
@@ -111,7 +113,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       const identities = migrateComputerIds(s);
       const orders = migrateServiceOrders(s, Date.now());
       const retirements = retireApprovedLegacyRegistrations(s);
-      if (identities || orders || retirements) this.save(s);
+      const priorityGroups = migratePriorityGroups(s);
+      if (identities || orders || retirements || priorityGroups) this.save(s);
     }
     if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
@@ -570,10 +573,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         await this.arm();
         return this.openStream(s, auth);
       } else if (orderingServices) {
-        reorderOwnedServices(
+        (body.groups === undefined ? reorderOwnedServices : reorderOwnedGroups)(
           s,
           managementComputer(),
-          body.serviceIds,
+          body.groups === undefined ? body.serviceIds : body.groups,
           body.expectedRevision,
         );
         tick(s, now);

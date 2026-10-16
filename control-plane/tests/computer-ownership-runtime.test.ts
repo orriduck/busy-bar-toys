@@ -414,3 +414,85 @@ it("returns its authenticated computer identity and only its owned registrations
   expect(value.services.map((s) => s.id).sort()).toEqual(["datadog", "github"]);
   expect((await call("/api/computer")).status).toBe(403);
 });
+
+describe("global priority group mutation HTTP boundary", () => {
+  it("saves exactly the owner's complete groups and leaves foreign configuration untouched", async () => {
+    const { call, read } = await setup();
+    const before = await read();
+    const result = await call("/api/services/order", {
+      expectedRevision: before.configRevision,
+      groups: {
+        interception: ["datadog"],
+        "follow-queue": [],
+        dispensable: ["github"],
+      },
+    });
+    expect(result.status).toBe(200);
+    const after = await read();
+    expect(after.services.datadog.priorityGroup).toBe("interception");
+    expect(after.services.github.priorityGroup).toBe("dispensable");
+    expect(after.services.foreign).toEqual(before.services.foreign);
+    expect(after.computers["computer-a"].serviceOrder).toEqual([
+      "datadog",
+      "github",
+    ]);
+    expect(after.services.github.credentialHash).toBe(
+      before.services.github.credentialHash,
+    );
+    expect(
+      (
+        await call("/api/services/order", {
+          expectedRevision: after.configRevision,
+          serviceIds: ["github", "datadog"],
+        })
+      ).status,
+    ).toBe(200);
+    expect((await read()).services.datadog.priorityGroup).toBe("interception");
+  });
+  it("rejects malformed, incomplete, duplicate, foreign, and revision-conflicted groups before persistence", async () => {
+    const { call, read } = await setup();
+    for (const groups of [
+      null,
+      [],
+      {},
+      {
+        interception: ["github"],
+        "follow-queue": ["foreign"],
+        dispensable: [],
+      },
+      { interception: ["github"], "follow-queue": ["github"], dispensable: [] },
+      { interception: ["github"], "follow-queue": [], dispensable: [] },
+      {
+        interception: ["github", "datadog"],
+        "follow-queue": [],
+        dispensable: [],
+        unexpected: [],
+      },
+    ]) {
+      const before = await read();
+      expect(
+        (
+          await call("/api/services/order", {
+            expectedRevision: before.configRevision,
+            groups,
+          })
+        ).status,
+      ).toBe(400);
+      expect(await read()).toEqual(before);
+    }
+    const before = await read();
+    expect(
+      (
+        await call("/api/services/order", {
+          expectedRevision: before.configRevision - 1,
+          groups: {
+            interception: ["github", "datadog"],
+            "follow-queue": [],
+            dispensable: [],
+          },
+        })
+      ).status,
+    ).toBe(409);
+    expect(await read()).toEqual(before);
+  });
+});

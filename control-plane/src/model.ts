@@ -1,10 +1,15 @@
 import {
+  PRIORITY_GROUPS,
+  priorityGroupOf,
+  type PriorityGroup,
+} from "./priority-groups";
+import {
   computerOf,
   normalOrder,
   prepareTurns,
   hasTurnPeer,
   yieldTurn,
-  servicePosition,
+  yieldComputer,
 } from "./ordering";
 /** Deterministic v5 state machine. Every operation is persisted atomically by DeviceControl. */
 export class ProtocolError extends Error {
@@ -49,6 +54,7 @@ export interface Service {
   id: string;
   name: string;
   template: string;
+  priorityGroup?: PriorityGroup;
   config: Config;
   credentialHash: string;
   epoch: string;
@@ -176,6 +182,8 @@ export interface State {
     { totalMs: number; remainingMs: number; ticket: number }
   >;
   turnSeq: number;
+  priorityComputerTurns: Record<string, number>;
+  priorityLeases: Partial<Record<PriorityGroup, string>>;
   applying: string | null;
   displaying: {
     itemKey: string;
@@ -223,6 +231,8 @@ export function createState(deviceId: string): State {
     normalLeaseItem: null,
     serviceTurns: {},
     turnSeq: 0,
+    priorityComputerTurns: {},
+    priorityLeases: {},
     applying: null,
     displaying: null,
     admission: [],
@@ -337,10 +347,19 @@ export function registerService(
       "COMPUTER_NOT_FOUND",
       404,
     );
+  requireThat(
+    b.priorityGroup === undefined ||
+      PRIORITY_GROUPS.includes(b.priorityGroup as PriorityGroup),
+    "INVALID_PRIORITY_GROUP",
+  );
+  const priorityGroup =
+    (b.priorityGroup as PriorityGroup | undefined) ??
+    (b.template === "agent" ? "dispensable" : "follow-queue");
   s.services[id] = {
     id,
     name,
     template: String(b.template),
+    priorityGroup,
     config: validateConfig(b.config ?? {}),
     credentialHash: hash,
     epoch,
@@ -542,20 +561,16 @@ export function groups(s: State) {
     return {
       id,
       members,
-      representative: members[0],
+      representative:
+        members.find(
+          (i) =>
+            s.priorityLeases?.[priorityGroupOf(s.services[i.serviceId])] ===
+            i.itemKey,
+        ) ?? members[0],
       urgentTime: members.filter((i) => i.level === "urgent").sort(stable)[0],
     };
   });
-  const urgent = values
-    .filter((g) => g.urgentTime)
-    .sort((a, b) => stable(a.urgentTime!, b.urgentTime!));
-  return [
-    ...urgent,
-    ...normalOrder(
-      s,
-      values.filter((g) => !g.urgentTime),
-    ),
-  ];
+  return normalOrder(s, values);
 }
 function plainApp(value: unknown): string {
   const app = text(value, 64);
@@ -710,6 +725,10 @@ function end(s: State, i: Item, reason: string, version: number) {
     version: Math.max(i.version, version),
     reason,
   };
+  if (
+    s.priorityLeases?.[priorityGroupOf(s.services[i.serviceId])] === i.itemKey
+  )
+    yieldComputer(s, i);
   delete s.items[i.itemKey];
   s.revision++;
 }
@@ -823,7 +842,10 @@ export function tick(s: State, now: number) {
     if (current.remainingMs !== null)
       current.remainingMs = Math.max(0, current.remainingMs - elapsed);
     const turn = s.serviceTurns[current.serviceId];
-    if (current.level !== "urgent" && turn)
+    if (
+      priorityGroupOf(s.services[current.serviceId]) === "dispensable" &&
+      turn
+    )
       turn.remainingMs = Math.max(0, turn.remainingMs - elapsed);
     // Move the accounting cursor even across an unconfirmed gap. A later ACK
     // starts a fresh interval; it cannot retroactively charge that gap.
@@ -867,8 +889,6 @@ export function tick(s: State, now: number) {
     }
     if (s.items[current.itemKey]?.level === "urgent")
       end(s, current, "completed", current.version);
-    if (current.level !== "urgent" && s.serviceTurns[current.serviceId])
-      yieldTurn(s, current.serviceId);
   }
   for (const id of Object.keys(s.nativeElements))
     if ((s.elementExpiries[id]?.expiresAt ?? 0) <= now) {
@@ -914,24 +934,16 @@ export function tick(s: State, now: number) {
     turnOwner &&
     s.serviceTurns[turnOwner.serviceId]?.remainingMs === 0 &&
     hasTurnPeer(s, turnOwner)
-  )
+  ) {
     yieldTurn(s, turnOwner.serviceId);
+    yieldComputer(s, turnOwner);
+  }
   const queue = groups(s);
   let candidate = queue[0]?.representative ?? null;
-  const active = s.selected ? s.items[s.selected] : null;
-  const activeGroup = active
-    ? queue.find((g) => g.id === groupId(active))
-    : null;
-  if (active && activeGroup) {
-    if (active.level === "urgent" && activeGroup.urgentTime)
-      candidate = activeGroup.representative;
-    else if (
-      candidate &&
-      candidate.level !== "urgent" &&
-      candidate.serviceId === active.serviceId
-    )
-      candidate = activeGroup.representative;
-  }
+
+  if (candidate)
+    s.priorityLeases[priorityGroupOf(s.services[candidate.serviceId])] =
+      candidate.itemKey;
   if ((candidate?.itemKey ?? null) !== s.selected) switchTo(s, candidate, now);
 }
 export function acceptDisplay(s: State, generation: number, now: number) {
@@ -941,7 +953,10 @@ export function acceptDisplay(s: State, generation: number, now: number) {
   const elapsed = visibleElapsed(s, now);
   if (i.remainingMs !== null)
     i.remainingMs = Math.max(0, i.remainingMs - elapsed);
-  if (i.level !== "urgent" && s.serviceTurns[i.serviceId])
+  if (
+    priorityGroupOf(s.services[i.serviceId]) === "dispensable" &&
+    s.serviceTurns[i.serviceId]
+  )
     s.serviceTurns[i.serviceId].remainingMs = Math.max(
       0,
       s.serviceTurns[i.serviceId].remainingMs - elapsed,
@@ -1115,34 +1130,32 @@ export function snapshot(s: State, now: number, serviceId?: string) {
   const queue = groups(s),
     controller = s.selected ? s.items[s.selected] : null;
   let eta = now;
-  let unresolvedTier: number | null = null;
-  let urgentSource = false;
-  const seenServices = new Set<string>();
+  let unresolved = false;
+  const seenComputers = new Set<string>();
   const estimates = new Map<string, { kind: string; at?: number }>();
   for (const g of queue) {
     const i = g.representative;
-    const tier = servicePosition(s, i.serviceId);
-    const unknown =
-      urgentSource ||
-      (unresolvedTier !== null && tier > unresolvedTier) ||
-      seenServices.has(i.serviceId);
+    const group = priorityGroupOf(s.services[i.serviceId]);
+    const computer = JSON.stringify([group, computerOf(s, i)]);
+    const ownBlocked = group === "dispensable" && seenComputers.has(computer);
     estimates.set(
       g.id,
-      unknown ? { kind: "await-resolution" } : { kind: "estimate", at: eta },
+      unresolved || ownBlocked
+        ? { kind: "await-resolution" }
+        : { kind: "estimate", at: eta },
     );
-    if (unknown) continue;
-    seenServices.add(i.serviceId);
+    if (unresolved || ownBlocked) continue;
     const elapsed = i.itemKey === s.selected ? visibleElapsed(s, now) : 0;
-    if (i.level === "urgent") {
-      if (i.remainingMs === null) urgentSource = true;
-      else
-        eta += Math.max(0, i.remainingMs - elapsed) + i.scene.entryDurationMs;
-    } else {
-      const turn = s.serviceTurns?.[i.serviceId];
+    const entrance =
+      i.itemKey === s.selected && s.visibleSince !== null
+        ? Math.max(0, s.visibleSince - now)
+        : i.scene.entryDurationMs;
+    if (group === "dispensable") {
+      seenComputers.add(computer);
       const budget = Math.max(
         0,
-        (turn?.remainingMs ?? s.services[i.serviceId].config.visibleMs) -
-          elapsed,
+        (s.serviceTurns?.[i.serviceId]?.remainingMs ??
+          s.services[i.serviceId].config.visibleMs) - elapsed,
       );
       eta +=
         Math.min(
@@ -1150,13 +1163,9 @@ export function snapshot(s: State, now: number, serviceId?: string) {
           i.remainingMs === null
             ? Infinity
             : Math.max(0, i.remainingMs - elapsed),
-        ) +
-        (i.itemKey === s.selected && s.visibleSince !== null
-          ? Math.max(0, s.visibleSince - now)
-          : i.scene.entryDurationMs);
-      if (i.remainingMs === null || i.remainingMs - elapsed > budget)
-        unresolvedTier = tier;
-    }
+        ) + entrance;
+    } else if (i.remainingMs === null) unresolved = true;
+    else eta += Math.max(0, i.remainingMs - elapsed) + entrance;
   }
   const items = Object.values(s.items)
     .filter((i) => !serviceId || i.serviceId === serviceId)
@@ -1187,14 +1196,16 @@ export function snapshot(s: State, now: number, serviceId?: string) {
         : 0;
       const running =
         actualDisplay && s.health.status === "healthy" && confirmedUntil > now;
-      const waiting = i.state !== "displaying" && i.state !== "applying";
+      const waiting = i.state === "waiting" || i.state === "preempted";
       const queueProof =
         waiting &&
         i.level === "urgent" &&
-        controller?.level === "urgent" &&
+        controller &&
         i.itemKey !== controller.itemKey &&
         s.health.status === "healthy" &&
-        s.displaying?.generation === s.generation &&
+        s.health.confirmedValidUntil > now &&
+        s.displaying?.itemKey === controller.itemKey &&
+        s.displaying.generation === s.generation &&
         s.displaying.confirmedValidUntil > now
           ? {
               revision: s.revision,
@@ -1203,15 +1214,20 @@ export function snapshot(s: State, now: number, serviceId?: string) {
                 itemKey: controller.itemKey,
                 generation: s.generation,
               },
-              validUntil: s.displaying.confirmedValidUntil,
+              validUntil: Math.min(
+                s.displaying.confirmedValidUntil,
+                s.health.confirmedValidUntil,
+              ),
             }
           : undefined;
       const coverage =
         s.admission.some(
           (a) => a.itemKey === i.itemKey && a.version === i.version,
         ) &&
-        s.displaying?.generation === s.generation &&
+        s.displaying?.itemKey === s.selected &&
+        s.displaying.generation === s.generation &&
         s.health.status === "healthy" &&
+        s.health.confirmedValidUntil > now &&
         s.displaying.confirmedValidUntil > now
           ? {
               revision: s.revision,
@@ -1221,7 +1237,10 @@ export function snapshot(s: State, now: number, serviceId?: string) {
                 itemKey: s.displaying.itemKey,
                 generation: s.generation,
               },
-              validUntil: s.displaying.confirmedValidUntil,
+              validUntil: Math.min(
+                s.displaying.confirmedValidUntil,
+                s.health.confirmedValidUntil,
+              ),
             }
           : undefined;
       const turn = hasTurnPeer(s, i)
@@ -1296,6 +1315,7 @@ export function snapshot(s: State, now: number, serviceId?: string) {
       .filter((v) => !serviceId || v.id === serviceId)
       .map(({ credentialHash, config: { priority, ...config }, ...v }) => ({
         ...v,
+        priorityGroup: priorityGroupOf(v),
         config: { ...config, allowPreview: config.allowPreview ?? false },
       })),
     items,
