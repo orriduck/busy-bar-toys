@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md) · [Protocol](PROTOCOL.md) · [Approved design](../docs/plans/control-plane-v5.md)
 
-Manage one BUSY Bar from a browser. Register display services. Set their priority, exit rule and enabled state. See the current owner and every queued notification. The page receives full state snapshots through SSE.
+Manage one BUSY Bar from a browser. Register display services. Set their priority, exit rule and enabled state. See the current owner and every queued notification. The page receives full state snapshots through SSE. React and Vite use Tailwind, shadcn/ui components, TanStack Query for session-scoped server state, and TanStack Table for the queue.
 
 The Cloudflare backend schedules the queue and writes the display. A local Mac collects Codex, Your dot and notification data. It sends complete scenes to the backend. Closing the browser does not stop cloud scheduling.
 
@@ -59,7 +59,7 @@ A custom publisher follows [PROTOCOL.md](PROTOCOL.md). Registering a service doe
 
 Sender is the service name, with an instance when needed. It is not the notification's business author. Received is the occurrence's first server receipt time. Updates retain it. Open the row for full provenance and time.
 
-Enable **Live display preview bridge** in Configuration for one designated Mac service. Update that Mac and retain its existing local Wi-Fi input configuration. The bridge verifies the Bar identity and reads its actual front framebuffer. It sends pixels only while a signed-in Display page is visible. Capture targets 30 fps; Device reports actual rates. A missing bridge does not stop cloud scheduling. See [preview setup and limits](../docs/cloud-mode.md#management-pages-and-live-display).
+Enable **Live display preview bridge** in Configuration for one designated Mac service. Update that Mac and retain its existing local Wi-Fi input configuration. The bridge verifies the Bar identity and reads its actual front framebuffer. It sends pixels while any signed-in management page is visible. Display shows the large preview. Other pages keep one compact live preview at the lower left, without a Manage button. Capture targets 30 fps; Device reports actual rates. The browser uses a bounded 150 ms playback buffer with at most six pending frames. A missing bridge does not stop cloud scheduling. See [preview setup and limits](../docs/cloud-mode.md#management-pages-and-live-display).
 
 **Trusted device button bridge** is a separate capability. Grant it only to the local input listener. It permits device-wide Start/Pause handling. An ordinary publisher cannot clear other services. Primary actions run on the original Mac. Failed or unknown results keep the notification.
 
