@@ -723,6 +723,9 @@ class Producer:
                 if fresh<=now*1000: continue
                 until=min(int(now*1000)+60000,fresh)
                 renew.setdefault(until,[]).append(r['itemId'])
+            # Idle publishers still report their connection. An empty list
+            # renews no occurrence and cannot revive stale or ended work.
+            if not renew: renew[int(now*1000)+60000]=[]
             for until,alive in renew.items():
                 self._response('POST','/api/heartbeat',{**identity,'itemIds':alive,'validUntil':until})
             self._heart=now
