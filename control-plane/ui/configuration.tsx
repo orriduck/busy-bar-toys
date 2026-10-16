@@ -31,6 +31,7 @@ import { ServiceEditor } from "./services";
 import { SettingNumber } from "./setting-number";
 import { PriorityBadge } from "./policy-field";
 import { priorityOrder, serviceLabel, computerIds } from "./service-layout";
+import { useListMotion } from "./motion";
 function ConfigurationRow({
   service,
   rank,
@@ -63,53 +64,65 @@ function ConfigurationRow({
         sortable.isDragging && "z-10 bg-popover shadow-lg ring-1 ring-primary",
       )}
     >
-      <Collapsible open={open} onOpenChange={onOpen}>
-        <CardHeader className="configuration-summary">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="drag-handle"
-            aria-label={`Move ${service.name}`}
-            disabled={pending}
-            {...sortable.attributes}
-            {...sortable.listeners}
-          >
-            <GripVertical />
-          </Button>
-          <span className="configuration-rank" aria-label={`Position ${rank}`}>
-            <span aria-hidden="true">
-              <SettingNumber value={rank} />
-            </span>
-          </span>
-          <CollapsibleTrigger
-            render={
-              <Button variant="disclosure" className="configuration-open" />
-            }
-          >
-            <span className="configuration-name">
-              <strong>{serviceLabel(service)}</strong>
-              <span>
-                {computerIds(service, snapshot.items).join(" · ") || service.id}
+      <div data-motion-row={service.id}>
+        <Collapsible open={open} onOpenChange={onOpen}>
+          <CardHeader className="configuration-summary">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="drag-handle"
+              aria-label={`Move ${service.name}`}
+              disabled={pending}
+              {...sortable.attributes}
+              {...sortable.listeners}
+            >
+              <GripVertical />
+            </Button>
+            <span
+              className="configuration-rank"
+              aria-label={`Position ${rank}`}
+            >
+              <span aria-hidden="true">
+                <SettingNumber value={rank} />
               </span>
             </span>
-            {!service.config.enabled && <Badge variant="secondary">Off</Badge>}
-            <PriorityBadge value={service.config.priority} />
-            <ChevronDown className={open ? "chevron-open" : ""} />
-          </CollapsibleTrigger>
-        </CardHeader>
-        <CollapsibleContent keepMounted>
-          <CardContent className="configuration-detail">
-            <ServiceEditor
-              service={service}
-              configRevision={snapshot.configRevision}
-              mutate={mutate}
-              pending={pending}
-              onCredential={onCredential}
-            />
-          </CardContent>
-        </CollapsibleContent>
-      </Collapsible>
+            <CollapsibleTrigger
+              render={
+                <Button variant="disclosure" className="configuration-open" />
+              }
+            >
+              <span className="configuration-name">
+                <strong>{serviceLabel(service)}</strong>
+                <span>
+                  {computerIds(service, snapshot.items).join(" · ") ||
+                    service.id}
+                </span>
+              </span>
+              {!service.config.enabled && (
+                <Badge variant="secondary">Off</Badge>
+              )}
+              <PriorityBadge value={service.config.priority} />
+              <ChevronDown className={open ? "chevron-open" : ""} />
+            </CollapsibleTrigger>
+          </CardHeader>
+          <CollapsibleContent
+            keepMounted
+            className="motion-collapse"
+            inert={!open}
+          >
+            <CardContent className="configuration-detail">
+              <ServiceEditor
+                service={service}
+                configRevision={snapshot.configRevision}
+                mutate={mutate}
+                pending={pending}
+                onCredential={onCredential}
+              />
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
     </Card>
   );
 }
@@ -129,6 +142,7 @@ export function ConfigurationList({
     [snapshot.services],
   );
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
+  const list = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [status, setStatus] = useState("");
   const dragBase = useRef<{ revision: number; ids: string[] } | null>(null);
@@ -139,6 +153,7 @@ export function ConfigurationList({
     }),
   );
   const ids = dragOrder || ordered.map((s) => s.id);
+  useListMotion(list, JSON.stringify(ids), dragOrder !== null);
   const start = () => {
     const value = {
       revision: snapshot.configRevision,
@@ -194,6 +209,7 @@ export function ConfigurationList({
       >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           <div
+            ref={list}
             className="configuration-list"
             aria-label="Service priority order"
           >

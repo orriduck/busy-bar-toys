@@ -34,6 +34,7 @@ import { Preview } from "./preview";
 import type { PreviewStats } from "./preview";
 import { SessionFence, collectorSetupMode } from "./session";
 import { startEventStream } from "./event-stream";
+import { MotionPage } from "./motion";
 import "./style.css";
 function App() {
   const [session, setSession] = useState<boolean | null>(null);
@@ -302,24 +303,30 @@ function App() {
             </Alert>
           )}
           {session === null ? (
-            <section className="signin">
-              <h1>Connecting…</h1>
-              <Skeleton className="h-12 w-64" />
-            </section>
+            <MotionPage key="connecting" active>
+              <section className="signin">
+                <h1>Connecting…</h1>
+                <Skeleton className="h-12 w-64" />
+              </section>
+            </MotionPage>
           ) : !session ? (
-            <SignIn
-              demo={demo === true}
-              onSignIn={beginSession}
-              onError={setError}
-            />
+            <MotionPage key="signin" active>
+              <SignIn
+                demo={demo === true}
+                onSignIn={beginSession}
+                onError={setError}
+              />
+            </MotionPage>
           ) : !snapshot ? (
-            <section className="signin">
-              <h1>Loading your device…</h1>
-              <Skeleton className="h-12 w-64" />
-              <Button variant="secondary" onClick={() => void refresh()}>
-                Try again
-              </Button>
-            </section>
+            <MotionPage key="loading" active>
+              <section className="signin">
+                <h1>Loading your device…</h1>
+                <Skeleton className="h-12 w-64" />
+                <Button variant="secondary" onClick={() => void refresh()}>
+                  Try again
+                </Button>
+              </section>
+            </MotionPage>
           ) : (
             <>
               {/* Keep this host and its keyed Preview in place across navigation. */}
@@ -344,7 +351,7 @@ function App() {
                   onStats={setPreviewStats}
                 />
               </section>
-              <div className="page-slot" hidden={page !== "display"}>
+              <MotionPage active={page === "display"}>
                 <section className="display-page" aria-label="Display">
                   <Queue
                     snapshot={snapshot}
@@ -359,24 +366,24 @@ function App() {
                     </Alert>
                   )}
                 </section>
-              </div>
-              <div className="page-slot" hidden={page !== "services"}>
+              </MotionPage>
+              <MotionPage active={page === "services"}>
                 <ServicesPage
                   snapshot={snapshot}
                   mutate={mutate}
                   pending={pending}
                   onCredential={setSecret}
                 />
-              </div>
-              <div className="page-slot" hidden={page !== "configuration"}>
+              </MotionPage>
+              <MotionPage active={page === "configuration"}>
                 <ConfigurationPage
                   snapshot={snapshot}
                   mutate={mutate}
                   pending={pending}
                   onCredential={setSecret}
                 />
-              </div>
-              <div className="page-slot" hidden={page !== "device"}>
+              </MotionPage>
+              <MotionPage active={page === "device"}>
                 <DevicePage
                   snapshot={snapshot}
                   active={page === "device"}
@@ -386,7 +393,7 @@ function App() {
                   onRefresh={() => void refresh()}
                   onLogout={() => void logout()}
                 />
-              </div>
+              </MotionPage>
             </>
           )}
         </main>

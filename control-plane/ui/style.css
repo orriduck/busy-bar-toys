@@ -396,8 +396,15 @@ a {
   font-size: 0.875rem;
 }
 .queue-table .details-row > td {
-  padding: 0 1.25rem;
+  height: 0;
+  padding: 0;
   white-space: normal;
+}
+.queue-table .details-row {
+  border-bottom: 0;
+}
+.queue-detail-content {
+  padding: 0 1.25rem;
 }
 .item-detail {
   padding: 1.5rem 0.375rem;
@@ -709,7 +716,7 @@ a {
   .queue-table time {
     font-size: 0.6875rem;
   }
-  .queue-table .details-row > td {
+  .queue-detail-content {
     padding: 0 0.5rem;
   }
   .item-detail {
@@ -1018,4 +1025,43 @@ a {
 @container policy (min-width: 42rem) {
   .policy-slider { padding-bottom: 0.25rem; }
   .slider-stops { display: none; }
+}
+
+/* Base UI owns panel measurement and accessibility; CSS owns its height. */
+.motion-collapse {
+  height: var(--collapsible-panel-height);
+  overflow: hidden;
+  opacity: 1;
+  transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease-out;
+}
+.motion-collapse[data-starting-style],
+.motion-collapse[data-ending-style] {
+  height: 0;
+  opacity: 0;
+}
+.motion-feedback {
+  display: inline-block;
+  border-radius: 0.25rem;
+}
+.motion-feedback,
+.motion-surface {
+  background-color: rgb(47 128 255 / var(--motion-flash, 0));
+}
+.queue-table td {
+  transition: background-color 220ms ease-out;
+}
+.queue-playing {
+  animation: playing-arrival 180ms ease-out;
+}
+@keyframes playing-arrival {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

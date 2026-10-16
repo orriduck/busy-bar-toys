@@ -47,6 +47,7 @@ import {
   CardFooter,
 } from "./components/ui/card";
 import { Alert, AlertDescription } from "./components/ui/alert";
+import { MotionReveal, useSemanticMotion } from "./motion";
 export function ServiceEditor({
   service,
   configRevision,
@@ -82,6 +83,8 @@ export function ServiceEditor({
   ].join(":");
   const lastPolicy = useRef(remotePolicy);
   const [baseRevision, setBaseRevision] = useState(configRevision);
+  const [saved, setSaved] = useState(0);
+  useSemanticMotion(formRef, saved);
   useEffect(() => {
     if (!dirty) {
       if (lastPolicy.current !== remotePolicy) setResetVersion((v) => v + 1);
@@ -112,6 +115,7 @@ export function ServiceEditor({
       "PATCH",
     );
     if (result) {
+      setSaved((value) => value + 1);
       if (edits.current === submittedEdit) {
         const form = formRef.current;
         if (
@@ -146,7 +150,7 @@ export function ServiceEditor({
       ref={formRef}
       tabIndex={-1}
       aria-label={`${serviceLabel(service)} settings`}
-      className="policy-card @container/policy outline-none"
+      className="policy-card motion-surface @container/policy outline-none"
       id={formId}
       onSubmit={(event) => void save(event)}
     >
@@ -180,7 +184,7 @@ export function ServiceEditor({
       {dirty && (
         <>
           <Separator className="mt-3" />
-          <div className="policy-actions">
+          <MotionReveal className="policy-actions">
             <Button type="submit" size="sm" disabled={pending || !dirty}>
               Save{dirty ? " changes" : ""}
             </Button>
@@ -201,7 +205,7 @@ export function ServiceEditor({
                 Discard
               </Button>
             )}
-          </div>
+          </MotionReveal>
         </>
       )}
     </form>
@@ -228,6 +232,11 @@ function ServiceAccess({
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const actionTrigger = useRef<HTMLButtonElement>(null);
   const [revokeError, setRevokeError] = useState(false);
+  const surface = useRef<HTMLDivElement>(null);
+  useSemanticMotion(
+    surface,
+    `${service.config.enabled}:${service.config.allowInput}:${service.config.allowPreview}`,
+  );
   const change = (field: string, checked: boolean) =>
     void mutate(
       `/services/${encodeURIComponent(service.id)}`,
@@ -248,7 +257,13 @@ function ServiceAccess({
       });
   };
   return (
-    <Item size="sm" role="listitem" className="service-access-row">
+    <Item
+      ref={surface}
+      data-motion-row={service.id}
+      size="sm"
+      role="listitem"
+      className="service-access-row motion-surface"
+    >
       <ItemContent className="min-w-0">
         <div className="service-access-main">
           <ItemTitle className="service-identity">
