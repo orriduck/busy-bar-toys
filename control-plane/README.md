@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md) · [Protocol](PROTOCOL.md) · [Approved design](../docs/plans/control-plane-v5.md)
 
-Manage one BUSY Bar from a browser. Register display services. Set their priority, exit rule and enabled state. See the current owner and every queued notification. The page receives full state snapshots through SSE. React and Vite use Tailwind, shadcn/ui components, TanStack Query for session-scoped server state, and TanStack Table for the queue.
+Manage one BUSY Bar from a browser. Register display services. Set their priority, Hold, Heartbeat and enabled state. Each publisher declares its messages’ end rules. See the current owner and every queued notification. The page receives full state snapshots through SSE. React and Vite use Tailwind, shadcn/ui components, TanStack Query for session-scoped server state, and TanStack Table for the queue.
 
 The Cloudflare backend schedules the queue and writes the display. A local Mac collects Codex, Your dot and notification data. It sends complete scenes to the backend. Closing the browser does not stop cloud scheduling.
 
@@ -54,7 +54,7 @@ A custom publisher follows [PROTOCOL.md](PROTOCOL.md). Registering a service doe
 
 - **Display:** see current front-display pixels and the queue. Rows show App, Sender, and Received. Open an app to read details, expand grouped members, pause, resume, end, or run an advertised action.
 - **Services:** register collectors. Replace or revoke publisher credentials here. Replacement ends that service's old items. Update the local client before it can publish again.
-- **Configuration:** change enabled state, priority, exit rule, visible time, condition delay and heartbeat timeout. Select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
+- **Configuration:** drag service order or change priority, Hold and Heartbeat. Select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
 - **Device:** inspect connection, current controller, API confirmation and preview diagnostics. Sign out here. An API acknowledgment does not prove physical pixels.
 
 Sender is the service name, with an instance when needed. It is not the notification's business author. Received is the occurrence's first server receipt time. Updates retain it. Open the row for full provenance and time.

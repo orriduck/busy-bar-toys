@@ -3,7 +3,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
 gsap.registerPlugin(useGSAP);
-export type SliderMeaning = "priority" | "hold" | "later" | "heartbeat";
+export type SliderMeaning = "priority" | "hold" | "heartbeat";
 
 /** Decorative cues only; the Slider owns all values, input and semantics. */
 export function SliderMotion({ meaning }: { meaning: SliderMeaning }) {
@@ -43,21 +43,6 @@ export function SliderMotion({ meaning }: { meaning: SliderMeaning }) {
               },
             )
             .to("[data-beam]", { opacity: 0, duration: 0.6 }, "+=0.7");
-        } else if (meaning === "later") {
-          timeline
-            .fromTo(
-              "[data-later]",
-              { xPercent: -5, opacity: 0 },
-              {
-                xPercent: 90,
-                opacity: 0.4,
-                duration: 2.2,
-                stagger: 0.4,
-                ease: "power2.inOut",
-              },
-              0.8,
-            )
-            .to("[data-later]", { opacity: 0, duration: 0.5, stagger: 0.1 });
         } else {
           timeline
             .fromTo(
@@ -113,12 +98,6 @@ export function SliderMotion({ meaning }: { meaning: SliderMeaning }) {
           className="absolute inset-y-0 left-0 w-1/5 rounded-full bg-linear-to-r from-transparent via-white/50 to-transparent opacity-0"
         />
       )}
-      {meaning === "later" &&
-        [0, 1, 2].map((index) => (
-          <span key={index} data-later className="absolute inset-0 opacity-0">
-            <span className="absolute top-1/2 left-0 h-1 w-3 -translate-y-1/2 rounded-full bg-white" />
-          </span>
-        ))}
       {meaning === "heartbeat" && (
         <span
           data-pulse

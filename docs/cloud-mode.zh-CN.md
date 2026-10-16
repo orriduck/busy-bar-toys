@@ -24,7 +24,7 @@ swiftc scripts/cloud-keychain.swift -o .venv/bin/busy-cloud-keychain
 
 ## 2. 创建服务
 
-在控制面的 **Services** 页分别注册一个 **agent** 服务和一个 **notifier** 服务。在 **Configuration** 页配置显示规则。Notifier 的优先级应高于 agent。页面默认值分别为 agent 10、notifier 50。通常保留默认退出策略。
+在控制面的 **Services** 页分别注册一个 **agent** 服务和一个 **notifier** 服务。在 **Configuration** 页配置显示规则。Notifier 的优先级应高于 agent。页面默认值分别为 agent 10、notifier 50。每条消息由发送端声明源端结束或定时结束。宿主决定何时创建下一次消息。
 
 复制页面分别显示的 publisher credential。每份凭据只属于一个服务，页面仅显示一次。不要把它放入 shell 命令、环境变量、仓库文件或聊天。
 
@@ -67,7 +67,7 @@ URL 必须是 origin，不能含路径、用户信息、query 或 fragment；禁
 .venv/bin/busy-bar watch --mode cloud
 ```
 
-按 Control-C 停止。停止后保留 occurrence ID、snooze、操作结果和 urgent 期限。短时间内重启会续期相同 occurrence。若后端租约先过期，则遵循后端 tombstone，直到来源确认 clear 或出现新 agent turn 才允许再次出现。客户端不清理设备 namespace。
+按 Control-C 停止。停止后保留 occurrence ID、操作结果和 urgent 期限。短时间内重启会续期相同 occurrence。若后端租约先过期，则遵循后端 tombstone，直到来源确认 clear 或出现新 agent turn 才允许再次出现。客户端不清理设备 namespace。
 
 在另一个终端查看 cloud 状态：
 
@@ -104,8 +104,8 @@ Standalone 需要原有 BUSY 设备 token。
 ## 管理页面和实时画面
 
 - **Display：**显示当前正面画面和队列。每行只显示 App、Sender、Received；点击 app 可展开详情和队列操作。
-- **Services：**注册采集器，替换或撤销 publisher credential。
-- **Configuration：**开关服务，配置优先级、退出方式、停留时间、稍后提醒和 heartbeat。
+- **Services：**开关服务及其按键和预览桥，注册采集器，替换或撤销 publisher credential。
+- **Configuration：**拖动调整顺序，配置 Priority、Hold 和 Heartbeat。
 - **Device：**查看连接、当前控制者、API 确认和预览诊断。在这里退出登录。
 
 Sender 是注册服务的名称。多个 Mac 共用注册服务时，用 instance 区分；它不代表来源通知的作者。Received 是服务端首次收到该 occurrence 的时间，更新后保留。悬停时间可查看完整日期和时间。
@@ -126,7 +126,7 @@ Cloud watch 可以读取已配置的 Wi-Fi 输入。如有需要，先在 standa
 
 ## 投递和 urgent 兜底
 
-Notifier 发布所有来源的原始项。State 来源对应 condition，event 来源对应 event；保留原来源 group key，分组范围限定在 notifier 服务内。飞机使用持久化 encounter ID：重复轮询和重启保留同一 ID；确认在外圈离开到达重置条件或每日重置后，才生成新 ID。后端负责排序和 snooze。手动 clear 会封存 occurrence，heartbeat 不会复活它。投递过期同样禁止 cloud 重放，但本地仍未解决的 urgent 项会保留兜底文字和期限，直到来源确认 clear 或执行兜底通知。来源确认条件已清除、以后再次出现时，才创建新的 occurrence UUID。
+Notifier 发布所有来源的原始项。State 来源对应 condition，event 来源对应 event；保留原来源 group key，分组范围限定在 notifier 服务内。飞机使用持久化 encounter ID：重复轮询和重启保留同一 ID；确认在外圈离开到达重置条件或每日重置后，才生成新 ID。后端负责排序。定时消息完成后不自动重播；宿主决定何时创建新的 occurrence。手动 clear 会封存 occurrence，heartbeat 不会复活它。投递过期同样禁止 cloud 重放，但本地仍未解决的 urgent 项会保留兜底文字和期限，直到来源确认 clear 或执行兜底通知。来源确认条件已清除、以后再次出现时，才创建新的 occurrence UUID。
 
 来源轮询失败时保留最后条件并标记为不确定，停止续期。成功轮询的有效窗口有界，并考虑下一次预定轮询时间。卡住的来源不能无限续期缓存。仅在 cloud 确认接纳显示后调用来源 `on_shown`。
 

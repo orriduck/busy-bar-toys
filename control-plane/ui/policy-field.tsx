@@ -93,9 +93,7 @@ export function PolicyField({
       ? "priority"
       : field === "visibleMs"
         ? "hold"
-        : field === "snoozeMs"
-          ? "later"
-          : "heartbeat";
+        : "heartbeat";
   const tones = [
     "--priority-low",
     "--priority-normal",
@@ -170,7 +168,7 @@ export function PolicyField({
         </InputGroup>
         {definition.unit && (
           <span id={`${id}-unit`} className="sr-only">
-            {definition.unit === "min" ? "Minutes" : "Seconds"}
+            Seconds
           </span>
         )}
       </div>

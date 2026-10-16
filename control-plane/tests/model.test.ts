@@ -81,7 +81,7 @@ describe("v5 scheduling", () => {
     tick(s, now + 13001);
     expect(Object.values(s.items)).toHaveLength(0);
   });
-  it("condition snoozes with stable identity and heartbeats do not shift wake time", () => {
+  it("completes a finite condition and lets only the host create another occurrence", () => {
     const s = state();
     publish(
       s,
@@ -89,18 +89,23 @@ describe("v5 scheduling", () => {
       p("c", { kind: "condition", validUntil: now + 86400000 }),
       now,
     );
+    const key = s.selected!;
     acceptDisplay(s, s.generation, now);
     tick(s, now + 11001);
-    const item = Object.values(s.items)[0];
-    expect(item.state).toBe("snoozed");
-    const wake = item.nextEligibleAt;
+    expect(s.items[key]).toBeUndefined();
+    expect(s.tombstones[key].reason).toBe("completed");
+    tick(s, now + 1800000);
+    expect(Object.values(s.items)).toHaveLength(0);
+    expect(() =>
+      publish(s, "a", p("c", { kind: "condition", version: 2 }), now + 1800001),
+    ).toThrow("ITEM_ENDED");
     publish(
       s,
       "a",
-      p("c", { kind: "condition", version: 2, validUntil: now + 86400000 }),
-      now + 12000,
+      p("host-new-occurrence", { validUntil: now + 1900000 }),
+      now + 1800002,
     );
-    expect(item.nextEligibleAt).toBe(wake);
+    expect(s.items[s.selected!].itemId).toBe("host-new-occurrence");
   });
   it("dedupes identities and tombstones clear every nonurgent state without resurrection", () => {
     const s = state();
@@ -331,4 +336,63 @@ it("normalizes legacy service preview capability in snapshots", () => {
   expect(
     snapshot(s, now).services.find((v) => v.id === "a")!.config.allowPreview,
   ).toBe(false);
+});
+
+describe("sender-owned message lifecycle", () => {
+  it.each([
+    ["event", "info", "source", null],
+    ["agent", "info", "finite", 10000],
+    ["condition", "urgent", "finite", 10000],
+  ])("accepts %s %s with explicit %s exit", (kind, level, exit, remaining) => {
+    const s = state();
+    publish(s, "a", p("explicit", { kind, level, exit }), now);
+    expect(s.items[s.selected!].remainingMs).toBe(remaining);
+  });
+  it("rejects an unknown declared exit without admitting the item", () => {
+    const s = state();
+    expect(() => publish(s, "a", p("bad", { exit: "default" }), now)).toThrow();
+    expect(Object.values(s.items)).toHaveLength(0);
+  });
+  it("keeps an existing occurrence's original lifetime on content updates", () => {
+    const s = state();
+    publish(s, "a", p("same", { exit: "source" }), now);
+    publish(s, "a", p("same", { version: 2, exit: "finite" }), now + 1);
+    expect(s.items[s.selected!].remainingMs).toBeNull();
+  });
+  it("retires persisted snoozed occurrences instead of waking them", () => {
+    const s = state();
+    publish(s, "a", p("legacy"), now);
+    const item = s.items[s.selected!];
+    item.state = "snoozed";
+    item.nextEligibleAt = now + 1800000;
+    s.selected = null;
+    s.visibleSince = null;
+    tick(s, now + 1);
+    expect(s.items[item.itemKey]).toBeUndefined();
+    expect(s.tombstones[item.itemKey].reason).toBe("completed");
+  });
+});
+
+it("a finite group completion does not consume a source-controlled member", () => {
+  const s = state();
+  const finite = publish(
+    s,
+    "a",
+    p("finite-peer", { exit: "finite", groupKey: "mixed" }),
+    now,
+  );
+  const source = publish(
+    s,
+    "a",
+    p("source-peer", { exit: "source", groupKey: "mixed" }),
+    now,
+  );
+  if (!s.admission.some((a) => a.itemKey === source.itemKey))
+    s.admission.push({ itemKey: source.itemKey, version: 1 });
+  acceptDisplay(s, s.generation, now);
+  tick(s, now + 11001);
+  expect(s.items[finite.itemKey]).toBeUndefined();
+  expect(s.items[source.itemKey]?.remainingMs).toBeNull();
+  finishItem(s, source.itemKey, "resolved", 1, now + 12000);
+  expect(s.items[source.itemKey]).toBeUndefined();
 });

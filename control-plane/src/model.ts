@@ -543,6 +543,18 @@ export function publish(
   }
   requireThat(["event", "condition", "agent"].includes(String(body.kind)));
   requireThat(["urgent", "attention", "info"].includes(String(body.level)));
+  // New senders declare each occurrence; missing fields retain old-client behavior.
+  if (body.exit !== undefined)
+    requireThat(
+      body.exit === "source" || body.exit === "finite",
+      "INVALID_MESSAGE_EXIT",
+    );
+  const sourceExit =
+    body.exit === undefined
+      ? service.config.exit === "source" ||
+        (service.config.exit === "default" &&
+          (body.level === "urgent" || body.kind === "agent"))
+      : body.exit === "source";
   const scene = validateScene(body.scene);
   const validUntil = integer(body.validUntil, now + 1, now + 86400000);
   const first = Number(body.firstRecognizedAt),
@@ -578,16 +590,12 @@ export function publish(
     state: old?.state ?? "waiting",
     remainingMs: old
       ? old.remainingMs
-      : service.config.exit === "source" ||
-          (service.config.exit === "default" &&
-            (body.level === "urgent" || body.kind === "agent"))
+      : sourceExit
         ? null
         : service.config.visibleMs,
     originalVisibleMs: old
       ? old.originalVisibleMs
-      : service.config.exit === "source" ||
-          (service.config.exit === "default" &&
-            (body.level === "urgent" || body.kind === "agent"))
+      : sourceExit
         ? undefined
         : service.config.visibleMs,
     nextEligibleAt: old?.nextEligibleAt ?? null,
@@ -740,16 +748,9 @@ export function tick(s: State, now: number) {
       service.epochExpiresAt <= now
     )
       end(s, i, "expired", i.version);
-    else if (
-      i.state === "snoozed" &&
-      i.nextEligibleAt !== null &&
-      i.nextEligibleAt <= now
-    ) {
-      i.state = "waiting";
-      i.nextEligibleAt = null;
-      i.remainingMs = service.config.visibleMs;
-      i.originalVisibleMs = service.config.visibleMs;
-      s.revision++;
+    else if (i.state === "snoozed") {
+      // Old persisted deferrals are retired. Only a new host occurrence can replay.
+      end(s, i, "completed", i.version);
     }
   }
   if (
@@ -772,13 +773,7 @@ export function tick(s: State, now: number) {
       const i = s.items[admitted.itemKey];
       if (!i || i.version !== admitted.version || i.level === "urgent")
         continue;
-      if (i.kind === "condition") {
-        i.state = "snoozed";
-        i.nextEligibleAt = now + s.services[i.serviceId].config.snoozeMs;
-        i.remainingMs = s.services[i.serviceId].config.visibleMs;
-        i.originalVisibleMs = i.remainingMs;
-        s.revision++;
-      } else end(s, i, "completed", i.version);
+      if (i.remainingMs !== null) end(s, i, "completed", i.version);
     }
     if (s.items[current.itemKey]?.level === "urgent")
       end(s, current, "completed", current.version);

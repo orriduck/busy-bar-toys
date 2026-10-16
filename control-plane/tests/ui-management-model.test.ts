@@ -197,9 +197,8 @@ describe("confirmed playback metadata", () => {
       startsAt: now + 1000,
     });
   });
-  it("resets total with each condition repeat and wake budget", () => {
+  it("uses the latest Hold only for a new host occurrence, without automatic repeat", () => {
     const s = state();
-    s.services.a.config.snoozeMs = 1000;
     publish(s, "condition", { kind: "condition" });
     model.acceptDisplay(s, s.generation, now);
     model.patchConfig(
@@ -210,23 +209,18 @@ describe("confirmed playback metadata", () => {
       now + 5000,
     );
     model.tick(s, now + 11000);
-    const key = Object.keys(s.items)[0];
-    expect(itemView(s, now + 11000, key).playback).toMatchObject({
+    expect(Object.values(s.items)).toHaveLength(0);
+    model.tick(s, now + 12000);
+    expect(Object.values(s.items)).toHaveLength(0);
+    publish(
+      s,
+      "new-host-occurrence",
+      { kind: "condition", validUntil: now + 100000 },
+      now + 12001,
+    );
+    expect(itemView(s, now + 12001).playback).toMatchObject({
       totalMs: 20000,
       remainingMs: 20000,
-      running: false,
-    });
-    model.patchConfig(
-      s,
-      "a",
-      { visibleMs: 30000 },
-      s.configRevision,
-      now + 11500,
-    );
-    model.tick(s, now + 12000);
-    expect(itemView(s, now + 12000, key).playback).toMatchObject({
-      totalMs: 30000,
-      remainingMs: 30000,
       running: false,
     });
   });

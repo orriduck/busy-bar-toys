@@ -12,7 +12,8 @@ An optional Cloudflare backend coordinates display services across Macs.
 The browser separates Display, Services, Configuration and Device pages.
 Display shows actual front-display pixels and a compact App / Sender / Received queue.
 An optional local Wi-Fi bridge targets 30 fps; Device reports the measured rate.
-Configuration manages priorities, exit rules and switches.
+Configuration manages priority, Hold and Heartbeat. Services contains enable switches.
+Each publisher declares a message’s end rule. A timed message completes once; its host decides when to send again.
 Local collectors publish scenes with separate service credentials.
 SSE keeps management pages in sync.
 

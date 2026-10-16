@@ -1,4 +1,4 @@
-export type PolicyKey = "priority" | "visibleMs" | "snoozeMs" | "heartbeatMs";
+export type PolicyKey = "priority" | "visibleMs" | "heartbeatMs";
 export const priorityPresets = [
   { id: "low", label: "Low", value: 10 },
   { id: "normal", label: "Normal", value: 50 },
@@ -25,27 +25,13 @@ export const policyFields = {
     scale: 1000,
     min: 1,
     max: 86400,
-    help: "How long a fixed-time message stays on screen after its entry animation. Automatic uses each message’s default; Source ends stays until the sender finishes.",
+    help: "For fixed-time messages, how long content stays on screen after its entry animation. Source-controlled messages stay until their sender finishes.",
     presets: [5, 10, 30, 60].map((value) => ({
       id: String(value),
       label: value === 60 ? "1 min" : `${value} s`,
       value: value * 1000,
     })),
     stops: [1, 5, 10, 30, 60, 86400],
-  },
-  snoozeMs: {
-    label: "Later",
-    unit: "min",
-    scale: 60000,
-    min: 1 / 60,
-    max: 1440,
-    help: "When you choose Later on a message, hide it for this long before it can re-enter the queue. It can return only while its source remains valid.",
-    presets: [5, 15, 30, 60].map((value) => ({
-      id: String(value),
-      label: value === 60 ? "1 hour" : `${value} min`,
-      value: value * 60000,
-    })),
-    stops: [1 / 60, 5, 15, 30, 60, 1440],
   },
   heartbeatMs: {
     label: "Heartbeat",

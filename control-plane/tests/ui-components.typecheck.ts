@@ -1,10 +1,4 @@
 import type {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "../ui/components/ui/tabs";
-import type {
   Progress,
   ProgressTrack,
   ProgressIndicator,
@@ -29,10 +23,6 @@ import type {
 // A primitive's state callback must never silently reappear in their public API.
 type StringClassName<Props extends { className?: string }> = Props["className"];
 type StyledClassNames = [
-  StringClassName<ComponentProps<typeof Tabs>>,
-  StringClassName<ComponentProps<typeof TabsList>>,
-  StringClassName<ComponentProps<typeof TabsTrigger>>,
-  StringClassName<ComponentProps<typeof TabsContent>>,
   StringClassName<ComponentProps<typeof Progress>>,
   StringClassName<ComponentProps<typeof ProgressTrack>>,
   StringClassName<ComponentProps<typeof ProgressIndicator>>,

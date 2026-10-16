@@ -2,7 +2,7 @@
 
 [English](README.md) · [协议](PROTOCOL.md) · [已确认的设计](../docs/plans/control-plane-v5.md)
 
-在浏览器中管理 BUSY Bar。注册显示服务，调整优先级、退出规则和开关。查看当前控制者，以及每一条等待显示的通知。页面通过 SSE 接收完整状态。界面使用 React、Vite、Tailwind 和 shadcn/ui；TanStack Query 管理当前设备与会话的服务端状态，TanStack Table 管理队列表格。
+在浏览器中管理 BUSY Bar。注册显示服务，调整优先级、Hold、Heartbeat 和开关。每条消息由发送端声明结束方式。查看当前控制者，以及每一条等待显示的通知。页面通过 SSE 接收完整状态。界面使用 React、Vite、Tailwind 和 shadcn/ui；TanStack Query 管理当前设备与会话的服务端状态，TanStack Table 管理队列表格。
 
 Cloudflare 后端负责调度和写屏。Mac 负责采集 Codex、Your dot 与通知，向后端发送完整画面。关闭浏览器后，云端仍可继续调度。
 
@@ -53,13 +53,13 @@ Setup 只保存连接信息，不替换正在运行的独立观察服务。准�
 ## 使用管理页
 
 - **Display：**查看当前正面像素和队列，每行只显示 App、Sender、Received。点击 app 展开详情和分组成员，并暂停、恢复、结束通知或执行已声明的动作。
-- **Services：**注册采集器，替换或撤销 publisher credential。替换会结束该服务的旧项目；本地更新凭据后才能继续发布。
-- **Configuration：**修改开关、优先级、退出方式、可见时长、常驻条件延后时间和心跳超时。选择 **Save changes**。旧版本修改会被拒绝；重新加载表单后再保存。
+- **Services：**开关服务及其按键和预览桥，注册采集器，替换或撤销 publisher credential。替换会结束该服务的旧项目；本地更新凭据后才能继续发布。
+- **Configuration：**拖动调整服务顺序，修改 Priority、Hold 和 Heartbeat。选择 **Save changes**。旧版本修改会被拒绝；重新加载表单后再保存。
 - **Device：**查看连接、当前控制者、API 确认和预览诊断，并退出登录。API 成功不等于实体像素验收。
 
 Sender 是注册服务名，必要时附上 instance，不代表来源通知的作者。Received 是首次收到该 occurrence 的服务端时间，更新后保留。展开行可查看每位成员的来源和完整时间。
 
-在 Configuration 中，仅为指定 Mac 的一个服务打开 **Live display preview bridge**。更新该 Mac，并保留现有本地 Wi-Fi 输入配置。预览桥先核对设备身份，再读取真实正面 framebuffer；在登录后的任意管理页面可见时发送像素。Display 展示大预览；其它页面在左下角保留同一个实时预览，不显示 Manage 按钮。采集以 30 fps 为目标，Device 显示实际速率。浏览器使用约 150 ms 的有限播放缓冲，最多保留六个待播放帧。预览桥不可用不影响云端调度。参见[预览接入与限制](../docs/cloud-mode.zh-CN.md#管理页面和实时画面)。
+在 Services 中，仅为指定 Mac 的一个服务打开 **Live display preview bridge**。更新该 Mac，并保留现有本地 Wi-Fi 输入配置。预览桥先核对设备身份，再读取真实正面 framebuffer；在登录后的任意管理页面可见时发送像素。Display 展示大预览；其它页面在左下角保留同一个实时预览，不显示 Manage 按钮。采集以 30 fps 为目标，Device 显示实际速率。浏览器使用约 150 ms 的有限播放缓冲，最多保留六个待播放帧。预览桥不可用不影响云端调度。参见[预览接入与限制](../docs/cloud-mode.zh-CN.md#管理页面和实时画面)。
 
 **Trusted device button bridge** 是独立能力，只授权给本地按键监听器。它允许设备级 Start/Pause 操作；普通发布服务不能清除其它服务。Primary 动作由原 Mac 执行，失败或未知结果不会结束通知。
 

@@ -3,7 +3,6 @@ import type { FormEvent } from "react";
 import type { Service, Mutate } from "./api";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
 import { SettingsSelect } from "./settings-select";
 import { Separator } from "./components/ui/separator";
 import {
@@ -35,9 +34,9 @@ import { serviceLabel } from "./service-layout";
 import { PolicyField } from "./policy-field";
 import {
   Field,
-  FieldContent,
   FieldGroup,
   FieldLabel,
+  FieldDescription,
 } from "./components/ui/field";
 import {
   Card,
@@ -103,6 +102,8 @@ export function ServiceEditor({
       enabled: _enabled,
       allowInput: _input,
       allowPreview: _preview,
+      exit: _exit,
+      snoozeMs: _snooze,
       ...policy
     } = config;
     const result = await mutate(
@@ -149,7 +150,7 @@ export function ServiceEditor({
       id={formId}
       onSubmit={(event) => void save(event)}
     >
-      <FieldGroup className="grid grid-cols-1 gap-x-4 gap-y-3 @xl/policy:grid-cols-2 @3xl/policy:grid-cols-4">
+      <FieldGroup className="grid grid-cols-1 gap-x-4 gap-y-3 @xl/policy:grid-cols-2 @2xl/policy:grid-cols-3">
         <PolicyField
           key={`priority-${resetVersion}`}
           field="priority"
@@ -163,63 +164,11 @@ export function ServiceEditor({
           onChange={(value) => edit("visibleMs", value)}
         />
         <PolicyField
-          key={`snoozeMs-${resetVersion}`}
-          field="snoozeMs"
-          value={config.snoozeMs}
-          onChange={(value) => edit("snoozeMs", value)}
-        />
-        <PolicyField
           key={`heartbeatMs-${resetVersion}`}
           field="heartbeatMs"
           value={config.heartbeatMs}
           onChange={(value) => edit("heartbeatMs", value)}
         />
-        <Field className="grid min-w-0 items-center gap-2 col-span-full @2xl/policy:grid-cols-[7rem_minmax(0,1fr)]">
-          <div className="flex h-10 items-center">
-            <FieldLabel id={`${formId}-exit-label`} htmlFor={`${formId}-exit`}>
-              Exit
-            </FieldLabel>
-          </div>
-          <FieldContent className="min-w-0">
-            <div className="@2xl/policy:hidden">
-              <SettingsSelect
-                id={`${formId}-exit`}
-                size="sm"
-                value={config.exit}
-                onChange={(value) => edit("exit", value)}
-                options={[
-                  { value: "default", label: "Automatic" },
-                  { value: "finite", label: "Fixed time" },
-                  { value: "source", label: "Source ends" },
-                ]}
-              />
-            </div>
-            <Tabs
-              className="hidden @2xl/policy:flex"
-              value={config.exit}
-              onValueChange={(value) => edit("exit", value)}
-            >
-              <TabsList
-                size="lg"
-                className="w-fit"
-                aria-labelledby={`${formId}-exit-label`}
-              >
-                <TabsTrigger value="default">Automatic</TabsTrigger>
-                <TabsTrigger value="finite">Fixed time</TabsTrigger>
-                <TabsTrigger value="source">Source ends</TabsTrigger>
-              </TabsList>
-              <TabsContent value="default" className="sr-only">
-                Use each message’s default display duration.
-              </TabsContent>
-              <TabsContent value="finite" className="sr-only">
-                Use the Hold duration for each message.
-              </TabsContent>
-              <TabsContent value="source" className="sr-only">
-                Display until the sender finishes.
-              </TabsContent>
-            </Tabs>
-          </FieldContent>
-        </Field>
       </FieldGroup>
       {dirty && baseRevision !== configRevision && (
         <Alert className="mt-5">
@@ -530,6 +479,11 @@ export function Register({
                   { value: "custom", label: "Custom publisher" },
                 ]}
               />
+              <FieldDescription>
+                Each message declares whether it ends with its source or after a
+                fixed time. Hold applies to timed messages. The publisher
+                decides when to send again.
+              </FieldDescription>
             </Field>
           </FieldGroup>
         </CardContent>

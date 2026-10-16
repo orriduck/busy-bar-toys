@@ -666,6 +666,7 @@ class Producer:
             hashes|={e['assetHash'] for e in rec.get('update',[]) if 'assetHash' in e}
             self._upload_assets(hashes,asset_bodies)
             body={**identity,**{k:rec[k] for k in ('itemId','version','firstRecognizedAt','kind','level','title','detail','scene')}}
+            body['exit']=rec.get('exit','source' if rec['kind']=='agent' or rec['level']=='urgent' else 'finite')
             for field in ('groupKey','actionKeys','businessId','app'):
                 if field in rec: body[field]=rec[field]
             body['validUntil']=rec['lastSourceAt']+60000
