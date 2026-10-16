@@ -8,6 +8,7 @@
     "types": "wrangler types",
     "check": "npm test && npm run typecheck && wrangler deploy --dry-run",
     "build": "vite build",
+    "deploy": "node scripts/deploy.mjs",
     "dev:demo": "npm run build && wrangler dev --local -c wrangler.demo.jsonc -c mock/wrangler.jsonc",
     "dry-run": "npm run build && wrangler deploy --dry-run",
     "format": "prettier --write src tests mock *.jsonc *.json PROTOCOL.md"

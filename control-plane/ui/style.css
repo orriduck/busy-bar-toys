@@ -5,7 +5,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* BUSY desktop palette. Semantic colors stay dark in every application mode. */
+/* Default dark BUSY palette; theme.css supplies the light semantic palette. */
 :root,
 .dark {
   color-scheme: dark;
@@ -204,6 +204,7 @@ a {
   gap: 0.25rem;
 }
 .workspace {
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   min-width: 0;

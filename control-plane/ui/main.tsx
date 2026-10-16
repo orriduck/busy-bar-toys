@@ -36,8 +36,12 @@ import { SessionFence, collectorSetupMode } from "./session";
 import { startEventStream } from "./event-stream";
 import { MotionPage } from "./motion";
 import "./style.css";
+import "./theme.css";
 import "./mobile.css";
+import { ThemeToggle, useTheme } from "./theme-control";
+import { OfflineNotice, registerAppWorker } from "./pwa";
 function App() {
+  const appearance = useTheme();
   const [session, setSession] = useState<boolean | null>(null);
   const queryClient = useQueryClient();
   const [demo, setDemo] = useState<boolean | null>(null);
@@ -284,11 +288,19 @@ function App() {
       >
         <header className="app-header">
           <Brand />
+          <ThemeToggle
+            mode={appearance.mode}
+            onCycle={appearance.cycle}
+            className="theme-toggle-desktop"
+          />
         </header>
         <aside className="sidebar">
-          {session && <Navigation page={page} onPage={setPage} />}
+          {session && (
+            <Navigation page={page} onPage={setPage} appearance={appearance} />
+          )}
         </aside>
         <main className="workspace" id="main-content" data-page={page}>
+          <OfflineNotice />
           {error && (
             <Alert variant="destructive" className="error">
               <AlertDescription>{error}</AlertDescription>
@@ -414,6 +426,7 @@ function App() {
     </>
   );
 }
+registerAppWorker();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: false },

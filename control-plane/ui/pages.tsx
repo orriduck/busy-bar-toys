@@ -24,6 +24,7 @@ import type { PreviewStatus } from "./preview-session";
 import type { PreviewStats } from "./preview";
 import { MotionFeedback, MotionReveal, useListMotion } from "./motion";
 import { SettingNumber } from "./setting-number";
+import { InstallApp } from "./pwa";
 export { Navigation } from "./navigation";
 export type { Page } from "./navigation";
 export type CredentialValue = {
@@ -409,6 +410,7 @@ export function DevicePage({
         to read the Bar over local Wi-Fi. Latency includes the 150 ms playback
         buffer and uses the Mac and browser clocks.
       </p>
+      <InstallApp />
       <Button variant="destructive" className="signout" onClick={onLogout}>
         Sign out
       </Button>

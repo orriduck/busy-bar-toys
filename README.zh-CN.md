@@ -16,7 +16,7 @@ Configuration 管理 Priority、Hold 和 Heartbeat，Services 提供服务开关
 每条消息由发送端声明结束方式。定时消息显示完成后结束，宿主决定何时再次发送。
 本地采集器使用独立服务凭证发布画面，管理页通过 SSE 同步。
 
-打开[正式管理页](https://busy-bar-control-plane.orriduck.workers.dev)，用 BUSY 设备 API token 登录。每台 Mac 使用独立的发布凭据注册。
+打开[正式管理页](https://btc.orriduck.workers.dev)，用 BUSY 设备 API token 登录。每台 Mac 使用独立的发布凭据注册。
 
 可以用 `demo-token` 进入[云端预览](https://busy-bar-control-plane-preview.orriduck.workers.dev)。共享演示仅使用模拟数据，请勿接入真实采集器。仓库也提供本地演示。
 参见[管理页指南](control-plane/README.zh-CN.md)、[本地客户端接入](docs/cloud-mode.zh-CN.md)和[协议](control-plane/PROTOCOL.md)。
