@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api, time } from "./api";
-import type { Mutate, Snapshot } from "./api";
+import type { Mutate, Snapshot, Service } from "./api";
 import { Icon, serviceName } from "./common";
 import { Button } from "./components/ui/button";
 import { Empty, EmptyHeader, EmptyDescription } from "./components/ui/empty";
@@ -24,6 +24,8 @@ import { deviceGroups } from "./service-layout";
 import { ConfigurationList } from "./configuration";
 import type { PreviewStatus } from "./preview-session";
 import type { PreviewStats } from "./preview";
+import { MotionFeedback, MotionReveal, useListMotion } from "./motion";
+import { SettingNumber } from "./setting-number";
 export type Page = "display" | "services" | "configuration" | "device";
 const pages: { id: Page; label: string; icon: IconName }[] = [
   { id: "display", label: "Display", icon: "display" },
@@ -73,6 +75,14 @@ export function ServicesPage({
   onCredential: (value: CredentialValue) => void;
 }) {
   const [register, setRegister] = useState(false);
+  const list = useRef<HTMLDivElement>(null);
+  const groups = deviceGroups(snapshot.services, snapshot.items);
+  useListMotion(
+    list,
+    JSON.stringify(groups.map((group) => group.name)),
+    false,
+    "[data-motion-group]",
+  );
   const [thisComputer, bindComputer] = useComputerBinding(
     snapshot.deviceId,
     snapshot.services,
@@ -88,23 +98,26 @@ export function ServicesPage({
         </Button>
       </div>
       {register && (
-        <Register
-          services={snapshot.services}
-          revision={snapshot.configRevision}
-          mutate={mutate}
-          pending={pending}
-          onCreated={(value) => {
-            onCredential(value);
-            setRegister(false);
-          }}
-        />
+        <MotionReveal>
+          <Register
+            services={snapshot.services}
+            revision={snapshot.configRevision}
+            mutate={mutate}
+            pending={pending}
+            onCreated={(value) => {
+              onCredential(value);
+              setRegister(false);
+            }}
+          />
+        </MotionReveal>
       )}
-      <div className="service-list">
-        {deviceGroups(snapshot.services, snapshot.items).map((group) => (
+      <div ref={list} className="service-list">
+        {groups.map((group) => (
           <Card
             role="region"
             className="device-service-group gap-0 overflow-hidden p-0"
             key={group.name}
+            data-motion-group={group.name}
             aria-label={`${group.name} services`}
           >
             <CardHeader className="device-group-heading bg-muted/50">
@@ -122,7 +135,7 @@ export function ServicesPage({
                 </Badge>
               )}
               <span className="device-service-count">
-                {group.services.length}{" "}
+                <SettingNumber value={group.services.length} />{" "}
                 {group.services.length === 1 ? "service" : "services"}
               </span>
               {!group.name.startsWith("service:") && (
@@ -158,24 +171,13 @@ export function ServicesPage({
             </CardHeader>
             <Separator />
             <CardContent className="p-0">
-              <ItemGroup className="gap-0 has-data-[size=sm]:gap-0">
-                {group.services.map((service, index) => (
-                  <Fragment key={service.id}>
-                    {index > 0 && (
-                      <ItemSeparator className="my-0" aria-hidden="true" />
-                    )}
-                    <ServiceEditor
-                      mode="access"
-                      key={service.id}
-                      service={service}
-                      configRevision={snapshot.configRevision}
-                      mutate={mutate}
-                      pending={pending}
-                      onCredential={onCredential}
-                    />
-                  </Fragment>
-                ))}
-              </ItemGroup>
+              <ServiceRows
+                services={group.services}
+                snapshot={snapshot}
+                mutate={mutate}
+                pending={pending}
+                onCredential={onCredential}
+              />
             </CardContent>
           </Card>
         ))}
@@ -190,6 +192,39 @@ export function ServicesPage({
         </Empty>
       )}
     </section>
+  );
+}
+function ServiceRows({
+  services,
+  snapshot,
+  mutate,
+  pending,
+  onCredential,
+}: {
+  services: Service[];
+  snapshot: Snapshot;
+  mutate: Mutate;
+  pending: boolean;
+  onCredential: (value: CredentialValue) => void;
+}) {
+  const scope = useRef<HTMLDivElement>(null);
+  useListMotion(scope, JSON.stringify(services.map((service) => service.id)));
+  return (
+    <ItemGroup ref={scope} className="gap-0 has-data-[size=sm]:gap-0">
+      {services.map((service, index) => (
+        <Fragment key={service.id}>
+          {index > 0 && <ItemSeparator className="my-0" aria-hidden="true" />}
+          <ServiceEditor
+            mode="access"
+            service={service}
+            configRevision={snapshot.configRevision}
+            mutate={mutate}
+            pending={pending}
+            onCredential={onCredential}
+          />
+        </Fragment>
+      ))}
+    </ItemGroup>
   );
 }
 export function ConfigurationPage({
@@ -282,6 +317,12 @@ export function DevicePage({
     (item) => item.itemKey === snapshot.selected,
   );
   const sample = stats?.deviceId === snapshot.deviceId ? stats : null;
+  const controller =
+    owner && snapshot.health.status === "healthy"
+      ? serviceName(snapshot, owner.serviceId)
+      : selected
+        ? `${serviceName(snapshot, selected.serviceId)} · awaiting confirmation`
+        : "Native calendar";
   return (
     <section className="management-page" aria-labelledby="device-title">
       <div className="page-heading">
@@ -293,16 +334,20 @@ export function DevicePage({
       </div>
       <dl className="device-facts">
         <dt>Connection</dt>
-        <dd>{stream === "Live" ? "Connected" : stream}</dd>
+        <dd>
+          <MotionFeedback value={stream}>
+            {stream === "Live" ? "Connected" : stream}
+          </MotionFeedback>
+        </dd>
         <dt>Device status</dt>
-        <dd>{snapshot.health.status}</dd>
+        <dd>
+          <MotionFeedback value={snapshot.health.status}>
+            {snapshot.health.status}
+          </MotionFeedback>
+        </dd>
         <dt>Current controller</dt>
         <dd>
-          {owner && snapshot.health.status === "healthy"
-            ? serviceName(snapshot, owner.serviceId)
-            : selected
-              ? `${serviceName(snapshot, selected.serviceId)} · awaiting confirmation`
-              : "Native calendar"}
+          <MotionFeedback value={controller}>{controller}</MotionFeedback>
         </dd>
         <dt>Last API confirmation</dt>
         <dd>{time(snapshot.health.lastSuccessAt)}</dd>
@@ -311,37 +356,66 @@ export function DevicePage({
         <dt>Identity</dt>
         <dd className="device-identity">{snapshot.deviceId}</dd>
         <dt>Configuration</dt>
-        <dd>Revision {snapshot.configRevision}</dd>
+        <dd>
+          Revision <SettingNumber value={snapshot.configRevision} />
+        </dd>
       </dl>
       <h2>Live preview</h2>
       <dl className="device-facts">
         <dt>Capture bridge</dt>
         <dd>
-          {previewError
-            ? "Unavailable"
-            : preview?.connected && preview.serviceId
-              ? serviceName(snapshot, preview.serviceId)
-              : "Not connected"}
+          <MotionFeedback
+            value={`${previewError}:${preview?.connected}:${preview?.serviceId ?? ""}`}
+          >
+            {previewError
+              ? "Unavailable"
+              : preview?.connected && preview.serviceId
+                ? serviceName(snapshot, preview.serviceId)
+                : "Not connected"}
+          </MotionFeedback>
         </dd>
         <dt>Instance</dt>
         <dd>{preview?.instanceId || "—"}</dd>
         <dt>Viewers</dt>
-        <dd>{preview?.viewers ?? "—"}</dd>
+        <dd>
+          {typeof preview?.viewers === "number" ? (
+            <SettingNumber value={preview.viewers} />
+          ) : (
+            "—"
+          )}
+        </dd>
         <dt>Current received rate</dt>
-        <dd>{preview?.acceptedFps ?? 0} fps</dd>
+        <dd>
+          {typeof preview?.acceptedFps === "number" ? (
+            <>
+              <SettingNumber value={preview.acceptedFps} decimals={1} /> fps
+            </>
+          ) : (
+            "—"
+          )}
+        </dd>
         <dt>Last browser sample</dt>
         <dd>
-          {sample
-            ? `${sample.receivedFps.toFixed(1)} received / ${sample.drawnFps.toFixed(1)} drawn fps`
-            : "—"}
+          {sample ? (
+            <>
+              <SettingNumber value={sample.receivedFps} decimals={1} /> received
+              / <SettingNumber value={sample.drawnFps} decimals={1} /> drawn fps
+            </>
+          ) : (
+            "—"
+          )}
         </dd>
         <dt>Last frame</dt>
         <dd>{time(preview?.lastFrameAt)}</dd>
         <dt>Last browser latency</dt>
         <dd>
-          {sample?.latencyMs === null || sample?.latencyMs === undefined
-            ? "—"
-            : `${Math.round(sample.latencyMs)} ms`}
+          {sample?.latencyMs === null || sample?.latencyMs === undefined ? (
+            "—"
+          ) : (
+            <>
+              <SettingNumber value={Math.round(sample.latencyMs)} /> ms
+            </>
+          )}
         </dd>
       </dl>
       <p className="field-hint">

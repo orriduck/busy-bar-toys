@@ -1,4 +1,11 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { etaText, queueMetadata } from "./api";
 import { compactSender } from "./queue-metadata";
 import type { Snapshot, QueueItem, Mutate } from "./api";
@@ -23,6 +30,8 @@ import {
 } from "./components/ui/table";
 import { cn } from "./lib/utils";
 import { queuePlayback, receivedTime } from "./queue-playback";
+import { useListMotion } from "./motion";
+import { Collapsible, CollapsibleContent } from "./components/ui/collapsible";
 
 type QueueRow = {
   groupId: string;
@@ -190,6 +199,11 @@ export function Queue({
     data,
     getRowId: (row) => row.groupId,
   });
+  const scope = useRef<HTMLDivElement>(null);
+  const structure = JSON.stringify(
+    data.map((group) => [group.groupId, group.open]),
+  );
+  useListMotion(scope, structure);
   const operate = (item: QueueItem, operation: string) =>
     void mutate("/items", {
       itemKey: item.itemKey,
@@ -288,7 +302,7 @@ export function Queue({
     );
   };
   return (
-    <div className="queue-scroll">
+    <div ref={scope} className="queue-scroll">
       <Table className="queue-table" aria-label="Display queue">
         <TableHeader>
           {table.getHeaderGroups().map((group) => (
@@ -308,30 +322,41 @@ export function Queue({
             const group = row.original;
             return (
               <Fragment key={row.id}>
-                <TableRow className={cn(group.current && "current-row")}>
+                <TableRow
+                  data-motion-row={group.groupId}
+                  className={cn(group.current && "current-row")}
+                >
                   {row.getAllCells().map((cell) => (
                     <TableCell key={cell.id}>
                       <table.FlexRender cell={cell} />
                     </TableCell>
                   ))}
                 </TableRow>
-                {group.open && (
-                  <TableRow className="details-row">
-                    <TableCell
-                      colSpan={columns.length}
-                      id={`details-${encodeURIComponent(group.groupId)}`}
-                    >
-                      {group.memberKeys
-                        .map((key) =>
-                          snapshot.items.find(
-                            (member) => member.itemKey === key,
-                          ),
-                        )
-                        .filter((member): member is QueueItem => !!member)
-                        .map(details)}
-                    </TableCell>
-                  </TableRow>
-                )}
+                <TableRow
+                  className="details-row"
+                  aria-hidden={!group.open || undefined}
+                >
+                  <TableCell colSpan={columns.length}>
+                    <Collapsible open={group.open}>
+                      <CollapsibleContent
+                        id={`details-${encodeURIComponent(group.groupId)}`}
+                        className="motion-collapse"
+                        inert={!group.open}
+                      >
+                        <div className="queue-detail-content">
+                          {group.memberKeys
+                            .map((key) =>
+                              snapshot.items.find(
+                                (member) => member.itemKey === key,
+                              ),
+                            )
+                            .filter((member): member is QueueItem => !!member)
+                            .map(details)}
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </TableCell>
+                </TableRow>
               </Fragment>
             );
           })}
