@@ -22,6 +22,7 @@ import {
   publish,
   record,
   registerService,
+  reorderServices,
   requestAction,
   requireThat,
   snapshot,
@@ -270,13 +271,18 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       requireThat(s, "UNAUTHORIZED", 401);
       const serviceId = this.authorize(s, auth),
         now = Date.now();
+      const orderingServices =
+        path === "/api/services/order" && method === "POST";
+      // Order validation must precede tick: rejected requests cannot advance playback.
+      if (orderingServices)
+        requireThat(auth.kind === "session", "FORBIDDEN", 403);
       if (path === "/api/preview/viewer" && method === "POST") {
         this.preview.update(s);
         return json(
           this.preview.viewer(auth, identifier(body.viewerId), body.operation),
         );
       }
-      tick(s, now);
+      if (!orderingServices) tick(s, now);
       const admin = () =>
         requireThat(auth.kind === "session", "FORBIDDEN", 403);
       const producer = () => {
@@ -317,6 +323,9 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         this.save(s);
         await this.arm();
         return this.openStream(s, auth);
+      } else if (orderingServices) {
+        reorderServices(s, body.serviceIds, body.expectedRevision, now);
+        response = json({ snapshot: snapshot(s, now) });
       } else if (path === "/api/services" && method === "POST") {
         admin();
         requireThat(

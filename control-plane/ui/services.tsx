@@ -8,15 +8,15 @@ import {
   NativeSelectOption,
 } from "./components/ui/native-select";
 import { Switch } from "./components/ui/switch";
-import { Checkbox } from "./components/ui/checkbox";
+import { MoreHorizontal, KeyRound, Trash2 } from "lucide-react";
 import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-  FieldSet,
-  FieldLegend,
-  FieldDescription,
-} from "./components/ui/field";
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "./components/ui/dropdown-menu";
+import { serviceLabel } from "./service-layout";
+import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
 import {
   Card,
   CardHeader,
@@ -24,7 +24,6 @@ import {
   CardDescription,
   CardContent,
   CardFooter,
-  CardAction,
 } from "./components/ui/card";
 import { Alert, AlertDescription } from "./components/ui/alert";
 export function ServiceEditor({
@@ -52,7 +51,6 @@ export function ServiceEditor({
   const [dirty, setDirty] = useState(false);
   const edits = useRef(0);
   const [baseRevision, setBaseRevision] = useState(configRevision);
-  const [confirmRevoke, setConfirmRevoke] = useState(false);
   useEffect(() => {
     if (!dirty) {
       setConfig(service.config);
@@ -67,9 +65,15 @@ export function ServiceEditor({
   const save = async (event: FormEvent) => {
     event.preventDefault();
     const submittedEdit = edits.current;
+    const {
+      enabled: _enabled,
+      allowInput: _input,
+      allowPreview: _preview,
+      ...policy
+    } = config;
     const result = await mutate(
       `/services/${encodeURIComponent(service.id)}`,
-      { expectedRevision: baseRevision, config },
+      { expectedRevision: baseRevision, config: policy },
       "PATCH",
     );
     if (result) {
@@ -82,98 +86,18 @@ export function ServiceEditor({
       }
     }
   };
-  const rotate = async () => {
-    const result = await mutate(
-      `/services/${encodeURIComponent(service.id)}/credential`,
-      { expectedRevision: configRevision },
-    );
-    if (result)
-      onCredential({
-        credential: String(result.credential),
-        epoch: String(result.epoch),
-        epochExpiresAt: Number(result.epochExpiresAt),
-        id: service.id,
-      });
-  };
   if (mode === "access")
     return (
-      <Card className="service service-access">
-        <CardHeader>
-          <CardTitle role="heading" aria-level={3}>
-            {service.name}
-          </CardTitle>
-          <CardDescription>
-            {service.template} · {service.id}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="muted">
-            Publisher expires{" "}
-            {new Date(service.epochExpiresAt).toLocaleDateString()}.
-          </p>
-        </CardContent>
-        <CardFooter className="access-actions flex-wrap gap-2">
-          <Button
-            variant="secondary"
-            type="button"
-            disabled={pending}
-            onClick={() => void rotate()}
-          >
-            Replace credential
-          </Button>
-          {confirmRevoke ? (
-            <>
-              <span>End this service’s queued items and revoke access?</span>
-              <Button
-                type="button"
-                variant="destructive"
-                disabled={pending}
-                onClick={() =>
-                  void mutate(
-                    `/services/${encodeURIComponent(service.id)}/revoke`,
-                    { expectedRevision: configRevision },
-                  )
-                }
-              >
-                Confirm revoke
-              </Button>
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => setConfirmRevoke(false)}
-              >
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setConfirmRevoke(true)}
-            >
-              Revoke service
-            </Button>
-          )}
-        </CardFooter>
-      </Card>
+      <ServiceAccess
+        service={service}
+        configRevision={configRevision}
+        mutate={mutate}
+        pending={pending}
+        onCredential={onCredential}
+      />
     );
   return (
     <Card className="service">
-      <CardHeader>
-        <CardTitle role="heading" aria-level={3}>
-          {service.name}
-        </CardTitle>
-        <CardDescription>
-          {service.template} · {service.id}
-        </CardDescription>
-        <CardAction>
-          <Switch
-            checked={config.enabled}
-            aria-label={`Enable ${service.name}`}
-            onCheckedChange={(checked) => edit("enabled", checked)}
-          />
-        </CardAction>
-      </CardHeader>
       <form id={formId} onSubmit={(event) => void save(event)}>
         <CardContent>
           <FieldGroup className="service-fields">
@@ -268,34 +192,6 @@ export function ServiceEditor({
               />
             </Field>
           </FieldGroup>
-          <FieldSet className="mt-5">
-            <FieldLegend variant="label">Bridges</FieldLegend>
-            <FieldGroup>
-              <Field orientation="horizontal">
-                <Checkbox
-                  id={`${formId}-input`}
-                  checked={"allowInput" in config && Boolean(config.allowInput)}
-                  onCheckedChange={(checked) => edit("allowInput", checked)}
-                />
-                <FieldLabel htmlFor={`${formId}-input`}>
-                  Trusted device button bridge
-                </FieldLabel>
-              </Field>
-              <Field orientation="horizontal">
-                <Checkbox
-                  id={`${formId}-preview`}
-                  checked={config.allowPreview === true}
-                  onCheckedChange={(checked) => edit("allowPreview", checked)}
-                />
-                <FieldLabel htmlFor={`${formId}-preview`}>
-                  Live display preview bridge
-                </FieldLabel>
-              </Field>
-            </FieldGroup>
-            <FieldDescription>
-              Use one Mac with local Wi-Fi access to the Bar.
-            </FieldDescription>
-          </FieldSet>
           {dirty && baseRevision !== configRevision && (
             <Alert className="mt-5">
               <AlertDescription>
@@ -326,6 +222,146 @@ export function ServiceEditor({
     </Card>
   );
 }
+function ServiceAccess({
+  service,
+  configRevision,
+  mutate,
+  pending,
+  onCredential,
+}: {
+  service: Service;
+  configRevision: number;
+  mutate: Mutate;
+  pending: boolean;
+  onCredential: (value: {
+    credential: string;
+    epoch: string;
+    epochExpiresAt: number;
+    id: string;
+  }) => void;
+}) {
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const change = (field: string, checked: boolean) =>
+    void mutate(
+      `/services/${encodeURIComponent(service.id)}`,
+      { expectedRevision: configRevision, config: { [field]: checked } },
+      "PATCH",
+    );
+  const rotate = async () => {
+    const value = await mutate(
+      `/services/${encodeURIComponent(service.id)}/credential`,
+      { expectedRevision: configRevision },
+    );
+    if (value)
+      onCredential({
+        credential: String(value.credential),
+        epoch: String(value.epoch),
+        epochExpiresAt: Number(value.epochExpiresAt),
+        id: service.id,
+      });
+  };
+  return (
+    <div className="service-access-row">
+      <div className="service-access-main">
+        <div className="service-identity">
+          <strong>{serviceLabel(service)}</strong>
+          <span>
+            {service.template === "agent"
+              ? "Agent"
+              : service.template === "notifier"
+                ? "Notifications"
+                : "Custom"}
+          </span>
+        </div>
+        <Switch
+          checked={service.config.enabled}
+          disabled={pending}
+          aria-label={`Enable ${service.name}`}
+          onCheckedChange={(checked) => change("enabled", checked)}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Actions for ${service.name}`}
+              />
+            }
+          >
+            <MoreHorizontal />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-48">
+            <DropdownMenuItem disabled={pending} onClick={() => void rotate()}>
+              <KeyRound />
+              Replace credential
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={pending}
+              onClick={() => setConfirmRevoke(true)}
+            >
+              <Trash2 />
+              Revoke service
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <div className="service-connections">
+        <label title="Let this service forward the Bar’s Start / Pause button.">
+          <span>Bar buttons</span>
+          <Switch
+            size="sm"
+            checked={service.config.allowInput}
+            disabled={pending}
+            aria-label={`Bar buttons for ${service.name}`}
+            onCheckedChange={(checked) => change("allowInput", checked)}
+          />
+        </label>
+        <label title="Let this service send the Bar’s actual screen to this page. Use one Mac with local access.">
+          <span>Live preview</span>
+          <Switch
+            size="sm"
+            checked={service.config.allowPreview}
+            disabled={pending}
+            aria-label={`Live preview for ${service.name}`}
+            onCheckedChange={(checked) => change("allowPreview", checked)}
+          />
+        </label>
+      </div>
+      {confirmRevoke && (
+        <div
+          className="service-revoke"
+          role="group"
+          aria-label={`Confirm revoke ${service.name}`}
+        >
+          <p>End queued items and revoke this service’s access?</p>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={pending}
+            onClick={() =>
+              void mutate(
+                `/services/${encodeURIComponent(service.id)}/revoke`,
+                { expectedRevision: configRevision },
+              )
+            }
+          >
+            Confirm revoke
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setConfirmRevoke(false)}
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Register({
   revision,
   mutate,
@@ -345,12 +381,13 @@ export function Register({
   const formId = useId();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
+  const [deviceName, setDeviceName] = useState("");
   const [template, setTemplate] = useState("agent");
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const result = await mutate("/services", {
       id,
-      name,
+      name: deviceName.trim() ? `${deviceName.trim()} · ${name.trim()}` : name,
       template,
       expectedRevision: revision,
       config: { priority: template === "agent" ? 10 : 50 },
@@ -377,11 +414,25 @@ export function Register({
         <CardContent>
           <FieldGroup>
             <Field>
+              <FieldLabel htmlFor={`${formId}-device`}>Device name</FieldLabel>
+              <Input
+                id={`${formId}-device`}
+                value={deviceName}
+                maxLength={40}
+                onChange={(event) => setDeviceName(event.target.value)}
+                placeholder="MacBook"
+              />
+            </Field>
+            <Field>
               <FieldLabel htmlFor={`${formId}-field6`}>{"Name"}</FieldLabel>
               <Input
                 id={`${formId}-field6`}
                 required
-                maxLength={80}
+                maxLength={
+                  deviceName.trim()
+                    ? Math.max(1, 77 - deviceName.trim().length)
+                    : 80
+                }
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="My Codex"
