@@ -75,7 +75,9 @@ export function PolicyField({
   className,
   value,
   onChange,
+  disabled = false,
 }: {
+  disabled?: boolean;
   field: PolicyKey;
   className?: string;
   value: number;
@@ -154,6 +156,7 @@ export function PolicyField({
             onBlur={() => setEditing(false)}
             aria-label={`${definition.label} value`}
             aria-describedby={definition.unit ? `${id}-unit` : undefined}
+            disabled={disabled}
             type="number"
             required
             min={definition.min}
@@ -176,6 +179,7 @@ export function PolicyField({
       <FieldContent className="min-w-0">
         <div className="policy-slider">
           <Slider
+            disabled={disabled}
             variant="pill"
             meaning={meaning}
             style={{ "--slider-accent": accent } as CSSProperties}

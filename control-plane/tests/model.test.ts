@@ -320,7 +320,7 @@ describe("optional queue provenance and preview capability", () => {
     const s = state();
     expect(s.services.a.config.allowPreview).toBe(false);
     delete (s.services.a.config as any).allowPreview;
-    patchConfig(s, "a", { priority: 51 }, s.configRevision, now);
+    patchConfig(s, "a", { visibleMs: 5000 }, s.configRevision, now);
     expect(s.services.a.config.allowPreview).toBe(false);
     patchConfig(s, "a", { allowPreview: true }, s.configRevision, now);
     expect(s.services.a.config.allowPreview).toBe(true);

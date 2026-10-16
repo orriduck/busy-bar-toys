@@ -43,3 +43,13 @@ class CloudCLITest(unittest.TestCase):
              patch('busybar_service.cloud_watch.status',return_value=0) as status:
             self.assertEqual(cli.main(['status','--mode','cloud']),0)
             status.assert_called_once()
+
+    def test_cli_enrollment_and_registration_do_not_put_secrets_in_arguments(self):
+        with patch('busybar_service.cloud_registration.enroll',return_value={'computerId':'own'}) as enroll, \
+             patch('busybar_service.cli.getpass.getpass',return_value='one-use-ticket'):
+            self.assertEqual(cli.main(['cloud-enroll','--url','https://control.test']),0)
+            self.assertEqual(enroll.call_args.args[2],'one-use-ticket')
+        with patch('busybar_service.cloud_registration.register_service',return_value={'services':{'github':{'serviceId':'id'}}}) as register:
+            self.assertEqual(cli.main(['cloud-register','github']),0)
+            self.assertEqual(register.call_args.args[1],'github')
+            self.assertEqual(register.call_args.kwargs['template'],'notifier')

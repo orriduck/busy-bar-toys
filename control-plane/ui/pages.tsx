@@ -9,16 +9,8 @@ import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
 import { ItemGroup, ItemSeparator } from "./components/ui/item";
 import { Separator } from "./components/ui/separator";
 import { Badge } from "./components/ui/badge";
-import { MoreHorizontal } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuGroup,
-} from "./components/ui/dropdown-menu";
-import { useComputerBinding } from "./computer-binding";
-import { deviceGroups } from "./service-layout";
+import { ComputerAccess } from "./computer-access";
+import { orderedDeviceGroups } from "./service-layout";
 import { ConfigurationList } from "./configuration";
 import type { PreviewStatus } from "./preview-session";
 import type { PreviewStats } from "./preview";
@@ -38,48 +30,65 @@ export function ServicesPage({
   mutate,
   pending,
   onCredential,
+  ownerComputerId,
+  onPaired,
 }: {
+  ownerComputerId: string | null;
+  onPaired: (id: string) => void;
   snapshot: Snapshot;
   mutate: Mutate;
   pending: boolean;
   onCredential: (value: CredentialValue) => void;
 }) {
   const [register, setRegister] = useState(false);
+  const [registeredId, setRegisteredId] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
-  const groups = deviceGroups(snapshot.services, snapshot.items);
+  const groups = orderedDeviceGroups(snapshot);
   useListMotion(
     list,
     JSON.stringify(groups.map((group) => group.name)),
     false,
     "[data-motion-group]",
   );
-  const [thisComputer, bindComputer] = useComputerBinding(
-    snapshot.deviceId,
-    snapshot.services,
-    snapshot.items,
-  );
   return (
     <section className="management-page" aria-labelledby="services-title">
       <div className="page-heading">
         <h1 id="services-title">Services</h1>
-        <Button onClick={() => setRegister((value) => !value)}>
+        <Button
+          disabled={!ownerComputerId}
+          onClick={() => setRegister((value) => !value)}
+        >
           <Icon name="plus" data-icon="inline-start" />
           {register ? "Cancel" : "Register"}
         </Button>
       </div>
-      {register && (
+      <ComputerAccess
+        ownerComputerId={ownerComputerId}
+        mutate={mutate}
+        pending={pending}
+        onPaired={onPaired}
+      />
+      {register && ownerComputerId && (
         <MotionReveal>
           <Register
-            services={snapshot.services}
+            computerId={ownerComputerId}
             revision={snapshot.configRevision}
             mutate={mutate}
             pending={pending}
             onCreated={(value) => {
-              onCredential(value);
+              setRegisteredId(value.id);
               setRegister(false);
             }}
           />
         </MotionReveal>
+      )}
+      {registeredId && (
+        <p className="mb-4 rounded-xl border border-border p-3 text-sm text-muted-foreground">
+          Service registered. Route a local source to it:{" "}
+          <code className="break-all">
+            busy-bar cloud-route SOURCE {registeredId}
+          </code>
+        </p>
       )}
       <div ref={list} className="service-list">
         {groups.map((group) => (
@@ -99,7 +108,7 @@ export function ServicesPage({
                     : group.name}
                 </h2>
               </CardTitle>
-              {thisComputer === group.name && (
+              {ownerComputerId === group.name && (
                 <Badge variant="secondary" className="this-computer-badge">
                   This computer
                 </Badge>
@@ -108,41 +117,14 @@ export function ServicesPage({
                 <SettingNumber value={group.services.length} />{" "}
                 {group.services.length === 1 ? "service" : "services"}
               </span>
-              {!group.name.startsWith("service:") && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="computer-actions"
-                        aria-label={`Computer actions for ${group.name}`}
-                      />
-                    }
-                  >
-                    <MoreHorizontal />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem
-                        onClick={() =>
-                          bindComputer(
-                            thisComputer === group.name ? null : group.name,
-                          )
-                        }
-                      >
-                        {thisComputer === group.name
-                          ? "Clear this computer"
-                          : "Use as this computer"}
-                      </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+              {ownerComputerId !== group.name && (
+                <Badge variant="outline">Read only</Badge>
               )}
             </CardHeader>
             <Separator />
             <CardContent className="p-0">
               <ServiceRows
+                readOnly={group.name !== ownerComputerId}
                 services={group.services}
                 snapshot={snapshot}
                 mutate={mutate}
@@ -166,12 +148,14 @@ export function ServicesPage({
   );
 }
 function ServiceRows({
+  readOnly,
   services,
   snapshot,
   mutate,
   pending,
   onCredential,
 }: {
+  readOnly: boolean;
   services: Service[];
   snapshot: Snapshot;
   mutate: Mutate;
@@ -186,6 +170,7 @@ function ServiceRows({
         <Fragment key={service.id}>
           {index > 0 && <ItemSeparator className="my-0" aria-hidden="true" />}
           <ServiceEditor
+            readOnly={readOnly}
             mode="access"
             service={service}
             configRevision={snapshot.configRevision}
@@ -203,7 +188,11 @@ export function ConfigurationPage({
   mutate,
   pending,
   onCredential,
+  ownerComputerId,
+  onPaired,
 }: {
+  ownerComputerId: string | null;
+  onPaired: (id: string) => void;
   snapshot: Snapshot;
   mutate: Mutate;
   pending: boolean;
@@ -223,11 +212,17 @@ export function ConfigurationPage({
           </EmptyHeader>
         </Empty>
       )}
+      <ComputerAccess
+        ownerComputerId={ownerComputerId}
+        mutate={mutate}
+        pending={pending}
+        onPaired={onPaired}
+      />
       <p className="configuration-hint">
-        Drag to set priority. Higher services play first within the same
-        urgency. Click a service for detailed settings.
+        Order your computer’s services. Other computers are read only.
       </p>
       <ConfigurationList
+        ownerComputerId={ownerComputerId}
         snapshot={snapshot}
         mutate={mutate}
         pending={pending}

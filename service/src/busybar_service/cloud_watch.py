@@ -1,6 +1,7 @@
 """Explicit cloud observer. Local collection continues while the cloud is slow."""
 import fcntl
 import json
+import logging
 import signal
 import time
 from pathlib import Path
@@ -18,10 +19,24 @@ from busybar_apps.adsbao.checker import configured_checker
 from busybar_apps.adsbao.source import aircraft_source
 from busybar_notifier.source import Poller
 from busybar_notifier.config import read_config
-from .cloud_adapter import AgentRenderer, CloudQueue
+from .cloud_adapter import AgentRenderer, CloudQueue, RoutedCloudQueue
+from .cloud_registration import FILE as COMPUTER_FILE, load_computer
+
+LOG = logging.getLogger('busy-bar')
 
 
 def configurations(runtime):
+    if (Path(runtime)/COMPUTER_FILE).exists():
+        computer=load_computer(runtime)
+        if computer['phase']!='active': raise CloudError('computer_enrollment_pending')
+        values=[]
+        for alias,entry in computer['services'].items():
+            if entry.get('pending'): continue
+            values.append({**entry,'key':alias,'role':'service-'+entry['serviceId'],
+                           'url':computer['url'],'computerId':computer['computerId'],
+                           'instanceId':computer['instanceId'],'fallbackSeconds':entry.get('fallbackSeconds',10)})
+        if not values: raise CloudError('service_registration_required')
+        return values
     configs=[]
     for role in ('agent','notifier'):
         if (Path(runtime)/('cloud-'+role+'.json')).exists(): configs.append(load_config(runtime,role))
@@ -30,20 +45,30 @@ def configurations(runtime):
 
 
 def producers(runtime):
-    return {config['role']:Producer(runtime,config,Transport(config['url'],keychain(config['role'])))
-            for config in configurations(runtime)}
+    clients={}; secrets={}
+    for config in configurations(runtime):
+        key='computer' if config.get('computerId') else config['role']
+        if key not in secrets: secrets[key]=keychain(key)
+        http=Transport(config['url'],secrets[key],**({'service_id':config['serviceId']} if key=='computer' else {}))
+        clients[config.get('key',config['role'])]=Producer(runtime,config,http)
+    return clients
 
 
 def status(runtime):
-    values={}; diagnostics={}; available=False
+    values={}; diagnostics={}; available=False; secrets={}; errors={}
     for config in configurations(runtime):
-        role=config['role']
+        role=config.get('key',config['role']); credential_key='computer' if config.get('computerId') else config['role']
         try:
-            values[role]=Transport(config['url'],keychain(role)).request('GET','/api/snapshot')
+            if credential_key in errors: raise errors[credential_key]
+            if credential_key not in secrets:
+                try: secrets[credential_key]=keychain(credential_key)
+                except CloudError as error:
+                    errors[credential_key]=error; raise
+            values[role]=Transport(config['url'],secrets[credential_key],**({'service_id':config['serviceId']} if credential_key=='computer' else {})).request('GET','/api/snapshot')
             available=True
         except CloudError as error:
             values[role]={'error':error.code}
-        path=Path(runtime)/('cloud-'+role+'-state.json')
+        path=Path(runtime)/('cloud-'+config['role']+'-state.json')
         if path.exists():
             state=State(path)
             diagnostics[role]={'notification':state.data.get('notificationStatus'),
@@ -69,17 +94,30 @@ def watch(args,runtime,repo):
         watcher=RolloutWatcher(Path.home()/'.codex/sessions',registry,
                               load_dot_thread_ids(Path.home()/'.codex/.codex-global-state.json')|dot_ids)
         network=NetworkSampler(); reduced=getattr(args,'reduced_motion',False)
-        agent=AgentRenderer(clients['agent'],reduced=reduced) if 'agent' in clients else None
+        agent_client=next((client for key,client in clients.items() if client.config.get('template',key)=='agent'),None)
+        agent=AgentRenderer(agent_client,reduced=reduced) if agent_client else None
         view=ViewMode(runtime/'cloud-view.json'); known_turns=set(); cleared=set()
         if agent:
             def tombstone(item_id,reason):
                 if reason=='cleared': cleared.add(item_id)
-            clients['agent'].on_tombstone=tombstone
-        if 'notifier' in clients:
-            queue=CloudQueue(clients['notifier'],reduced=reduced)
+            agent_client.on_tombstone=tombstone
+        computer_mode=any(client.config.get('computerId') for client in clients.values())
+        if computer_mode or 'notifier' in clients:
             sources=notifier_sources(read_config(runtime),runtime,inbox=runtime/'inbox',refresh=lambda name:poller.refresh(name))
             aircraft=configured_checker(runtime,repo)
             if aircraft: sources.append(aircraft_source(aircraft))
+            if computer_mode:
+                routes=load_computer(runtime)['routes']; source_routes={}; routed=[]
+                queues={client.config['serviceId']:CloudQueue(client,reduced=reduced) for client in clients.values()}
+                for source in sources:
+                    target=routes.get(source.name,routes.get(source.app))
+                    if target not in queues:
+                        LOG.warning('No registered service for source %s; collection is disabled.',source.name)
+                        continue
+                    source_routes[source.name]=target; routed.append(source)
+                sources=routed; queue=RoutedCloudQueue(queues,source_routes)
+            else:
+                queue=CloudQueue(clients['notifier'],reduced=reduced)
             poller=Poller(sources,queue); queue.on_shown=poller.shown; poller.start()
         # Cloud input uses only explicitly configured Wi-Fi. The monitor reads
         # device input; button actions always go through /api/input.

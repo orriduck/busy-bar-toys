@@ -1,152 +1,99 @@
-# 控制面的本地客户端
+# 将 Mac 接入 BTC
 
 [English](cloud-mode.md)
 
-Cloud 模式把本地 agent 状态和通知发给控制面。控制面负责设备显示、队列、分组、稍后提醒和返回日历。来源工具及其凭据保留在 Mac。默认模式仍是 `standalone`。
+打开 [BTC](https://btc.orriduck.workers.dev)。云端后端控制 Bar；Mac 采集本地状态，向注册的服务 ID 发送内容。设备 API key 用于查看全部电脑。配对后，浏览器只能管理对应电脑名下的服务。
 
-真实采集器使用[正式管理页](https://busy-bar-control-plane.orriduck.workers.dev)。共享云端预览仅接收模拟数据。模拟后端验收不能证明实体设备显示效果。下面的步骤配置并迁移一台 Mac；每台 Mac 都需独立注册服务。
+## 准备客户端
 
-## 1. 准备客户端
-
-在仓库根目录使用项目虚拟环境：
+在仓库根目录运行：
 
 ```sh
 .venv/bin/python -m pip install -e .
 swiftc scripts/cloud-keychain.swift -o .venv/bin/busy-cloud-keychain
 ```
 
-只需编译一次此 helper；Swift 源码改变后再编译。该步骤不重编译现有设备 token、输入 token 或定位 helper。Keychain 条目如下：
+电脑凭据保存在钥匙串 `app.busybar.control-plane.computer`，账户为 `busy-bar`。`~/Library/Application Support/BusyBarAI/cloud-computer.json` 只保存 ID、epoch 和本地路由。保持目录私有。不要把凭据或注册票据放进命令参数、Git 或聊天。
 
-| 角色 | Keychain service | Account |
-| --- | --- | --- |
-| Agent | `app.busybar.control-plane.agent` | `busy-bar` |
-| Notifier | `app.busybar.control-plane.notifier` | `busy-bar` |
+## 接入新电脑
 
-## 2. 创建服务
-
-在控制面的 **Services** 页分别注册一个 **agent** 服务和一个 **notifier** 服务。在 **Configuration** 页配置显示规则。Notifier 的优先级应高于 agent。页面默认值分别为 agent 10、notifier 50。每条消息由发送端声明源端结束或定时结束。宿主决定何时创建下一次消息。
-
-复制页面分别显示的 publisher credential。每份凭据只属于一个服务，页面仅显示一次。不要把它放入 shell 命令、环境变量、仓库文件或聊天。
-
-## 3. 配置本地角色
-
-本地模拟环境使用：
+1. 用设备 API key 登录，打开 **Services → Connect computer**。
+2. 创建有效期五分钟的 enrollment ticket。
+3. 运行下列命令，在隐藏输入框粘贴票据。
 
 ```sh
-.venv/bin/busy-bar cloud-setup --url http://localhost:8787 --role agent --instance mac-agent
-.venv/bin/busy-bar cloud-setup --url http://localhost:8787 --role notifier --instance mac-notifier
+.venv/bin/busy-bar cloud-enroll --url https://btc.orriduck.workers.dev
 ```
 
-连接已托管的控制面时，替换为其 HTTPS origin：
+客户端先保存电脑凭据，再提交注册。若回复丢失，可使用同一票据重试。客户端先检查已保存的凭据，不会另建电脑身份。
+
+只注册这台电脑实际使用的来源：
 
 ```sh
-.venv/bin/busy-bar cloud-setup --url https://YOUR-CONTROL-PLANE.example --role agent --instance mac-agent
-.venv/bin/busy-bar cloud-setup --url https://YOUR-CONTROL-PLANE.example --role notifier --instance mac-notifier
+.venv/bin/busy-bar cloud-register codex --name Codex --template agent
+.venv/bin/busy-bar cloud-register adsbao --name ADSBao --source adsbao
 ```
 
-在隐藏输入提示中粘贴对应角色的凭据。Setup 会读取受限 snapshot 验证身份，把秘密保存到 Keychain，仅把非秘密服务元数据写入私有文件。它不改变已安装服务，也不向设备发请求。
-
-`--instance` 可省略；省略时保留原名称或生成稳定名称。重启后保留 instance 和签发的 epoch。可只配置一个角色；两个角色都配置后会同时运行两个采集器。
-
-本地 urgent 兜底默认等待 10 秒。每个角色都可以设置 1 到 300 的整数秒数：
+GitHub、Datadog 等来源可以分别注册。这些命令不会启用或配置外部工具：
 
 ```sh
-.venv/bin/busy-bar cloud-setup --url http://localhost:8787 --role notifier --fallback-seconds 17
+.venv/bin/busy-bar cloud-register github --name GitHub --source github
+.venv/bin/busy-bar cloud-register datadog --name Datadog --source datadog
 ```
 
-该值作为非秘密 `fallbackSeconds` 元数据保存，重启后仍然有效。旧元数据没有该字段时使用 10 秒。修改配置不会重置现有 occurrence 的期限。
+`--source` 使用采集器实际的本地来源名。命令会输出服务 ID。也可以把来源指向这台电脑名下的任意现有服务：
 
-URL 必须是 origin，不能含路径、用户信息、query 或 fragment；禁止重定向。只有 loopback 本地开发地址可以使用 HTTP。
+```sh
+.venv/bin/busy-bar cloud-route SOURCE SERVICE_ID
+```
 
-## 4. 前台运行
+Notifier 是通用发送引擎。同一电脑凭据可以向本机名下任意注册 ID 发送任意应用标签和内容。后端只校验归属，不规定应用与服务的对应关系。对应关系由 Mac 决定。更改注册或路由后重启采集服务。没有路由的来源不会启动，并会报告设置提示。
 
-原 observer 和 cloud observer 共用进程锁。先停止原 observer，再运行 cloud watch。对于已经安装 standalone 服务的机器，可先删除其 launchd 注册；凭据会保留：
+## 配对浏览器
+
+```sh
+.venv/bin/busy-bar cloud-pair
+```
+
+把五分钟有效的一次性代码粘贴到 **Connect computer → Pairing code**。绑定记录保存在服务端；浏览器偏好不能赋予权限。需要管理另一台电脑时，先退出登录。退出不会停止 Mac 上的采集服务。
+
+**Configuration** 展示全部电脑。本机服务可拖动排序、选择并编辑；其他电脑只读。同一时间只显示一个详情。设置保留 Hold、Heartbeat，不再使用数字优先级。普通消息在播放结束后轮转电脑。源端控制的消息会保留控制权，直到结束、过期或暂停。紧急消息可以打断它；本机排序更高的服务也可临时覆盖，结束后恢复原来源。持续运行的来源可能让其他电脑等待。
+
+发送端逐条声明 `exit: finite|source`。Hold 只影响定时消息。何时产生下一次消息由发送端决定。
+
+## 升级已接入的 Mac
+
+旧 Agent、Notifier 凭据仍可发送消息，但不能管理配置。只升级当前这台电脑：
 
 ```sh
 .venv/bin/busy-bar uninstall
-.venv/bin/busy-bar watch --mode cloud
+.venv/bin/busy-bar cloud-migrate --url https://btc.orriduck.workers.dev
+.venv/bin/busy-bar cloud-register codex --name Codex --template agent
+.venv/bin/busy-bar cloud-register adsbao --name ADSBao --source adsbao
+.venv/bin/busy-bar cloud-handover
 ```
 
-按 Control-C 停止。停止后保留 occurrence ID、操作结果和 urgent 期限。短时间内重启会续期相同 occurrence。若后端租约先过期，则遵循后端 tombstone，直到来源确认 clear 或出现新 agent turn 才允许再次出现。客户端不清理设备 namespace。
+迁移要求持有该电脑全部旧服务的凭据。电脑 ID 和采集实例 ID 保持稳定，新服务使用新 ID。交接时采集服务必须停止。旧私有文件会保留。已结束记录、事件 ID 和更早的紧急通知截止时间会保留。旧服务的云端确认凭证会丢弃，不能继续推迟本地兜底通知。
 
-在另一个终端查看 cloud 状态：
+尚未显示的事件会保留完整画面，并等待一次成功的来源轮询；已显示事件不会重播。持续状态等待重新采样。动作回调不能跨进程迁移，因此复制的事件不会提供旧动作按钮。未解决的本地动作会阻止交接。保留来源游标和 ADSBao 飞机去重记录，不要删除它们来强制重播。
+
+新服务工作正常后，只删除本机已退役的注册。若云端动作仍为 pending、running 或 unknown，后端会拒绝删除。其他 Mac 需各自迁移。
+
+## 运行与验证
 
 ```sh
+.venv/bin/busy-bar watch --mode cloud
 .venv/bin/busy-bar status --mode cloud
 ```
 
-它读取控制面，不需要 BUSY 设备 token；每个结果仅含该角色服务有权读取的内容。即使后端不可达，也会显示本地 OS 通知最近一次和最多八次结果。`submitted` 仅表示通知进程接受请求，不证明已获得通知权限或用户已经收到。
+前台与后台采集共用进程锁，不能同时运行。status 读取各注册服务的独立范围及本地诊断。系统通知的 `submitted` 只说明进程已接受请求，不代表用户已经收到。
 
-减少动画可用：
-
-```sh
-.venv/bin/busy-bar watch --mode cloud --reduced-motion
-```
-
-## 5. 就绪后再安装
-
-前台测试不会安装 cloud 模式。确定要开机登录后启动时，显式执行：
+验证后设置登录自启：
 
 ```sh
 .venv/bin/busy-bar install --mode cloud
 ```
 
-该命令复用原用户级 launchd label，替换安装的 watch 命令。它验证 cloud 元数据，不读取设备 token、不编译 helper、不改变来源凭据。Observer 启动后才检查 Keychain 读取权限。
+此命令替换现有的用户 launchd 启动项，不安装 Claude hook。Codex 继续由现有本地采集器观察。Start/Pause 和实时预览仍需要对应服务开关及局域网连接。
 
-以后恢复 standalone 模式时，先停止 cloud watch，再执行：
-
-```sh
-.venv/bin/busy-bar install --mode standalone
-```
-
-Standalone 需要原有 BUSY 设备 token。
-
-## 管理页面和实时画面
-
-- **Display：**显示当前正面画面和队列。每行只显示 App、Sender、Received；点击 app 可展开详情和队列操作。
-- **Services：**开关服务及其按键和预览桥，注册采集器，替换或撤销 publisher credential。
-- **Configuration：**拖动调整顺序，配置 Priority、Hold 和 Heartbeat。
-- **Device：**查看连接、当前控制者、API 确认和预览诊断。在这里退出登录。
-
-Sender 是注册服务的名称。多个 Mac 共用注册服务时，用 instance 区分；它不代表来源通知的作者。Received 是服务端首次收到该 occurrence 的时间，更新后保留。悬停时间可查看完整日期和时间。
-
-启用实时预览前，把指定 Mac 更新到当前版本并重启 cloud watch。在 **Configuration** 中，仅为这台 Mac 的一个服务打开 **Live display preview bridge**，优先使用 agent 服务。Mac 需要已配置的本地 Wi-Fi 输入信息和 Keychain helper。预览桥先核对 Bar 身份，再读取像素；它不写设备，也不把本地凭据传给浏览器或云端。
-
-预览以每秒 30 次新采集为目标，读取真实的 72 × 16 正面 framebuffer，不重放场景或生成动画。实际速率受局域网、互联网和浏览器调度影响。**Device** 显示近期接收帧率和最近一次浏览器采样；这些是测量值，不是固定的“30 fps”标签。浏览器延迟使用 Mac 与浏览器的时钟计算，包含短暂的播放缓冲。缓冲等待约 150 ms，最多保留六个真实帧，待播放帧超过 500 ms 后丢弃。它不能提高来源采集帧率。
-
-通过认证、且可见的管理页面会触发采集。**Display** 展示大预览，其它三页在左下角保留小预览；各页共用一个连接。隐藏标签页、退出登录或关闭浏览器后停止需求；关闭信号丢失时，需求最多六秒过期。关闭浏览器不影响云端调度。Mac 预览桥不可用时，页面会明确显示预览不可用，云端仍可控制 Bar。
-
-临时局域网读取失败只在本地以 100 ms 到 2 s 退避重试，不关闭云端 publisher 连接，也不更换 stream ID。认证、设备身份或协议错误仍会停止采集。旧画面在两秒后过期；设备离线时不会把静止旧图当作实时画面。
-
-预览 viewer 每次续约获得六秒的在线需求租期。正常续约的连接不再有额外的 55 秒寿命，但访问仍受实际登录会话有效期限制。空闲 SSE 每两秒发送保活注释；浏览器传输永久关闭后，以 1 到 30 s 有界退避恢复。部署或真实断网仍可能造成连接中断。
-
-预览桥把私有计数保存在 `~/Library/Application Support/BusyBarAI/preview-status.json`；其中采集和发送帧率是整个运行期间的平均值。连接建立、连接关闭和本地取帧重试分别计数。文件不含像素、本地地址或凭据。画面只保留在内存，不写入云端持久存储。关闭预览桥不会关闭该服务的通知或设备按键输入。
-
-## 输入和本地操作
-
-Cloud watch 可以读取已配置的 Wi-Fi 输入。如有需要，先在 standalone 模式配置它。Cloud watch 不执行输入配置，也不使用默认 USB endpoint。在控制面服务设置中，仅为一个本地监听者启用 **Trusted device button bridge**。它的 service 和 instance 可以与当前显示所有者不同。Start/Pause 会向 `/api/input` 发送稳定 event ID 和当前 generation，由后端决定执行 urgent 主操作或清理当前非 urgent 项。
-
-主操作回调在提供该回调的 Mac 上执行。例如 Datadog 回调使用本地 `pup`。执行器核对 service、instance、item、generation 和已声明的 action key，并在产生副作用前保存 action ID。执行中断后，重启会标记 **unknown**，不会自动重试副作用。Running 和终态结果保留在 durable outbox，直到发送完成。不可用的回调报告失败，不会报告假成功。
-
-## 投递和 urgent 兜底
-
-Notifier 发布所有来源的原始项。State 来源对应 condition，event 来源对应 event；保留原来源 group key，分组范围限定在 notifier 服务内。飞机使用持久化 encounter ID：重复轮询和重启保留同一 ID；确认在外圈离开到达重置条件或每日重置后，才生成新 ID。后端负责排序。定时消息完成后不自动重播；宿主决定何时创建新的 occurrence。手动 clear 会封存 occurrence，heartbeat 不会复活它。投递过期同样禁止 cloud 重放，但本地仍未解决的 urgent 项会保留兜底文字和期限，直到来源确认 clear 或执行兜底通知。来源确认条件已清除、以后再次出现时，才创建新的 occurrence UUID。
-
-来源轮询失败时保留最后条件并标记为不确定，停止续期。成功轮询的有效窗口有界，并考虑下一次预定轮询时间。卡住的来源不能无限续期缓存。仅在 cloud 确认接纳显示后调用来源 `on_shown`。
-
-客户端复用现有 native renderer。通知场景包括完整入场、0.3 秒时出现的 detail 和最终画面。动画按内容哈希以 `anim` 类型上传。超出单元素大小限制的背屏 bitmap 无损转为 PNG 资产。Agent 的时钟和网络更新使用 native update，并保留完整恢复场景。
-
-Urgent watchdog 独立于 HTTP、SSE 和来源轮询运行。默认从本地首次识别起计时 10 秒。匹配的设备确认、有效 queue proof，或精确匹配已接纳成员版本的 coverage proof，可以推迟本地 macOS 通知。证明有效期有限，重复快照不会重置失败期限。证明过期或所有者退出后，最多再过一个配置的等待周期触发兜底，默认 10 秒。Pause 和 disable 会抑制兜底。首次识别时间、期限和通知去重状态在重启后保留。运行时采用单调时钟，并持久化其 UTC 映射；系统时钟回拨不会重置期限。Mac 睡眠后还会使用当前 UTC 推进有效时间，防止过期证明跨睡眠继续有效。设备确认只代表 API 写入被确认，不代表实体像素验收。
-
-## 排错
-
-- **Keychain unavailable：**解锁 Keychain，授权已编译的 helper，然后重启。后台读取失败时不会弹出权限提示。
-- **Setup required：**对缺失角色重新运行 `cloud-setup`。管理员重发凭据后使用新凭据；新的 epoch 开始新的本地 producer session。
-- **Unauthorized：**检查角色凭据。Producer 停止认证重试，不会回退到设备直写。
-- **Observer already running：**停止原 observer，两种模式共用 `watch.lock`。
-- **Waiting：**检查 cloud status 和队列页面。另一个 urgent 项可能占有显示，而当前项有有效等待证明。
-- **Source error：**检查本地来源工具。Cloud 模式不会把来源凭据复制到控制面。
-
-本地元数据和 durable outbox 位于现有 `~/Library/Application Support/BusyBarAI` 目录。文件权限为 0600，可能包含通知文字，但不含 publisher credential。不要通过删除这些文件来重试操作或绕过手动 clear。
-
-本地保留量有明确上限：128 个缓存资产或 8 MiB、4096 个 occurrence 或待发送 end ID、512 个 action ID、2048 个待发送 input ID，以及 32 MiB 总状态。无引用资产按 LRU 回收。结束项会压缩显示内容，但保留防重放和操作去重 ID。达到容量上限会明确报错，不会静默丢弃待处理工作。
+本地开发使用隔离 mock 环境。不要向 mock 输入真实设备 key。模拟测试不能证明实体屏幕表现。

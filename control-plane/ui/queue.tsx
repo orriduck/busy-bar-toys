@@ -18,7 +18,6 @@ import {
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
 import { Progress } from "./components/ui/progress";
-import { PriorityBadge } from "./policy-field";
 import { Empty, EmptyHeader, EmptyTitle } from "./components/ui/empty";
 import {
   Table,
@@ -40,7 +39,6 @@ type QueueRow = {
   meta: ReturnType<typeof queueMetadata>;
   open: boolean;
   current: boolean;
-  priority: number | undefined;
   progress: number | null;
   toggle: (id: string) => void;
 };
@@ -51,8 +49,7 @@ const columns = column.columns([
     id: "app",
     header: "App",
     cell: ({ row }) => {
-      const { groupId, meta, open, toggle, priority, current, progress } =
-        row.original;
+      const { groupId, meta, open, toggle, current, progress } = row.original;
       return (
         <div className="queue-app-cell">
           <Button
@@ -66,7 +63,6 @@ const columns = column.columns([
             <AppIcon app={meta.appId} />
             <span>{meta.app}</span>
           </Button>
-          {priority !== undefined && <PriorityBadge value={priority} />}
           {current && (
             <Badge variant="secondary" className="queue-playing">
               Playing
@@ -117,7 +113,9 @@ export function Queue({
   snapshot,
   mutate,
   pending,
+  ownerComputerId,
 }: {
+  ownerComputerId: string | null;
   snapshot: Snapshot;
   mutate: Mutate;
   pending: boolean;
@@ -187,7 +185,6 @@ export function Queue({
         meta: queueMetadata(playback.item, snapshot),
         open: expanded.has(group.groupId),
         current: playback.current,
-        priority: playback.priority,
         progress: playback.progress,
         toggle,
       };
@@ -212,6 +209,9 @@ export function Queue({
     });
   const details = (item: QueueItem) => {
     const meta = queueMetadata(item, snapshot);
+    const readOnly =
+      snapshot.services.find((s) => s.id === item.serviceId)?.computerId !==
+        ownerComputerId || !ownerComputerId;
     return (
       <section
         className="item-detail"
@@ -243,7 +243,7 @@ export function Queue({
           <Button
             variant="secondary"
             size="sm"
-            disabled={pending}
+            disabled={pending || readOnly}
             onClick={() =>
               operate(item, item.state === "paused" ? "resume" : "pause")
             }
@@ -257,7 +257,7 @@ export function Queue({
           <Button
             variant="secondary"
             size="sm"
-            disabled={pending}
+            disabled={pending || readOnly}
             onClick={() => operate(item, "end")}
           >
             <Icon name="end" data-icon="inline-start" />
@@ -268,6 +268,7 @@ export function Queue({
               variant="secondary"
               size="sm"
               disabled={
+                readOnly ||
                 pending ||
                 !item.actionAvailable ||
                 snapshot.displaying?.itemKey !== item.itemKey ||

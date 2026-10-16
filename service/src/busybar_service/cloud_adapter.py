@@ -10,6 +10,7 @@ from busybar_agents.motion_assets import REGIONS, FPS
 from busybar_notifier.presenter import NotificationPresenter
 from busybar_notifier.display import entrance_seconds
 from busybar_notifier.model import status_color
+from busybar_shared.cloud import CloudError
 
 
 class Capture:
@@ -135,6 +136,7 @@ class CloudQueue:
                 if key.startswith(source+':') and not record.get('cleared'):
                     record['lastSourceAt']=now
                     record['sourceUnknown']=False
+                    if record.get('kind')=='event': record.pop('handoverPendingSource',None)
                     record['sourceFreshUntil']=now+round(max(60,min(float(every)+30,3600))*1000)
             self.producer.state.save()
 
@@ -142,6 +144,42 @@ class CloudQueue:
         # The last value is uncertain, not authoritatively clear. Stop renewing
         # its lease; the independent urgent deadline remains in effect.
         self.producer.state.unknown(source)
+
+
+class RoutedCloudQueue:
+    """One local notification engine, with an explicit registered service per source."""
+    def __init__(self, queues, source_routes):
+        self.queues = dict(queues)
+        self.routes = dict(source_routes)
+        if any(service not in self.queues for service in self.routes.values()):
+            raise CloudError('service_registration_required')
+        self.on_shown = None
+        for queue in self.queues.values():
+            queue.on_shown = self._shown
+
+    def _shown(self, item):
+        if self.on_shown:
+            return self.on_shown(item)
+
+    def _queue(self, source):
+        service = self.routes.get(source)
+        if service not in self.queues:
+            raise CloudError('service_registration_required')
+        return self.queues[service]
+
+    def push(self, notifications):
+        routed = [(self._queue(item.source or item.app), item) for item in notifications]
+        for queue, item in routed:
+            queue.push([item])
+
+    def set_state(self, source, notifications):
+        self._queue(source).set_state(source, notifications)
+
+    def source_ok(self, source, every):
+        self._queue(source).source_ok(source, every)
+
+    def source_error(self, source, error):
+        self._queue(source).source_error(source, error)
 
 
 class AgentRenderer:

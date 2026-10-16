@@ -1,3 +1,4 @@
+import { computerOf, normalOrder } from "./ordering";
 /** Deterministic v5 state machine. Every operation is persisted atomically by DeviceControl. */
 export class ProtocolError extends Error {
   constructor(
@@ -49,6 +50,18 @@ export interface Service {
   computerId?: string;
   /** Collector instance IDs observed through authenticated heartbeat messages. */
   computerIds?: string[];
+}
+export interface Computer {
+  id: string;
+  credentialHash: string;
+  createdAt: number;
+  revokedAt?: number;
+  serviceOrder: string[];
+}
+export interface Enrollment {
+  computerId: string;
+  sessionId: string;
+  expiresAt: number;
 }
 export interface Item {
   itemKey: string;
@@ -148,6 +161,8 @@ export interface State {
   actions: Record<string, Action>;
   inputs: Record<string, { expiresAt: number }>;
   selected: string | null;
+  lastNormalComputer: string | null;
+  normalLeaseItem: string | null;
   applying: string | null;
   displaying: {
     itemKey: string;
@@ -168,6 +183,10 @@ export interface State {
   slots: Slot[];
   tokenCipher?: string;
   sessions: Record<string, number>;
+  computers: Record<string, Computer>;
+  sessionComputers: Record<string, string>;
+  enrollments: Record<string, Enrollment>;
+  pairings: Record<string, { computerId: string; expiresAt: number }>;
   elementExpiries: Record<string, { type: Element["type"]; expiresAt: number }>;
   nativeElements: Record<string, Element>;
   nextTextAt: number | null;
@@ -187,6 +206,8 @@ export function createState(deviceId: string): State {
     actions: {},
     inputs: {},
     selected: null,
+    lastNormalComputer: null,
+    normalLeaseItem: null,
     applying: null,
     displaying: null,
     admission: [],
@@ -197,6 +218,10 @@ export function createState(deviceId: string): State {
     assets: {},
     slots: [],
     sessions: {},
+    computers: {},
+    sessionComputers: {},
+    enrollments: {},
+    pairings: {},
     elementExpiries: {},
     nativeElements: {},
     nextTextAt: null,
@@ -238,7 +263,7 @@ export function record(v: unknown): Record<string, unknown> {
 }
 export function validateConfig(v: unknown, base = defaults): Config {
   const x = record(v);
-  requireThat(Object.keys(x).every((k) => k in defaults));
+  requireThat(Object.keys(x).every((k) => k in defaults && k !== "priority"));
   return {
     allowPreview:
       x.allowPreview === undefined
@@ -252,8 +277,7 @@ export function validateConfig(v: unknown, base = defaults): Config {
       x.enabled === undefined
         ? base.enabled
         : (requireThat(typeof x.enabled === "boolean"), x.enabled),
-    priority:
-      x.priority === undefined ? base.priority : integer(x.priority, 0, 1000),
+    priority: base.priority,
     visibleMs:
       x.visibleMs === undefined
         ? base.visibleMs
@@ -291,9 +315,10 @@ export function registerService(
     b.computerId === undefined ? crypto.randomUUID() : identifier(b.computerId);
   if (b.computerId !== undefined)
     requireThat(
-      Object.values(s.services).some(
-        (service) => service.computerId === computerId,
-      ),
+      Object.hasOwn(s.computers, computerId) ||
+        Object.values(s.services).some(
+          (service) => service.computerId === computerId,
+        ),
       "COMPUTER_NOT_FOUND",
       404,
     );
@@ -307,6 +332,8 @@ export function registerService(
     epochExpiresAt: now + 30 * 86400000,
     computerId,
   };
+  if (Object.hasOwn(s.computers, computerId))
+    s.computers[computerId].serviceOrder.push(id);
   s.configRevision++;
   s.revision++;
   return s.services[id];
@@ -332,6 +359,10 @@ export function removeService(
   for (const item of Object.values(s.items))
     if (item.serviceId === id) end(s, item, "revoked", item.version);
   delete s.services[id];
+  for (const computer of Object.values(s.computers))
+    computer.serviceOrder = computer.serviceOrder.filter(
+      (serviceId) => serviceId !== id,
+    );
   s.configRevision++;
   s.revision++;
   tick(s, now);
@@ -352,32 +383,6 @@ export function patchConfig(
     for (const i of Object.values(s.items))
       if (i.serviceId === id) end(s, i, "disabled", i.version);
   tick(s, now);
-}
-export function reorderServices(
-  s: State,
-  serviceIds: unknown,
-  expectedRevision: unknown,
-  now: number,
-) {
-  requireThat(expectedRevision === s.configRevision, "CONFIG_CONFLICT", 409);
-  const ids = Object.keys(s.services);
-  requireThat(
-    Array.isArray(serviceIds) &&
-      serviceIds.length === ids.length &&
-      new Set(serviceIds).size === ids.length &&
-      serviceIds.every(
-        (id) => typeof id === "string" && Object.hasOwn(s.services, id),
-      ),
-    "INVALID_SERVICE_ORDER",
-  );
-  const revision = s.revision;
-  serviceIds.forEach((id, index) => {
-    s.services[id].config.priority = 1000 - index;
-  });
-  s.configRevision++;
-  tick(s, now);
-  // The complete reorder and its scheduling result form one atomic revision.
-  s.revision = revision + 1;
 }
 const allowed = new Set(
   "id type assetHash x y display align z_index text font color width height scroll_rate scroll_start_delay scroll_repeat_delay opacity loop await_previous_end section timestamp direction show_hours bitmap data".split(
@@ -517,26 +522,25 @@ export function groups(s: State) {
     const key = groupId(i);
     by.set(key, [...(by.get(key) ?? []), i]);
   }
-  return [...by]
-    .map(([id, members]) => {
-      members.sort((a, b) => rank(b) - rank(a) || stable(a, b));
-      return {
-        id,
-        members,
-        representative: members[0],
-        urgentTime: members.filter((i) => i.level === "urgent").sort(stable)[0],
-      };
-    })
-    .sort((a, b) => {
-      if (a.urgentTime && b.urgentTime)
-        return stable(a.urgentTime, b.urgentTime);
-      if (!!a.urgentTime !== !!b.urgentTime) return a.urgentTime ? -1 : 1;
-      return (
-        s.services[b.representative.serviceId].config.priority -
-          s.services[a.representative.serviceId].config.priority ||
-        stable(a.representative, b.representative)
-      );
-    });
+  const values = [...by].map(([id, members]) => {
+    members.sort((a, b) => rank(b) - rank(a) || stable(a, b));
+    return {
+      id,
+      members,
+      representative: members[0],
+      urgentTime: members.filter((i) => i.level === "urgent").sort(stable)[0],
+    };
+  });
+  const urgent = values
+    .filter((g) => g.urgentTime)
+    .sort((a, b) => stable(a.urgentTime!, b.urgentTime!));
+  return [
+    ...urgent,
+    ...normalOrder(
+      s,
+      values.filter((g) => !g.urgentTime),
+    ),
+  ];
 }
 function plainApp(value: unknown): string {
   const app = text(value, 64);
@@ -853,8 +857,7 @@ export function tick(s: State, now: number) {
     else if (
       candidate &&
       candidate.level !== "urgent" &&
-      s.services[candidate.serviceId].config.priority ===
-        s.services[active.serviceId].config.priority
+      candidate.serviceId === active.serviceId
     )
       candidate = activeGroup.representative;
   }
@@ -877,6 +880,17 @@ export function acceptDisplay(s: State, generation: number, now: number) {
   };
   s.applying = null;
   i.state = "displaying";
+  if (i.level !== "urgent") {
+    s.lastNormalComputer = computerOf(s, i);
+    const lease = s.normalLeaseItem ? s.items[s.normalLeaseItem] : null;
+    if (
+      !lease ||
+      lease.state === "paused" ||
+      lease.state === "snoozed" ||
+      computerOf(s, lease) !== computerOf(s, i)
+    )
+      s.normalLeaseItem = i.itemKey;
+  }
   s.entryAt = Math.max(s.entryAt ?? now + i.scene.entryDurationMs, now);
   s.visibleSince = s.entryAt;
   s.nextTextAt = now + 45000;
@@ -1141,11 +1155,20 @@ export function snapshot(s: State, now: number, serviceId?: string) {
     selected: s.selected,
     applying: s.applying,
     displaying: s.displaying,
+    computers: Object.values(s.computers)
+      .filter((c) => !serviceId || s.services[serviceId]?.computerId === c.id)
+      .map((c) => ({
+        id: c.id,
+        serviceOrder: serviceId
+          ? c.serviceOrder.filter((id) => id === serviceId)
+          : c.serviceOrder,
+        enrolled: !!c.credentialHash && c.revokedAt === undefined,
+      })),
     services: Object.values(s.services)
       .filter((v) => !serviceId || v.id === serviceId)
-      .map(({ credentialHash, ...v }) => ({
+      .map(({ credentialHash, config: { priority, ...config }, ...v }) => ({
         ...v,
-        config: { ...v.config, allowPreview: v.config.allowPreview ?? false },
+        config: { ...config, allowPreview: config.allowPreview ?? false },
       })),
     items,
     groups: [

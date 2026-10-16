@@ -1,5 +1,19 @@
+import { migrateServiceOrders } from "./ordering";
 import { StateStore } from "./store";
-import { migrateComputerIds } from "./computers";
+import {
+  activeComputer,
+  beginEnrollment,
+  claimLegacy,
+  equalHash,
+  expireComputerCodes,
+  issuePairing,
+  migrateComputerIds,
+  ownedService,
+  redeemEnrollment,
+  redeemPairing,
+  reorderOwnedServices,
+  sessionComputer,
+} from "./computers";
 import { PreviewRelay } from "./preview";
 import { DurableObject } from "cloudflare:workers";
 import {
@@ -24,7 +38,6 @@ import {
   record,
   registerService,
   removeService,
-  reorderServices,
   requestAction,
   requireThat,
   snapshot,
@@ -50,6 +63,7 @@ export interface RuntimeEnv extends Env {
 }
 type Auth =
   | { kind: "session"; id: string; expiresAt: number }
+  | { kind: "computer"; computerId: string; hash: string; serviceId?: string }
   | { kind: "publisher"; serviceId: string; hash: string };
 const headers = {
   "Cache-Control": "no-store",
@@ -91,7 +105,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, revision INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL)",
     );
     const s = this.load();
-    if (s && migrateComputerIds(s)) this.save(s);
+    if (s) {
+      const identities = migrateComputerIds(s);
+      const orders = migrateServiceOrders(s, Date.now());
+      if (identities || orders) this.save(s);
+    }
     if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
       tick(s, Date.now());
@@ -155,6 +173,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       );
       return undefined;
     }
+    if (auth.kind === "computer") {
+      const computer = activeComputer(s, auth.computerId);
+      requireThat(
+        equalHash(computer.credentialHash, auth.hash),
+        "UNAUTHORIZED",
+        401,
+      );
+      if (auth.serviceId) ownedService(s, computer.id, auth.serviceId);
+      return auth.serviceId;
+    }
     const service = s.services[auth.serviceId];
     requireThat(
       service &&
@@ -179,7 +207,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       requireThat(raw, "FORBIDDEN", 403);
       const auth = JSON.parse(raw) as Auth;
       requireThat(
-        auth && (auth.kind === "session" || auth.kind === "publisher"),
+        auth &&
+          (auth.kind === "session" ||
+            auth.kind === "publisher" ||
+            auth.kind === "computer"),
         "FORBIDDEN",
         403,
       );
@@ -188,14 +219,18 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       this.authorize(s, auth);
       this.preview.update(s);
       if (url.pathname === "/api/preview/publish") {
-        requireThat(auth.kind === "publisher", "FORBIDDEN", 403);
+        requireThat(
+          auth.kind !== "session" && auth.serviceId,
+          "FORBIDDEN",
+          403,
+        );
         requireThat(
           request.headers.get("Upgrade")?.toLowerCase() === "websocket",
           "WEBSOCKET_REQUIRED",
           426,
         );
         return this.preview.openPublisher(
-          auth,
+          { ...auth, serviceId: auth.serviceId },
           request.headers.get("X-Busy-Instance"),
           request.headers.get("X-Busy-Epoch"),
         );
@@ -229,6 +264,42 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     await this.arm();
     return { deviceId };
   }
+  /** The unguessable one-use enrollment ticket is the only authority here. */
+  async enroll(
+    codeHash: string,
+    computerId: string,
+    credentialHash: string,
+  ): Promise<Response> {
+    try {
+      const s = this.load();
+      requireThat(
+        s &&
+          /^[a-f0-9]{64}$/.test(codeHash) &&
+          /^[a-f0-9]{64}$/.test(credentialHash) &&
+          Object.hasOwn(s.enrollments, codeHash) &&
+          s.enrollments[codeHash].computerId === computerId,
+        "ENROLLMENT_INVALID",
+        403,
+      );
+      const computer = redeemEnrollment(
+        s,
+        codeHash,
+        credentialHash,
+        Date.now(),
+      );
+      this.save(s);
+      await this.arm();
+      return json(
+        {
+          computerId: computer.id,
+          enrolled: true,
+        },
+        201,
+      );
+    } catch (error) {
+      return safeError(error);
+    }
+  }
   async handle(
     auth: Auth,
     path: string,
@@ -238,6 +309,43 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     try {
       // Perform cryptography before reading the mutable state; no external I/O is held under a storage gate.
       let newSecret: string | undefined, newHash: string | undefined;
+      let pairingHash: string | undefined, pairingDevice: string | undefined;
+      if (path === "/api/session/computer" && method === "POST") {
+        requireThat(auth.kind === "session", "FORBIDDEN", 403);
+        const code = /^pair\.([a-f0-9]{64})\.([A-Za-z0-9_-]{40,64})$/.exec(
+          text(body.code, 256),
+        );
+        requireThat(code, "PAIRING_INVALID", 403);
+        pairingDevice = code[1];
+        pairingHash = await digest(code[2]);
+      }
+      const proofs: Record<string, string> = {};
+      if (path === "/api/computers/claim" && method === "POST") {
+        requireThat(auth.kind === "publisher", "FORBIDDEN", 403);
+        const secret = text(body.managementSecret, 64);
+        requireThat(
+          /^[A-Za-z0-9_-]{40,64}$/.test(secret),
+          "INVALID_COMPUTER_CREDENTIAL",
+        );
+        newHash = await digest(secret);
+        const values = record(body.proofs);
+        requireThat(
+          Object.keys(values).length > 0 && Object.keys(values).length <= 32,
+          "COMPUTER_PROOF_REQUIRED",
+          403,
+        );
+        for (const [id, raw] of Object.entries(values)) {
+          identifier(id);
+          requireThat(typeof raw === "string", "COMPUTER_PROOF_REQUIRED", 403);
+          const match =
+            /^([a-f0-9]{64})\.([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{40,64})$/.exec(
+              raw,
+            );
+          requireThat(match && match[2] === id, "COMPUTER_PROOF_REQUIRED", 403);
+          // Device matching is checked after loading the authoritative state.
+          proofs[match[1] + ":" + id] = await digest(match[3]);
+        }
+      }
       const updateFingerprint =
         path === "/api/update" && method === "POST"
           ? await digest(
@@ -249,10 +357,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           : undefined;
       if (
         method === "POST" &&
-        (path === "/api/services" ||
+        (path === "/api/computers/enrollment" ||
+          path === "/api/computers/pairing" ||
+          path === "/api/services" ||
           /^\/api\/services\/[\w-]+\/credential$/.test(path))
       ) {
-        requireThat(auth.kind === "session", "FORBIDDEN", 403);
+        requireThat(
+          auth.kind !== "publisher" || path === "/api/computers/claim",
+          "FORBIDDEN",
+          403,
+        );
         newSecret = base64(crypto.getRandomValues(new Uint8Array(32)))
           .replaceAll("+", "-")
           .replaceAll("/", "_")
@@ -274,12 +388,64 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       requireThat(s, "UNAUTHORIZED", 401);
       const serviceId = this.authorize(s, auth),
         now = Date.now();
+      const managementComputer = () => {
+        requireThat(auth.kind !== "publisher", "FORBIDDEN", 403);
+        const id =
+          auth.kind === "computer"
+            ? auth.computerId
+            : auth.kind === "session"
+              ? sessionComputer(s, auth.id, now)
+              : null;
+        requireThat(id, "COMPUTER_PAIRING_REQUIRED", 403);
+        activeComputer(s, id);
+        return id;
+      };
+      const serviceWrite =
+        (method === "PATCH" && /^\/api\/services\/[\w-]+$/.test(path)) ||
+        (method === "POST" &&
+          (path === "/api/services" ||
+            /^\/api\/services\/[\w-]+\/(order|revoke|credential|remove)$/.test(
+              path,
+            ) ||
+            path === "/api/services/order"));
+      // Ownership is checked before tick, scheduling, or any durable mutation.
+      if (serviceWrite) {
+        const owner = managementComputer();
+        if (path === "/api/services")
+          requireThat(
+            body.computerId === undefined || body.computerId === owner,
+            "SERVICE_NOT_OWNED",
+            403,
+          );
+        else if (path !== "/api/services/order")
+          ownedService(s, owner, path.split("/")[3]);
+      }
+      if (body.serviceId !== undefined)
+        requireThat(
+          body.serviceId === serviceId,
+          "SERVICE_TARGET_MISMATCH",
+          403,
+        );
+      if (
+        auth.kind === "computer" &&
+        method === "POST" &&
+        [
+          "/api/publish",
+          "/api/update",
+          "/api/end",
+          "/api/heartbeat",
+          "/api/assets",
+          "/api/input",
+          "/api/actions",
+        ].includes(path)
+      )
+        requireThat(serviceId, "SERVICE_TARGET_REQUIRED", 403);
       const orderingServices =
         path === "/api/services/order" && method === "POST";
       // Order validation must precede tick: rejected requests cannot advance playback.
-      if (orderingServices)
-        requireThat(auth.kind === "session", "FORBIDDEN", 403);
+      if (orderingServices) managementComputer();
       if (path === "/api/preview/viewer" && method === "POST") {
+        requireThat(auth.kind === "session", "FORBIDDEN", 403);
         this.preview.update(s);
         return json(
           this.preview.viewer(auth, identifier(body.viewerId), body.operation),
@@ -287,9 +453,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       }
       const removingService =
         /^\/api\/services\/[\w-]+\/remove$/.test(path) && method === "POST";
-      if (removingService)
-        requireThat(auth.kind === "session", "FORBIDDEN", 403);
-      if (!orderingServices && !removingService) tick(s, now);
+      if (removingService) managementComputer();
+      const computerOperation =
+        path.startsWith("/api/computers/") || path === "/api/session/computer";
+      if (!orderingServices && !removingService && !computerOperation)
+        tick(s, now);
       const admin = () =>
         requireThat(auth.kind === "session", "FORBIDDEN", 403);
       const producer = () => {
@@ -305,18 +473,85 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             "FORBIDDEN",
             403,
           );
+        else {
+          const owner = managementComputer();
+          ownedService(s, owner, item.serviceId);
+        }
         return item;
       };
       let response: Response | undefined;
-      if (path === "/api/session" && method === "GET") {
+      if (path === "/api/computers/enrollment" && method === "POST") {
+        admin();
+        requireThat(auth.kind === "session", "FORBIDDEN", 403);
+        const computerId = crypto.randomUUID();
+        const ticket = beginEnrollment(s, auth.id, newHash!, computerId, now);
+        response = json(
+          {
+            computerId,
+            enrollment: `enroll.${s.deviceId}.${computerId}.${newSecret}`,
+            expiresAt: ticket.expiresAt,
+          },
+          201,
+        );
+      } else if (path === "/api/computers/claim" && method === "POST") {
+        requireThat(auth.kind === "publisher", "FORBIDDEN", 403);
+        const scoped: Record<string, string> = {};
+        for (const [key, value] of Object.entries(proofs)) {
+          requireThat(
+            key.startsWith(s.deviceId + ":"),
+            "COMPUTER_PROOF_REQUIRED",
+            403,
+          );
+          scoped[key.slice(s.deviceId.length + 1)] = value;
+        }
+        const computer = claimLegacy(s, auth.serviceId, scoped, newHash!, now);
+        response = json(
+          {
+            computerId: computer.id,
+            enrolled: true,
+          },
+          201,
+        );
+      } else if (path === "/api/computers/pairing" && method === "POST") {
+        requireThat(auth.kind === "computer", "FORBIDDEN", 403);
+        const code = issuePairing(s, auth.computerId, newHash!, now);
+        response = json(
+          {
+            code: `pair.${s.deviceId}.${newSecret}`,
+            expiresAt: code.expiresAt,
+          },
+          201,
+        );
+      } else if (path === "/api/session/computer" && method === "POST") {
+        admin();
+        requireThat(auth.kind === "session", "FORBIDDEN", 403);
+        requireThat(pairingDevice === s.deviceId, "PAIRING_INVALID", 403);
+        const computerId = redeemPairing(s, auth.id, pairingHash!, now);
+        response = json({ computerId });
+      } else if (path === "/api/computer" && method === "GET") {
+        requireThat(auth.kind === "computer", "FORBIDDEN", 403);
+        response = json({
+          computerId: auth.computerId,
+          deviceId: s.deviceId,
+          configRevision: s.configRevision,
+          services: snapshot(s, now).services.filter(
+            (service) => service.computerId === auth.computerId,
+          ),
+        });
+      } else if (path === "/api/session" && method === "GET") {
         admin();
         response = json({
           deviceId: s.deviceId,
           demo: !!this.env.BUSY_UPSTREAM,
+          computerId:
+            auth.kind === "session" ? sessionComputer(s, auth.id, now) : null,
         });
       } else if (path === "/api/session" && method === "DELETE") {
         admin();
-        if (auth.kind === "session") delete s.sessions[auth.id];
+        if (auth.kind === "session") {
+          delete s.sessions[auth.id];
+          delete s.sessionComputers[auth.id];
+        }
         response = json({ ok: true }, 200, {
           "Set-Cookie":
             "busy_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0",
@@ -331,10 +566,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         await this.arm();
         return this.openStream(s, auth);
       } else if (orderingServices) {
-        reorderServices(s, body.serviceIds, body.expectedRevision, now);
+        reorderOwnedServices(
+          s,
+          managementComputer(),
+          body.serviceIds,
+          body.expectedRevision,
+        );
+        tick(s, now);
         response = json({ snapshot: snapshot(s, now) });
       } else if (path === "/api/services" && method === "POST") {
-        admin();
+        const owner = managementComputer();
         requireThat(
           body.expectedRevision === s.configRevision,
           "CONFIG_CONFLICT",
@@ -342,7 +583,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         );
         const svc = registerService(
           s,
-          body,
+          { ...body, computerId: owner },
           newHash!,
           crypto.randomUUID(),
           now,
@@ -357,7 +598,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           201,
         );
       } else if (/^\/api\/services\/[\w-]+$/.test(path) && method === "PATCH") {
-        admin();
+        managementComputer();
         patchConfig(
           s,
           path.split("/")[3],
@@ -370,7 +611,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         /^\/api\/services\/[\w-]+\/(revoke|credential)$/.test(path) &&
         method === "POST"
       ) {
-        admin();
+        managementComputer();
         requireThat(
           body.expectedRevision === s.configRevision,
           "CONFIG_CONFLICT",
@@ -398,7 +639,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           snapshot: snapshot(s, now),
         });
       } else if (removingService) {
-        admin();
+        managementComputer();
         removeService(
           s,
           path.split("/")[3],
@@ -607,7 +848,9 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         s.revision++;
         response = json({ snapshot: snapshot(s, now, id) });
       } else if (path === "/api/items" && method === "POST") {
-        admin();
+        const item = s.items[text(body.itemKey, 512)];
+        requireThat(item, "ITEM_NOT_FOUND", 404);
+        ownedService(s, managementComputer(), item.serviceId);
         requireThat(
           body.expectedRevision === s.revision,
           "STATE_CONFLICT",
@@ -644,6 +887,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         actionResult(s, action.id, body.status as Action["status"], now);
         response = json({ snapshot: snapshot(s, now, id) });
       } else if (path === "/api/input" && method === "POST") {
+        requireThat(auth.kind !== "session", "PHYSICAL_INPUT_REQUIRED", 403);
         if (serviceId)
           requireThat(
             s.services[serviceId].config.allowInput,
@@ -673,6 +917,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         "COMMAND_CAPACITY",
         413,
       );
+      expireComputerCodes(s, now);
       this.save(s);
       await this.arm();
       this.ctx.waitUntil(this.dispatch());
@@ -779,6 +1024,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     if (s.nextWidgetAt) deadlines.push(s.nextWidgetAt);
     for (const t of Object.values(s.tombstones)) deadlines.push(t.expiresAt);
     for (const expiry of Object.values(s.sessions)) deadlines.push(expiry);
+    for (const code of Object.values(s.enrollments))
+      deadlines.push(code.expiresAt);
+    for (const code of Object.values(s.pairings))
+      deadlines.push(code.expiresAt);
     for (const asset of Object.values(s.assets))
       if (asset.usedAt + 3600000 > now) deadlines.push(asset.usedAt + 3600000);
     for (const input of Object.values(s.inputs))
@@ -818,6 +1067,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       s.revision++;
     }
     this.refresh(s, now);
+    expireComputerCodes(s, now);
     this.save(s);
     await this.dispatch();
     await this.arm();
@@ -1268,6 +1518,23 @@ export default {
         mutation && request.method !== "DELETE"
           ? await jsonBody(request, path === "/api/assets" ? 400000 : 131072)
           : {};
+      if (path === "/api/computers/enroll" && request.method === "POST") {
+        const ticket =
+          /^Bearer enroll\.([a-f0-9]{64})\.([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{40,64})$/.exec(
+            bearer ?? "",
+          );
+        requireThat(ticket && !cookie, "ENROLLMENT_INVALID", 403);
+        const secret = text(body.managementSecret, 64);
+        requireThat(
+          /^[A-Za-z0-9_-]{40,64}$/.test(secret),
+          "INVALID_COMPUTER_CREDENTIAL",
+        );
+        return await env.DEVICES.getByName(ticket[1]).enroll(
+          await digest(ticket[3]),
+          identifier(ticket[2]),
+          await digest(secret),
+        );
+      }
       if (path === "/api/session" && request.method === "POST") {
         const token = text(body.token, 1024);
         const status = record(
@@ -1302,17 +1569,41 @@ export default {
       }
       let deviceId: string, auth: Auth;
       if (bearer) {
+        const computer =
+          /^Bearer ([a-f0-9]{64})\.c\.([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{40,64})$/.exec(
+            bearer,
+          );
         const match =
           /^Bearer ([a-f0-9]{64})\.([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{40,64})$/.exec(
             bearer,
           );
-        requireThat(match, "UNAUTHORIZED", 401);
-        deviceId = match[1];
-        auth = {
-          kind: "publisher",
-          serviceId: match[2],
-          hash: await digest(match[3]),
-        };
+        requireThat(computer || match, "UNAUTHORIZED", 401);
+        if (computer) {
+          deviceId = computer[1];
+          const target =
+            request.headers.get("X-Busy-Service") ?? body.serviceId;
+          auth = {
+            kind: "computer",
+            computerId: identifier(computer[2]),
+            hash: await digest(computer[3]),
+            ...(target === undefined || target === null
+              ? {}
+              : { serviceId: identifier(target) }),
+          };
+        } else {
+          deviceId = match![1];
+          requireThat(
+            !request.headers.has("X-Busy-Service") ||
+              request.headers.get("X-Busy-Service") === match![2],
+            "SERVICE_TARGET_MISMATCH",
+            403,
+          );
+          auth = {
+            kind: "publisher",
+            serviceId: match![2],
+            hash: await digest(match![3]),
+          };
+        }
       } else {
         requireThat(cookie, "UNAUTHORIZED", 401);
         const session = await verifySession(

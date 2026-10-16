@@ -1,3 +1,4 @@
+import { enrollTestBrowser } from "./helpers/computer";
 import { DeviceControl } from "../src/index";
 import { StateStore } from "../src/store";
 import { env, exports } from "cloudflare:workers";
@@ -104,6 +105,7 @@ async function setup() {
   const { deviceId } = (await login.json()) as { deviceId: string };
   createdDevices.add(deviceId);
   const cookie = login.headers.get("Set-Cookie")!.split(";")[0];
+  await enrollTestBrowser(deviceId, cookie);
   const admin = (path: string, body?: unknown) =>
     drain(
       exports.default.fetch("https://control.test/api" + path, {

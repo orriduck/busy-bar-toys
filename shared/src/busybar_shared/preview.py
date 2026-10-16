@@ -222,7 +222,9 @@ class PreviewBridge:
     """One optional supervisor for all local roles; agent wins when eligible."""
     def __init__(self,runtime,clients,*,device_factory=local_device,status_path=True):
         self.runtime=Path(runtime)
-        self.clients=[clients[k] for k in ('agent','notifier') if k in clients]
+        self.clients=[]
+        for key,client in sorted(clients.items(),key=lambda pair:(pair[1].config.get('template',pair[1].config.get('role'))!='agent',pair[0])):
+            if client not in self.clients: self.clients.append(client)
         self.device_factory=device_factory
         self.status_path=self.runtime/'preview-status.json' if status_path is True else status_path
         self._stop=threading.Event(); self._thread=None; self._loop=None; self._task=None
