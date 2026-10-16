@@ -201,6 +201,127 @@ class CloudTest(unittest.TestCase):
             self.assertEqual(compact['itemId'],rec['itemId'])
             self.assertIsNone(state.recognize('a',kind='condition',level='urgent',title='A',detail='',scene={}))
 
+    def test_tombstone_saves_only_record_transitions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=cloud.State(Path(directory)/'state.json',clock=lambda:100)
+            record=state.recognize('a',kind='condition',level='urgent',title='A',detail='B',scene={})
+            with patch.object(state,'save',wraps=state.save) as save:
+                self.assertFalse(state.tombstone('missing','expired'))
+                self.assertEqual(save.call_count,0)
+                self.assertTrue(state.tombstone(record['itemId'],'expired'))
+                self.assertEqual(save.call_count,1)
+                self.assertFalse(state.tombstone(record['itemId'],'expired'))
+                self.assertEqual(save.call_count,1)
+                self.assertTrue(state.tombstone(record['itemId'],'cleared'))
+                self.assertEqual(save.call_count,2)
+                self.assertFalse(state.tombstone(record['itemId'],'cleared'))
+                self.assertEqual(save.call_count,2)
+            recovered=cloud.State(state.path)
+            self.assertEqual(recovered.records['a']['tombstone'],'cleared')
+            self.assertEqual(recovered.records['a']['acked'],record['version'])
+            self.assertNotIn('title',recovered.records['a'])
+
+    def test_same_reason_tombstone_repairs_legacy_record_before_becoming_noop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=cloud.State(Path(directory)/'state.json',clock=lambda:100)
+            record=state.recognize('a',kind='condition',level='urgent',title='A',detail='B',scene={})
+            state.records['a'].update(tombstone='expired',acked=0,ending=True,fallbackPending=False)
+            state.save()
+            with patch.object(state,'save',wraps=state.save) as save:
+                self.assertTrue(state.tombstone(record['itemId'],'expired'))
+                self.assertEqual(save.call_count,1)
+                repaired=cloud.State(state.path).records['a']
+                self.assertEqual(repaired['acked'],record['version'])
+                self.assertNotIn('ending',repaired)
+                self.assertNotIn('scene',repaired)
+                self.assertTrue(repaired['fallbackPending'])
+                self.assertEqual((repaired['title'],repaired['detail']),('A','B'))
+                self.assertFalse(state.tombstone(record['itemId'],'expired'))
+                self.assertEqual(save.call_count,1)
+
+    def test_replayed_tombstone_snapshots_only_save_watchdog_and_do_not_repeat_callbacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config={'role':'agent','serviceId':'a','instanceId':'mac','epoch':'e'}
+            producer=cloud.Producer(directory,config,object(),clock=lambda:100)
+            tombs=[]; transitions=[]
+            for index in range(3):
+                record=producer.state.recognize(str(index),kind='agent',level='info',title='A',detail='',scene={})
+                key=json.dumps(['a','mac',record['itemId']],separators=(',',':'))
+                tombs.append({'itemKey':key,'version':record['version'],'reason':'cleared'})
+            def transitioned(item_id,reason):
+                saved=cloud.State(producer.state.path)
+                record=next(r for r in saved.records.values() if r['itemId']==item_id)
+                self.assertEqual(record['tombstone'],reason,'receipt must be durable before callback')
+                transitions.append((item_id,reason))
+            producer.on_tombstone=transitioned
+            snapshot={'protocol':1,'revision':1,'services':[{'id':'a'}],'items':[],'tombstones':tombs}
+            with patch.object(producer.state,'save',wraps=producer.state.save) as save:
+                producer.accept(snapshot)
+                self.assertEqual(save.call_count,4,'one watchdog save and three new tombstones')
+                self.assertEqual(len(transitions),3)
+                producer.accept(snapshot)
+                self.assertEqual(save.call_count,5,'identical snapshot still persists watchdog once')
+                self.assertEqual(len(transitions),3)
+                snapshot['revision']=2
+                producer.accept(snapshot)
+                self.assertEqual(save.call_count,6,'new revision must not replay historical tombstones')
+                self.assertEqual(len(transitions),3)
+                tombs[0]['reason']='ended'; snapshot['revision']=3
+                producer.accept(snapshot)
+                self.assertEqual(save.call_count,8,'changed reason persists one new transition')
+                self.assertEqual(len(transitions),4)
+            recovered=cloud.Producer(directory,config,object(),clock=lambda:101)
+            recovered.on_tombstone=transitioned
+            with patch.object(recovered.state,'save',wraps=recovered.state.save) as save:
+                recovered.accept(snapshot)
+                self.assertEqual(save.call_count,1)
+                self.assertEqual(len(transitions),4,'durable terminal receipts survive restart')
+
+    def test_replayed_clear_cannot_dismiss_a_new_task_turn(self):
+        from busybar_agents.view import ViewMode
+        with tempfile.TemporaryDirectory() as directory:
+            producer=cloud.Producer(directory,{'role':'agent','serviceId':'a','instanceId':'mac','epoch':'e'},object(),clock=lambda:100)
+            record=producer.state.recognize('overlay',kind='agent',level='info',title='A',detail='',scene={})
+            view=ViewMode(Path(directory)/'view.json'); cleared=set()
+            def tombstone(item_id,reason):
+                if reason=='cleared': cleared.add(item_id)
+            producer.on_tombstone=tombstone
+            key=json.dumps(['a','mac',record['itemId']],separators=(',',':'))
+            snapshot={'protocol':1,'revision':1,'services':[{'id':'a'}],'items':[],
+                      'tombstones':[{'itemKey':key,'version':record['version'],'reason':'cleared'}]}
+            producer.accept(snapshot)
+            if cleared:
+                view.dismiss({('session','old')}); cleared.clear()
+            self.assertFalse(view.allows({('session','old')}))
+            self.assertTrue(view.allows({('session','new')}))
+            snapshot['revision']=2; producer.accept(snapshot)
+            if cleared:
+                view.dismiss({('session','old'),('session','new')}); cleared.clear()
+            self.assertTrue(view.allows({('session','new')}),'an old clear receipt must not hide a later turn')
+
+    def test_failed_tombstone_save_can_retry_before_invoking_callback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=cloud.Producer(directory,{'role':'agent','serviceId':'a','instanceId':'mac','epoch':'e'},object(),clock=lambda:100)
+            record=producer.state.recognize('overlay',kind='agent',level='info',title='A',detail='B',scene={})
+            callbacks=[]; producer.on_tombstone=lambda *args:callbacks.append(args)
+            key=json.dumps(['a','mac',record['itemId']],separators=(',',':'))
+            snapshot={'protocol':1,'revision':1,'services':[{'id':'a'}],'items':[],
+                      'tombstones':[{'itemKey':key,'version':record['version'],'reason':'cleared'}]}
+            save=producer.state.save; calls=[]
+            def fail_terminal_save():
+                calls.append(None)
+                if len(calls)==2: raise OSError('disk unavailable')
+                save()
+            with patch.object(producer.state,'save',side_effect=fail_terminal_save):
+                with self.assertRaises(OSError): producer.accept(snapshot)
+            self.assertEqual(callbacks,[])
+            self.assertNotIn('tombstone',cloud.State(producer.state.path).records['overlay'])
+            producer.accept(snapshot)
+            self.assertEqual(callbacks,[(record['itemId'],'cleared')])
+            saved=cloud.State(producer.state.path).records['overlay']
+            self.assertEqual(saved['tombstone'],'cleared')
+            self.assertNotIn('scene',saved)
+
     def test_stop_does_not_turn_manual_tombstone_into_source_clear(self):
         with tempfile.TemporaryDirectory() as directory:
             class HTTP:

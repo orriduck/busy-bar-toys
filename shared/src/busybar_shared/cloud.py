@@ -311,13 +311,23 @@ class State:
 
     def tombstone(self,item_id,reason):
         with self.lock:
+            changed=[]
             for rec in self.records.values():
                 if rec['itemId']==item_id:
+                    before=rec.copy()
                     rec['tombstone']=reason; rec['acked']=rec['version']; rec.pop('ending',None)
                     rec['fallbackPending']=(reason in DELIVERY_FAILURE_REASONS and rec.get('level')=='urgent'
                                             and not rec.get('cleared') and not rec.get('notified'))
                     self.compact(rec,keep_fallback=rec['fallbackPending'])
-            self.save()
+                    if rec!=before: changed.append((rec,before))
+            if changed:
+                try: self.save()
+                except Exception:
+                    # A later snapshot must retry a receipt that was not durable.
+                    for rec,before in changed:
+                        rec.clear(); rec.update(before)
+                    raise
+            return bool(changed)
 
 
 class Watchdog:
@@ -507,8 +517,8 @@ class Producer:
             for rec in list(self.state.records.values()):
                 key=json.dumps([self.config['serviceId'],self.config['instanceId'],rec['itemId']],separators=(',',':'))
                 if tomb.get('itemKey')==key:
-                    self.state.tombstone(rec['itemId'],tomb.get('reason','ended'))
-                    if self.on_tombstone: self.on_tombstone(rec['itemId'],tomb.get('reason'))
+                    changed=self.state.tombstone(rec['itemId'],tomb.get('reason','ended'))
+                    if changed and self.on_tombstone: self.on_tombstone(rec['itemId'],tomb.get('reason'))
         now=self.clock()*1000
         display=snapshot.get('displaying') or {}
         for item in snapshot.get('items',[]):
