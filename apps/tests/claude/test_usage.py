@@ -32,12 +32,21 @@ class TranscriptUsageTest(unittest.TestCase):
         with open(self.path, mode) as stream:
             stream.write("".join(line + "\n" for line in lines))
 
-    def test_input_includes_both_caches_and_repeated_message_lines_count_once(self):
+    def test_input_counts_fresh_and_cache_writes_but_not_cache_reads(self):
         self.write(json.dumps({"type": "user", "message": {"content": "usage assistant"}}),
                    assistant("m1", fresh=2, read=400, created=100, out=10),
                    assistant("m1", fresh=2, read=400, created=100, out=30),
                    assistant("m2", fresh=1, read=500, out=5))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(1003, 35))
+        self.assertEqual(self.reader(str(self.path)), TokenUsage(103, 35))
+
+    def test_reference_example_and_cache_read_growth_do_not_change_input(self):
+        self.write(assistant("m1", fresh=20, created=30, read=900, out=7))
+        self.assertEqual(self.reader(str(self.path)), TokenUsage(50, 7))
+        other = TranscriptUsage(self.root); path = self.root / "other.jsonl"
+        path.write_text(assistant("m1", fresh=20, created=30, read=5, out=7) + "\n")
+        self.assertEqual(other(str(path)), TokenUsage(50, 7), "Same new input, different cache read")
+        self.write(assistant("m2", fresh=10, read=950, out=1))
+        self.assertEqual(self.reader(str(self.path)), TokenUsage(60, 8), "Growing cache reads add nothing")
 
     def test_reads_incrementally_and_waits_for_a_complete_line(self):
         self.write(assistant("m1", out=10))
@@ -74,7 +83,7 @@ class TranscriptUsageTest(unittest.TestCase):
 
     def test_registry_refreshes_totals_through_the_source_reader(self):
         from unittest.mock import patch
-        self.write(assistant("m1", read=999, out=1))
+        self.write(assistant("m1", read=999, created=999, out=1))
         registry = TaskRegistry()
         with patch("busybar_agents.profiles.profile") as profile:
             profile.return_value.usage_reader = self.reader
@@ -90,7 +99,7 @@ class TranscriptUsageTest(unittest.TestCase):
                    json.dumps({"type": "assistant", "message": ["usage"]}),
                    json.dumps({"type": "assistant", "message": {"id": "m0", "usage": "assistant"}}),
                    assistant("m1", read=9, out=2))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(10, 2))
+        self.assertEqual(self.reader(str(self.path)), TokenUsage(1, 2))
 
     def registry(self):
         from unittest.mock import patch

@@ -16,6 +16,38 @@ def hook(session="s", turn="t", state="working", timestamp=100, **kwargs):
 
 
 class RegistryTests(unittest.TestCase):
+    def codex_count(self, stamp, usage):
+        return {"session_id": "s", "type": "event_msg", "timestamp": stamp,
+                "payload": {"type": "token_count", "info": {"total_token_usage": usage}}}
+
+    def test_codex_input_excludes_cached_input(self):
+        from busybar_agents.tokens import TokenUsage
+        r = TaskRegistry(); r.ingest(hook(timestamp=20), now=20)
+        r.ingest(self.codex_count("1970-01-01T00:00:21Z", {"input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 50}), now=21)
+        self.assertEqual(r.task("s").token_usage, TokenUsage(200, 50))
+        r.ingest(self.codex_count("1970-01-01T00:00:22Z", {"input_tokens": 1500, "cached_input_tokens": 1250, "output_tokens": 60}), now=22)
+        self.assertEqual(r.task("s").token_usage, TokenUsage(250, 60), "Growing cached input adds nothing")
+        other = TaskRegistry(); other.ingest(hook(timestamp=20), now=20)
+        other.ingest(self.codex_count("1970-01-01T00:00:21Z", {"input_tokens": 1000, "output_tokens": 50}), now=21)
+        other.ingest(self.codex_count("1970-01-01T00:00:22Z", {"input_tokens": 1050, "output_tokens": 60}), now=22)
+        self.assertEqual(other.task("s").token_usage, TokenUsage(1050, 60), "Missing cached input counts as zero")
+        self.assertEqual(r.task("s").token_usage.input_tokens - 200, other.task("s").token_usage.input_tokens - 1000,
+                         "Same new input gives the same delta whatever the cache read")
+
+    def test_codex_malformed_cached_input_rejects_only_the_usage(self):
+        from busybar_agents.tokens import TokenUsage
+        r = TaskRegistry(); r.ingest(hook(timestamp=20), now=20)
+        r.ingest(self.codex_count("1970-01-01T00:00:21Z", {"input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 50}), now=21)
+        for i, cached in enumerate((True, -1, "5", 1.5, 2001, None)):
+            with self.subTest(cached=cached):
+                usage = {"input_tokens": 2000, "output_tokens": 90, "cached_input_tokens": cached}
+                self.assertTrue(r.ingest(self.codex_count(f"1970-01-01T00:00:{22 + i}Z", usage), now=22 + i),
+                                "The heartbeat still counts")
+                self.assertEqual(r.task("s").token_usage, TokenUsage(200, 50))
+        self.assertEqual(r.task("s").updated_at, 27)
+        self.assertFalse(r.ingest(self.codex_count("1970-01-01T00:00:19Z", {"input_tokens": 9000, "cached_input_tokens": 0, "output_tokens": 9}), now=28))
+        self.assertEqual(r.task("s").token_usage, TokenUsage(200, 50), "A rejected record keeps the last usage")
+
     def test_rejected_token_records_leave_usage_untouched(self):
         from busybar_agents.tokens import TokenUsage
         def count(stamp, used, out, turn=None):
