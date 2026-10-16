@@ -1388,6 +1388,29 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         refresh: true,
         ...metadata,
       });
+    // Native text scrolls independently above the incoming bitmap. Neutralize it
+    // in the same draw, so a slow retirement DELETE cannot overlay the new view.
+    const textToHide = old
+      .filter((e) => e.type === "text" && !incoming.has(e.id))
+      .map((e) => ({
+        ...e,
+        text: " ",
+        scroll_rate: 0,
+        scroll_start_delay: 0,
+        scroll_repeat_delay: 0,
+      }));
+    if (textToHide.length + (command.elements?.length ?? 0) <= 32)
+      command.elements = [...textToHide, ...(command.elements ?? [])];
+    else
+      for (let offset = 0; offset < textToHide.length; offset += 32)
+        add(before, {
+          generation: s.generation,
+          kind: "draw",
+          dueAt: now,
+          refresh: true,
+          elements: textToHide.slice(offset, offset + 32),
+          ...metadata,
+        });
     const index = s.commands.indexOf(command);
     s.commands.splice(index, 1, ...before, command, ...after);
   }

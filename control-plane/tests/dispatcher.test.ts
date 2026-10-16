@@ -1577,3 +1577,66 @@ it("retains bounded content-free display diagnostics across eviction for managem
   expect(retained.events[0].data.generation).toBe(12);
   expect(retained.events.at(-1)!.data.generation).toBe(139);
 });
+
+it.each([1, 32])(
+  "hides obsolete scrolling text before retirement ACK with %i incoming elements",
+  async (count) => {
+    const { send, admin, epoch } = await setup();
+    const first = presentation(epoch);
+    first.scene.commands[0].elements[0].id = "old-detail";
+    await send("/publish", first);
+    await displayed(admin);
+    let incoming = false;
+    let overlayObserved = false;
+    let retired!: () => void;
+    const retirement = new Promise<void>((r) => (retired = r));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let oldText = "Hello";
+    setUpstream(async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/display/draw")) {
+        const body = request.body
+          ? ((await request.json()) as Record<string, unknown>)
+          : null;
+        if (request.method === "POST") {
+          const elements = body!.elements as { id: string; text?: string }[];
+          for (const e of elements)
+            if (e.id === "old-detail") oldText = e.text ?? "";
+          if (elements.some((e) => e.id === "text")) {
+            incoming = true;
+            overlayObserved ||= oldText.trim().length > 0;
+          }
+        } else if (incoming) {
+          retired();
+          await gate;
+        }
+      }
+      return Response.json({ ok: true });
+    });
+    try {
+      const next = presentation(epoch, "two");
+      next.scene.commands[0].elements = Array.from(
+        { length: count },
+        (_, i) => ({
+          id: i ? `text-${i}` : "text",
+          type: "text",
+          text: "Next",
+          font: "small",
+        }),
+      );
+      await send("/publish", next);
+      await send("/withdraw", {
+        epoch,
+        instanceId: "mac",
+        itemId: "one",
+        version: 1,
+      });
+      await retirement;
+      expect(overlayObserved).toBe(false);
+    } finally {
+      release();
+    }
+    await displayed(admin);
+  },
+);
