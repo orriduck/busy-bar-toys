@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { etaText, queueMetadata } from "./api";
+import { compactSender } from "./queue-metadata";
 import type { Snapshot, QueueItem, Mutate } from "./api";
 import { AppIcon, Icon } from "./common";
 import {
@@ -81,9 +82,12 @@ const columns = column.columns([
     id: "sender",
     header: "Sender",
     cell: ({ row }) => (
-      <span className="sender" title={row.original.item.instanceId}>
+      <span
+        className="sender"
+        title={`${row.original.meta.sender} · source ${row.original.item.instanceId}`}
+      >
         <Icon name="computer" />
-        {row.original.meta.sender}
+        {compactSender(row.original.meta.sender)}
       </span>
     ),
   }),

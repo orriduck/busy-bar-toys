@@ -129,3 +129,13 @@ describe("compact queue provenance", () => {
     expect(client.queueMetadata(item, shared).sender).toBe("laptop · Home Mac");
   });
 });
+
+it("shortens only the visible sender computer ID and retains the service name", async () => {
+  const { compactSender } = await import("../ui/queue-metadata");
+  expect(compactSender("2199977f-a93e-40b1-9c25-3ebc95fa524d · Codex")).toBe(
+    "2199977f · Codex",
+  );
+  expect(compactSender("new-1 · Mac · Notifier")).toBe(
+    "new-1 · Mac · Notifier",
+  );
+});

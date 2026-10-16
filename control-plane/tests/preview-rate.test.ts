@@ -292,3 +292,59 @@ it("cancels the pending newest frame when publisher authority is revoked", async
     await s.close();
   }
 });
+
+it("retains a renewed viewer beyond 55 seconds, bounded by the real session", async () => {
+  const nativeNow = Date.now.bind(Date),
+    base = nativeNow();
+  let offset = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => base + offset);
+  const relay = new PreviewRelay(),
+    state = createState("device");
+  const auth = {
+    kind: "session" as const,
+    id: "browser",
+    expiresAt: base + 120000,
+  };
+  state.sessions.browser = auth.expiresAt;
+  relay.update(state);
+  const response = relay.openViewer(auth, state.deviceId),
+    reader = response.body!.getReader();
+  const initial = new TextDecoder().decode((await reader.read()).value);
+  const id = JSON.parse(initial.split("\ndata: ")[1]).viewerId;
+  try {
+    for (offset = 5000; offset <= 60000; offset += 5000)
+      relay.viewer(auth, id, "renew");
+    expect(relay.status().viewers).toBe(1);
+    offset = 120001;
+    expect(relay.status().viewers).toBe(0);
+  } finally {
+    clock.mockRestore();
+    await reader.cancel().catch(() => {});
+  }
+});
+
+it("sends SSE keepalives while the bridge has no frame to send", async () => {
+  const relay = new PreviewRelay(),
+    state = createState("device");
+  const auth = {
+    kind: "session" as const,
+    id: "browser",
+    expiresAt: Date.now() + 120000,
+  };
+  state.sessions.browser = auth.expiresAt;
+  relay.update(state);
+  const response = relay.openViewer(auth, state.deviceId),
+    reader = response.body!.getReader();
+  const initial = new TextDecoder().decode((await reader.read()).value);
+  const id = JSON.parse(initial.split("\ndata: ")[1]).viewerId;
+  try {
+    const result = await Promise.race([
+      reader.read().then((v) => new TextDecoder().decode(v.value)),
+      wait(2300).then(() => "missing keepalive"),
+    ]);
+    expect(result).toContain(": preview keepalive");
+  } finally {
+    relay.viewer(auth, id, "close");
+    await reader.cancel().catch(() => {});
+  }
+});

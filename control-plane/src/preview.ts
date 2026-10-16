@@ -54,6 +54,8 @@ type Viewer = {
   timer: ReturnType<typeof setTimeout>;
   statusPending: boolean;
   framePending: boolean;
+  keepalivePending: boolean;
+  keepaliveTimer: ReturnType<typeof setInterval>;
 };
 const encoder = new TextEncoder();
 const equal = (a: string, b: string) => {
@@ -413,11 +415,7 @@ export class PreviewRelay {
     const id = crypto.randomUUID();
     const stream = new TransformStream<Uint8Array, Uint8Array>();
     const writer = stream.writable.getWriter();
-    const expiry = Math.min(
-      auth.expiresAt,
-      this.authority!.sessions[auth.id],
-      this.now() + 55000,
-    );
+    const expiry = Math.min(auth.expiresAt, this.authority!.sessions[auth.id]);
     const abort = () => this.removeViewer(id, true);
     const v: Viewer = {
       auth,
@@ -428,6 +426,13 @@ export class PreviewRelay {
       removeAbort: () => signal?.removeEventListener("abort", abort),
       statusPending: true,
       framePending: this.freshFrame(),
+      keepalivePending: false,
+      keepaliveTimer: setInterval(() => {
+        this.revalidate();
+        if (this.viewers.get(id) !== v) return;
+        v.keepalivePending = true;
+        this.flush(id, v);
+      }, 2000),
       timer: setTimeout(
         () => this.removeViewer(id, true),
         Math.min(6000, expiry - this.now()),
@@ -488,6 +493,10 @@ export class PreviewRelay {
         v.framePending = false;
         if (this.freshFrame()) payload = this.event("frame", this.latest);
       }
+      if (!payload && v.keepalivePending) {
+        v.keepalivePending = false;
+        payload = encoder.encode(": preview keepalive\n\n");
+      }
       if (!payload) return;
       v.writing = true;
       void v.writer.write(payload).then(
@@ -506,6 +515,7 @@ export class PreviewRelay {
     if (!v) return;
     this.viewers.delete(id);
     clearTimeout(v.timer);
+    clearInterval(v.keepaliveTimer);
     v.removeAbort();
     if (close) {
       // Abort a backpressured write so an event awaiting consumption cannot

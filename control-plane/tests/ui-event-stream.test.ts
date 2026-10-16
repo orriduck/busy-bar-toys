@@ -8,12 +8,15 @@ class FakeSource {
   close = vi.fn(() => {
     this.readyState = 2;
   });
-  private snapshots: ((event: MessageEvent<string>) => void)[] = [];
+  private listeners = new Map<
+    string,
+    ((event: MessageEvent<string>) => void)[]
+  >();
   addEventListener = ((
     type: string,
     listener: (event: MessageEvent<string>) => void,
   ) => {
-    if (type === "snapshot") this.snapshots.push(listener);
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }) as EventSource["addEventListener"];
   error(state = 2) {
     this.readyState = state;
@@ -24,8 +27,11 @@ class FakeSource {
     this.onopen?.call(this as unknown as EventSource, new Event("open"));
   }
   snapshot(data = "{}") {
-    for (const listener of this.snapshots)
-      listener(new MessageEvent("snapshot", { data }));
+    this.emit("snapshot", data);
+  }
+  emit(type: string, data: string) {
+    for (const listener of this.listeners.get(type) ?? [])
+      listener(new MessageEvent(type, { data }));
   }
 }
 
@@ -167,4 +173,35 @@ describe("snapshot EventSource recovery", () => {
     expect(onError).toHaveBeenCalledOnce();
     stream.close();
   });
+});
+
+it("recovers CLOSED preview transports and resets backoff on authenticated preview events", () => {
+  vi.useFakeTimers();
+  const sources: FakeSource[] = [],
+    status = vi.fn(() => true);
+  const connection = startEventStream({
+    eventName: "preview",
+    createSource: () => {
+      const source = new FakeSource();
+      sources.push(source);
+      return source;
+    },
+    isCurrent: () => true,
+    onOpen: vi.fn(),
+    onError: vi.fn(),
+    onSnapshot: status,
+  });
+  try {
+    sources[0].emit("preview", "{}");
+    expect(status).toHaveBeenCalledOnce();
+    sources[0].error();
+    vi.advanceTimersByTime(1000);
+    expect(sources).toHaveLength(2);
+    sources[1].emit("preview", "{}");
+    sources[1].error();
+    vi.advanceTimersByTime(1000);
+    expect(sources).toHaveLength(3);
+  } finally {
+    connection.close();
+  }
 });
