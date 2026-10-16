@@ -115,7 +115,7 @@ class DisplayTests(unittest.TestCase):
         from unittest.mock import patch
         from busybar_agents.display import tiny_text
         task=self.task(); task.session_id='display-first-sample'; task.token_usage=TokenUsage(0,27)
-        for selected,expected in [(task,['0','0']),(self.task(),['--','--']),(None,['--','--'])]:
+        for selected,expected in [(task,['--','--']),(self.task(),['--','--']),(None,['--','--'])]:
             with patch('busybar_agents.display.tiny_text',wraps=tiny_text) as text:
                 render(selected,100)
             self.assertEqual([call.args[2] for call in text.call_args_list if call.args[2] not in ('↑','↓')],expected)

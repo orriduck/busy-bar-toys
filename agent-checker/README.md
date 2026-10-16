@@ -30,18 +30,20 @@ The layout matches the device calendar.
 The source icon identifies the agent app of the task.
 
 The two numbers show input and output tokens per second for the selected session.
-Each agent app reports cumulative session totals. The rate is the change over the last 10 seconds.
-A session with no new usage shows 0. A source without usage shows `--`.
+Each agent app reports cumulative session totals. The observer samples every live session about once a second, whether or not it is on screen.
+The rate is the change in reported totals over the last 10 seconds of samples.
+During the first 10 seconds of samples, the rate covers the observed span. It shows `--` until one second is observed.
+A session with no new usage shows 0.
 Input includes cached input. Output includes reasoning output.
 Codex totals come from local rollout records. Claude Code totals come from its local transcript, read through the hook's transcript path. Only usage fields are read, never message text.
-The back display shows exact rates.
+The back display shows the rates in whole tokens per second.
 
 The front display uses decimal abbreviations: K means one thousand and M means one million.
 Each rate has three characters. For example, `.1M` means 100,000 tokens per second.
-Compact values are rounded down. Use the back display for exact counts.
-`--` means that usage is not available, including sources that do not report it.
-An unknown turn baseline or a reset in the source counter also shows `--`.
-The program does not substitute session totals or estimate missing usage.
+Compact values are rounded down. The back display shows the unabbreviated rate.
+`--` means that the rate is unknown: the source does not report usage, its usage became unavailable, or sampling is warming up.
+A gap of more than 10 seconds between samples, unavailable usage, or a decrease in the source counter restarts sampling. The next rate warms up again; the program never shows a delta it did not observe within the window.
+The program does not estimate missing usage.
 
 ## Return to the calendar
 

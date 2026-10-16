@@ -65,12 +65,15 @@ class TranscriptUsage:
             return
         try:
             record = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             return
-        message = record.get("message") if isinstance(record, dict) else None
-        usage = message.get("usage") if isinstance(message, dict) else None
-        key = message.get("id") if isinstance(message, dict) else None
-        if record.get("type") != "assistant" or not isinstance(usage, dict) or not isinstance(key, str):
+        if not isinstance(record, dict) or record.get("type") != "assistant":
+            return
+        message = record.get("message")
+        if not isinstance(message, dict):
+            return
+        usage, key = message.get("usage"), message.get("id")
+        if not isinstance(usage, dict) or not isinstance(key, str):
             return
         def count(name):
             value = usage.get(name, 0)

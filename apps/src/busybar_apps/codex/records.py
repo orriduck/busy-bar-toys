@@ -51,8 +51,8 @@ class CodexTaskRegistry(TaskRegistry):
         current = self.task(session)
         state = record.get("state")
         kind = payload.get("type")
-        if record.get("type") == "event_msg" and kind == "token_count" and isinstance(payload.get("info"), dict):
-            self.set_usage(session, parse_usage(payload["info"].get("total_token_usage")))
+        usage = (parse_usage(payload["info"].get("total_token_usage"))
+                 if record.get("type") == "event_msg" and kind == "token_count" and isinstance(payload.get("info"), dict) else None)
         if state is None and record.get("type") == "event_msg":
             state = {"task_started": "working", "task_complete": "done", "turn_aborted": "stopped", "error": "error"}.get(kind)
             if state is None and current and current.state in {"working", "waiting"} and kind in {"agent_message", "agent_reasoning", "token_count"}:
@@ -74,6 +74,8 @@ class CodexTaskRegistry(TaskRegistry):
         if not self._apply(session, state, record, now, payload=payload, event_time=event_time,
                            started_at=started_at, default_source="codex"):
             return False
+        if usage is not None:
+            self.set_usage(session, usage)
         turn = self.task(session).turn_id
         if state != "waiting" or (current and current.turn_id != turn):
             self._waiting_calls.pop(session, None)

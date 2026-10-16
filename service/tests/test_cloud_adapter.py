@@ -127,7 +127,7 @@ class AdapterTest(unittest.TestCase):
             task=Task('s','t','codex','project','working',90,100,TokenUsage(1000,400))
             renderer.show(task,100)
             record=producer.state.records['agent']; version=record['version']
-            self.assertEqual(renderer.motion.current.usage,TokenUsage(0,0))
+            self.assertIsNone(renderer.motion.current.usage,'One sample is a warm-up, not idle')
             clock[0]=10; task.token_usage=TokenUsage(6000,900)
             renderer.show(task,100)
             self.assertGreater(record['version'],version)

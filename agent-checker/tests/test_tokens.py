@@ -21,19 +21,48 @@ class TokenTests(unittest.TestCase):
             self.assertEqual(compact_tokens(value),label)
             self.assertLessEqual(len(label),3)
 
-    def test_rate_meter_averages_session_totals_over_the_window(self):
-        clock=[0.0]; meter=TokenRateMeter(window=10,clock=lambda:clock[0])
-        self.assertEqual(meter.rate('s',TokenUsage(5000,100)),TokenUsage(0,0))
-        clock[0]=10
-        self.assertEqual(meter.rate('s',TokenUsage(15000,600)),TokenUsage(1000,50))
-        clock[0]=25
-        self.assertEqual(meter.rate('s',TokenUsage(15000,600)),TokenUsage(0,0),'Idle sessions decay to zero')
-        self.assertIsNone(meter.rate('s',None))
+    def meter(self):
+        clock=[0.0]
+        return clock, TokenRateMeter(window=10,clock=lambda:clock[0])
 
-    def test_rate_meter_resets_on_counter_decrease_and_keeps_sessions_apart(self):
-        clock=[0.0]; meter=TokenRateMeter(window=10,clock=lambda:clock[0])
-        meter.rate('a',TokenUsage(100,100)); meter.rate('b',TokenUsage(0,0))
-        clock[0]=5
-        self.assertEqual(meter.rate('a',TokenUsage(10,10)),TokenUsage(0,0))
-        self.assertEqual(meter.rate('b',TokenUsage(500,50)),TokenUsage(100,10))
+    def test_rate_is_unknown_during_warm_up_then_covers_the_last_window(self):
+        clock,meter=self.meter()
+        meter.observe('s',TokenUsage(5000,100))
+        self.assertIsNone(meter.rate('s'),'One sample is not a rate')
+        for t in range(1,21):
+            clock[0]=t; meter.observe('s',TokenUsage(5000+100*t,100+10*t))
+            if t==4: self.assertEqual(meter.rate('s'),TokenUsage(100,10),'Warm-up covers the observed span')
+        self.assertEqual(meter.rate('s'),TokenUsage(100,10))
+        for t in range(21,32):
+            clock[0]=t; meter.observe('s',TokenUsage(7000,300))
+        self.assertEqual(meter.rate('s'),TokenUsage(0,0),'An idle full window is zero')
+
+    def test_long_unobserved_gap_restarts_instead_of_averaging(self):
+        clock,meter=self.meter()
+        meter.observe('s',TokenUsage(0,0))
+        clock[0]=100
+        self.assertIsNone(meter.rate('s'),'A stale sample is unknown')
+        meter.observe('s',TokenUsage(1000,100))
+        self.assertIsNone(meter.rate('s'),'The 100-second delta is never shown')
+        clock[0]=102; meter.observe('s',TokenUsage(1200,140))
+        self.assertEqual(meter.rate('s'),TokenUsage(100,20))
+
+    def test_unavailable_and_decreased_totals_reset_without_a_fabricated_delta(self):
+        clock,meter=self.meter()
+        meter.observe('s',TokenUsage(100,10)); clock[0]=1; meter.observe('s',TokenUsage(200,20))
+        meter.observe('s',None)
+        self.assertIsNone(meter.rate('s'))
+        clock[0]=2; meter.observe('s',TokenUsage(90000,9000))
+        self.assertIsNone(meter.rate('s'),'Recovery starts a new warm-up')
+        clock[0]=3; meter.observe('s',TokenUsage(10,1))
+        clock[0]=4; meter.observe('s',TokenUsage(40,4))
+        self.assertEqual(meter.rate('s'),TokenUsage(30,3),'A decrease restarts the samples')
+
+    def test_sessions_are_isolated_and_retained_only_while_live(self):
+        clock,meter=self.meter()
+        meter.observe('a',TokenUsage(0,0)); meter.observe('b',TokenUsage(0,0))
+        clock[0]=2; meter.observe('a',TokenUsage(200,20)); meter.observe('b',TokenUsage(0,0))
+        self.assertEqual((meter.rate('a'),meter.rate('b')),(TokenUsage(100,10),TokenUsage(0,0)))
+        meter.retain({'b'})
+        self.assertIsNone(meter.rate('a'))
 

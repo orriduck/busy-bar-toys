@@ -16,6 +16,25 @@ def hook(session="s", turn="t", state="working", timestamp=100, **kwargs):
 
 
 class RegistryTests(unittest.TestCase):
+    def test_rejected_token_records_leave_usage_untouched(self):
+        from busybar_agents.tokens import TokenUsage
+        def count(stamp, used, out, turn=None):
+            record = {"session_id": "s", "type": "event_msg", "timestamp": stamp,
+                      "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": used, "output_tokens": out}}}}
+            if turn: record["turn_id"] = turn
+            return record
+        r = TaskRegistry()
+        r.ingest(hook(turn="old", timestamp=10), now=10)
+        r.ingest(hook(timestamp=20), now=20)
+        self.assertTrue(r.ingest(count("1970-01-01T00:00:21Z", 1000, 100), now=21))
+        self.assertEqual(r.task("s").token_usage, TokenUsage(1000, 100))
+        self.assertFalse(r.ingest(count("1970-01-01T00:00:19Z", 999999, 9999), now=22))
+        self.assertFalse(r.ingest(count("1970-01-01T00:00:22Z", 5, 5, turn="old"), now=22))
+        self.assertEqual((r.task("s").token_usage, r.task("s").updated_at), (TokenUsage(1000, 100), 21))
+        r.ingest({"session_id": "s", "type": "event_msg", "timestamp": "1970-01-01T00:00:23Z",
+                  "payload": {"type": "token_count", "info": {"total_token_usage": "bad"}}}, now=23)
+        self.assertEqual(r.task("s").token_usage, TokenUsage(1000, 100), "Malformed counters keep the last total")
+
     def test_token_count_records_cumulative_session_totals_across_turns(self):
         from busybar_agents.tokens import TokenUsage
         def count(stamp, used, out, **info):

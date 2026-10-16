@@ -78,9 +78,9 @@ See [all apps and their requirements](apps/README.md).
 Start a task in a configured agent app to show its status.
 The clock uses New York time in 24-hour format.
 The amber ↑ value shows input tokens. The cyan ↓ value shows output tokens.
-Counts cover the current Codex turn and reset at the next turn.
-They update when Codex reports usage. `--` means that usage is not available.
-The front display uses compact counts. The back display shows exact counts.
+Both values are tokens per second, measured over the last 10 seconds of reported usage.
+Codex and Claude Code report usage. `--` means that the rate is unknown, for example during the first second or when a source reports no usage.
+The front display uses compact values. The back display shows whole tokens per second.
 
 | Light | State |
 |---|---|

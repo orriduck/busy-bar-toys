@@ -43,32 +43,49 @@ def compact_tokens(value):
 
 
 class TokenRateMeter:
-    """Per-session tokens per second over a sliding window of cumulative totals."""
+    """Per-session tokens per second from observed cumulative totals.
+
+    Observers sample every live session about once a second, independent of
+    which task is on screen. The rate is the change between the newest sample
+    and the newest one at least `window` seconds older. Until a full window
+    exists it covers the observed span, and it is unknown below one second.
+    A gap longer than the window, a counter decrease or unavailable totals
+    restart the samples, so a long unobserved delta is never shown as a rate.
+    """
 
     def __init__(self, window=RATE_WINDOW, clock=time.monotonic):
         self.window = window
         self.clock = clock
         self._samples = {}
 
-    def rate(self, session, totals):
+    def observe(self, session, totals):
         if totals is None:
             self._samples.pop(session, None)
-            return None
+            return
         now = self.clock()
         samples = self._samples.setdefault(session, deque())
-        if samples and (totals.input_tokens < samples[-1][1].input_tokens
+        if samples and (now - samples[-1][0] > self.window
+                        or totals.input_tokens < samples[-1][1].input_tokens
                         or totals.output_tokens < samples[-1][1].output_tokens):
             samples.clear()
         if not samples or samples[-1][1] != totals or now - samples[-1][0] >= 1:
             samples.append((now, totals))
-        while len(samples) > 2 and now - samples[1][0] >= self.window:
+        while len(samples) > 1 and samples[-1][0] - samples[1][0] >= self.window:
             samples.popleft()
-        start, first = samples[0]
-        elapsed = max(now - start, 1)
-        if len(samples) == 1:
-            return TokenUsage(0, 0)
-        return TokenUsage(int((totals.input_tokens - first.input_tokens) / elapsed),
-                          int((totals.output_tokens - first.output_tokens) / elapsed))
+
+    def rate(self, session):
+        samples = self._samples.get(session)
+        if not samples or self.clock() - samples[-1][0] > self.window:
+            return None
+        (start, first), (end, last) = samples[0], samples[-1]
+        if end - start < 1:
+            return None
+        return TokenUsage(int((last.input_tokens - first.input_tokens) / (end - start)),
+                          int((last.output_tokens - first.output_tokens) / (end - start)))
+
+    def retain(self, sessions):
+        for session in set(self._samples) - set(sessions):
+            del self._samples[session]
 
 
 METER = TokenRateMeter()
@@ -78,5 +95,6 @@ def task_usage(task, usage=None):
     """Explicit rates win (demos and previews); otherwise measure the task's session totals."""
     if usage is not None or task is None:
         return usage
-    totals = getattr(task, 'token_usage', None)
-    return None if totals is None else METER.rate(getattr(task, 'session_id', None), totals)
+    session = getattr(task, 'session_id', None)
+    METER.observe(session, getattr(task, 'token_usage', None))
+    return METER.rate(session)

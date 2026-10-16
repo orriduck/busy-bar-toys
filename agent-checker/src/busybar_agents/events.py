@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from . import profiles
+from . import tokens
 from .tokens import TokenUsage
 
 STALE_SECONDS = 1800
@@ -62,16 +63,33 @@ class TaskRegistry:
         if current and totals is not None:
             self._tasks[session] = replace(current, token_usage=totals)
 
+    def invalidate_usage(self, session: str):
+        """Mark usage unavailable, so the display shows unknown instead of idle."""
+        current = self._tasks.get(session)
+        if current and current.token_usage is not None:
+            self._tasks[session] = replace(current, token_usage=None)
+
     def refresh_usage(self, now: float):
-        """Ask each source's usage reader for current totals of live sessions."""
+        """Read source totals for live sessions, then sample every session's rate."""
         for session, (source, ref) in list(self._usage_refs.items()):
             current = self._tasks.get(session)
             if current is None or now - current.updated_at > STALE_SECONDS:
                 self._usage_refs.pop(session, None)
                 continue
             reader = profiles.profile(source).usage_reader
-            if reader:
-                self.set_usage(session, reader(ref))
+            if not reader:
+                continue
+            try:
+                totals = reader(ref)
+            except Exception:
+                totals = None
+            if totals is None:
+                self.invalidate_usage(session)
+            else:
+                self.set_usage(session, totals)
+        for session, task in self._tasks.items():
+            tokens.METER.observe(session, task.token_usage)
+        tokens.METER.retain(self._tasks)
 
     def ignore(self, session: str):
         self._ignored.add(session)

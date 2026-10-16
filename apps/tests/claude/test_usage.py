@@ -85,5 +85,59 @@ class TranscriptUsageTest(unittest.TestCase):
         self.assertEqual(registry.task("s").updated_at, 100, "Usage refresh is not activity")
 
 
+    def test_non_object_and_malformed_lines_are_ignored_and_later_lines_still_count(self):
+        self.write('["usage", "assistant"]', '"usage assistant"', '{"usage": "assistant"', "[[[" * 10 + '"usage" "assistant"',
+                   json.dumps({"type": "assistant", "message": ["usage"]}),
+                   json.dumps({"type": "assistant", "message": {"id": "m0", "usage": "assistant"}}),
+                   assistant("m1", read=9, out=2))
+        self.assertEqual(self.reader(str(self.path)), TokenUsage(10, 2))
+
+    def registry(self):
+        from unittest.mock import patch
+        registry = TaskRegistry()
+        patcher = patch("busybar_agents.profiles.profile")
+        profile = patcher.start(); self.addCleanup(patcher.stop)
+        profile.return_value.usage_reader = self.reader
+        registry.ingest({"session_id": "s", "turn_id": "t", "source": "claude", "state": "working",
+                         "timestamp": 100, "transcript": str(self.path)}, 100)
+        return registry, profile
+
+    def test_unavailable_reader_shows_unknown_and_recovery_has_no_fake_delta(self):
+        from unittest.mock import patch
+        from busybar_agents.tokens import TokenRateMeter, task_usage
+        clock = [0.0]
+        with patch("busybar_agents.tokens.METER", TokenRateMeter(clock=lambda: clock[0])):
+            self.write(assistant("m1", fresh=10, out=20))
+            registry, _ = self.registry()
+            registry.refresh_usage(101)
+            self.assertEqual(registry.task("s").token_usage, TokenUsage(10, 20))
+            self.path.unlink()
+            clock[0] = 1; registry.refresh_usage(102)
+            self.assertIsNone(registry.task("s").token_usage)
+            self.assertIsNone(task_usage(registry.task("s")), "Unavailable is unknown, not idle")
+            self.write(assistant("m2", fresh=5000, out=900))
+            clock[0] = 2; registry.refresh_usage(103)
+            self.assertIsNone(task_usage(registry.task("s")), "Recovery warms up instead of inventing a delta")
+
+    def test_a_failing_reader_does_not_stop_observation(self):
+        registry, profile = self.registry()
+        profile.return_value.usage_reader = lambda ref: (_ for _ in ()).throw(RuntimeError("broken source"))
+        registry.refresh_usage(101)
+        self.assertIsNone(registry.task("s").token_usage)
+
+    def test_sessions_are_sampled_while_off_screen_so_switching_back_shows_the_last_window(self):
+        from unittest.mock import patch
+        from busybar_agents.tokens import TokenRateMeter, task_usage
+        clock = [0.0]
+        with patch("busybar_agents.tokens.METER", TokenRateMeter(window=10, clock=lambda: clock[0])):
+            registry, _ = self.registry()
+            for t in range(0, 101):
+                clock[0] = t
+                with open(self.path, "a") as stream:
+                    stream.write(assistant(f"m{t}", fresh=0 if t < 90 else 100, out=0) + "\n")
+                registry.refresh_usage(100 + t)
+            self.assertEqual(task_usage(registry.task("s")), TokenUsage(100, 0),
+                             "Only the last 10 seconds count, though the task was never rendered")
+
 if __name__ == "__main__":
     unittest.main()
