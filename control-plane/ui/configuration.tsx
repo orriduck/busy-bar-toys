@@ -289,23 +289,11 @@ export function ConfigurationList({
             className="configuration-editor"
             aria-label={`${serviceLabel(service)} configuration`}
           >
-            <div className="configuration-editor-heading">
-              <div>
-                <h2 tabIndex={-1} className="outline-none">
-                  {serviceLabel(service)}
-                </h2>
-                <p className="break-all">{service.id}</p>
-              </div>
-              {service.computerId !== ownerComputerId && (
-                <Badge variant="secondary">
-                  <LockKeyhole />
-                  Read only
-                </Badge>
-              )}
-            </div>
-            <div className="mb-4 border-b border-border pb-4">
-              <ServiceDetails snapshot={snapshot} service={service} />
-            </div>
+            <ServiceDetails
+              snapshot={snapshot}
+              service={service}
+              readOnly={service.computerId !== ownerComputerId}
+            />
             <ServiceEditor
               service={service}
               configRevision={snapshot.configRevision}
