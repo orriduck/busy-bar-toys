@@ -2,8 +2,10 @@ import { ProtocolError, requireThat, identifier, State } from "./model";
 
 export type PreviewAuth =
   | { kind: "session"; id: string; expiresAt: number }
+  | { kind: "computer"; computerId: string; serviceId: string; hash: string }
   | { kind: "publisher"; serviceId: string; hash: string };
 type Authority = Pick<State, "deviceId" | "sessions"> & {
+  computers: Record<string, { credentialHash: string; revokedAt?: number }>;
   services: Record<
     string,
     {
@@ -12,6 +14,7 @@ type Authority = Pick<State, "deviceId" | "sessions"> & {
       epochExpiresAt: number;
       enabled: boolean;
       allowPreview: boolean;
+      computerId?: string;
     }
   >;
 };
@@ -27,7 +30,7 @@ type PreviewFrame = {
 };
 type Publisher = {
   socket: WebSocket;
-  auth: Extract<PreviewAuth, { kind: "publisher" }>;
+  auth: Exclude<PreviewAuth, { kind: "session" }>;
   demandViewers: number;
   epoch: string;
   instanceId: string;
@@ -94,6 +97,12 @@ export class PreviewRelay {
     this.authority = {
       deviceId: s.deviceId,
       sessions: { ...s.sessions },
+      computers: Object.fromEntries(
+        Object.values(s.computers).map((c) => [
+          c.id,
+          { credentialHash: c.credentialHash, revokedAt: c.revokedAt },
+        ]),
+      ),
       services: Object.fromEntries(
         Object.values(s.services).map((v) => [
           v.id,
@@ -103,6 +112,7 @@ export class PreviewRelay {
             epochExpiresAt: v.epochExpiresAt,
             enabled: v.config.enabled,
             allowPreview: v.config.allowPreview === true,
+            computerId: v.computerId,
           },
         ]),
       ),
@@ -122,10 +132,26 @@ export class PreviewRelay {
     } else {
       const svc = s.services[auth.serviceId];
       requireThat(
-        svc && svc.epochExpiresAt > now && equal(svc.credentialHash, auth.hash),
+        svc &&
+          Object.hasOwn(s.services, auth.serviceId) &&
+          svc.epochExpiresAt > now,
         "UNAUTHORIZED",
         401,
       );
+      if (auth.kind === "computer") {
+        const computer = Object.hasOwn(s.computers, auth.computerId)
+          ? s.computers[auth.computerId]
+          : undefined;
+        requireThat(
+          computer &&
+            computer.revokedAt === undefined &&
+            svc.computerId === auth.computerId &&
+            equal(computer.credentialHash, auth.hash),
+          "UNAUTHORIZED",
+          401,
+        );
+      } else
+        requireThat(equal(svc.credentialHash, auth.hash), "UNAUTHORIZED", 401);
       requireThat(
         svc.enabled && svc.allowPreview,
         "PREVIEW_CAPABILITY_REQUIRED",
@@ -200,7 +226,7 @@ export class PreviewRelay {
     };
   }
   openPublisher(auth: PreviewAuth, instance: unknown, epoch: string | null) {
-    requireThat(auth.kind === "publisher", "FORBIDDEN", 403);
+    requireThat(auth.kind !== "session", "FORBIDDEN", 403);
     this.authorize(auth);
     const instanceId = identifier(instance);
     requireThat(

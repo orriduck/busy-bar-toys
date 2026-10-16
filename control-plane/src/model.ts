@@ -50,6 +50,18 @@ export interface Service {
   /** Collector instance IDs observed through authenticated heartbeat messages. */
   computerIds?: string[];
 }
+export interface Computer {
+  id: string;
+  credentialHash: string;
+  createdAt: number;
+  revokedAt?: number;
+  serviceOrder: string[];
+}
+export interface Enrollment {
+  computerId: string;
+  sessionId: string;
+  expiresAt: number;
+}
 export interface Item {
   itemKey: string;
   serviceId: string;
@@ -168,6 +180,10 @@ export interface State {
   slots: Slot[];
   tokenCipher?: string;
   sessions: Record<string, number>;
+  computers: Record<string, Computer>;
+  sessionComputers: Record<string, string>;
+  enrollments: Record<string, Enrollment>;
+  pairings: Record<string, { computerId: string; expiresAt: number }>;
   elementExpiries: Record<string, { type: Element["type"]; expiresAt: number }>;
   nativeElements: Record<string, Element>;
   nextTextAt: number | null;
@@ -197,6 +213,10 @@ export function createState(deviceId: string): State {
     assets: {},
     slots: [],
     sessions: {},
+    computers: {},
+    sessionComputers: {},
+    enrollments: {},
+    pairings: {},
     elementExpiries: {},
     nativeElements: {},
     nextTextAt: null,
@@ -291,9 +311,10 @@ export function registerService(
     b.computerId === undefined ? crypto.randomUUID() : identifier(b.computerId);
   if (b.computerId !== undefined)
     requireThat(
-      Object.values(s.services).some(
-        (service) => service.computerId === computerId,
-      ),
+      Object.hasOwn(s.computers, computerId) ||
+        Object.values(s.services).some(
+          (service) => service.computerId === computerId,
+        ),
       "COMPUTER_NOT_FOUND",
       404,
     );
@@ -307,6 +328,8 @@ export function registerService(
     epochExpiresAt: now + 30 * 86400000,
     computerId,
   };
+  if (Object.hasOwn(s.computers, computerId))
+    s.computers[computerId].serviceOrder.push(id);
   s.configRevision++;
   s.revision++;
   return s.services[id];
@@ -332,6 +355,10 @@ export function removeService(
   for (const item of Object.values(s.items))
     if (item.serviceId === id) end(s, item, "revoked", item.version);
   delete s.services[id];
+  for (const computer of Object.values(s.computers))
+    computer.serviceOrder = computer.serviceOrder.filter(
+      (serviceId) => serviceId !== id,
+    );
   s.configRevision++;
   s.revision++;
   tick(s, now);

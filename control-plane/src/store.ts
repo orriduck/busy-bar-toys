@@ -28,6 +28,10 @@ export class StateStore {
     const header = JSON.parse(row.value) as State & { schemaVersion?: number };
     header.elementExpiries ??= {};
     header.nativeElements ??= {};
+    header.computers ??= {};
+    header.sessionComputers ??= {};
+    header.enrollments ??= {};
+    header.pairings ??= {};
     for (const name of collections) {
       const rows = this.storage.sql
         .exec<{ key: string; value: string }>(
