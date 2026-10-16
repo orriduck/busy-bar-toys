@@ -13,7 +13,7 @@ function InputGroup({
   variant = "default",
   ...props
 }: React.ComponentProps<"div"> & {
-  size?: "default" | "sm";
+  size?: "default" | "sm" | "xs";
   variant?: "default" | "quiet";
 }) {
   return (
@@ -28,6 +28,7 @@ function InputGroup({
           : "min-w-0 rounded-lg border border-transparent bg-transparent text-foreground transition-colors outline-none hover:bg-input/50 focus-within:bg-input/50 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30",
         "group/input-group relative flex h-12 w-full items-center has-disabled:opacity-50 has-[[data-slot=input-group-control]:focus-visible]:border-ring has-[[data-slot=input-group-control]:focus-visible]:ring-3 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/50 has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:ring-3 has-[[data-slot][aria-invalid=true]]:ring-destructive/20 has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-1.5 has-[>[data-align=inline-start]]:[&>input]:pl-1.5",
         size === "sm" && "h-10",
+        size === "xs" && "h-7",
         className,
       )}
       {...props}

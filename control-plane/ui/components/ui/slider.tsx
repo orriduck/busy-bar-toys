@@ -31,7 +31,7 @@ function Slider({
     <SliderPrimitive.Root
       className={cn(
         "data-horizontal:w-full data-vertical:h-full",
-        variant === "pill" && "px-4.5",
+        variant === "pill" && "px-3",
         className,
       )}
       data-slot="slider"
@@ -48,7 +48,7 @@ function Slider({
           className={cn(
             "relative grow overflow-hidden rounded-full bg-muted select-none data-horizontal:h-1 data-horizontal:w-full data-vertical:h-full data-vertical:w-1",
             variant === "pill" &&
-              "border border-foreground/5 data-horizontal:h-8",
+              "border border-foreground/5 data-horizontal:h-5",
           )}
         >
           <SliderPrimitive.Indicator
@@ -72,7 +72,7 @@ function Slider({
               {marks.map((position) => (
                 <span
                   key={position}
-                  className="absolute size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/30"
+                  className="absolute size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/30"
                   style={
                     position === 100
                       ? { right: "0.375rem" }
@@ -91,7 +91,7 @@ function Slider({
             key={index}
             className={cn(
               "relative block size-3 shrink-0 rounded-full border border-ring bg-white ring-ring/50 transition-[color,box-shadow] select-none after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 disabled:pointer-events-none disabled:opacity-50",
-              variant === "pill" && "size-9 border-0 shadow-sm",
+              variant === "pill" && "size-6 border-0 shadow-sm",
             )}
           />
         ))}

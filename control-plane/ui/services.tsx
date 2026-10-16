@@ -149,7 +149,7 @@ export function ServiceEditor({
       id={formId}
       onSubmit={(event) => void save(event)}
     >
-      <FieldGroup className="grid grid-cols-1 gap-x-8 gap-y-4 @2xl/policy:grid-cols-2">
+      <FieldGroup className="grid grid-cols-1 gap-x-6 gap-y-3 @2xl/policy:grid-cols-2">
         <PolicyField
           key={`priority-${resetVersion}`}
           field="priority"

@@ -131,7 +131,7 @@ export function PolicyField({
         <FieldLabel id={`${id}-label`}>{definition.label}</FieldLabel>
         <HelpTip label={definition.label}>{definition.help}</HelpTip>
       </div>
-      <InputGroup size="sm" variant="quiet" className="order-2">
+      <InputGroup size="xs" variant="quiet" className="order-2">
         <div className="relative h-full min-w-0 flex-1">
           <InputGroupInput
             data-readout={!editing}
