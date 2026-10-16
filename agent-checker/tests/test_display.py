@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from busybar_agents.display import render, make_payload, to_xpm, clock_text, thinking_offset
 from datetime import datetime, timezone
-from busybar_agents.network import NetworkRates
+from busybar_agents.tokens import TokenUsage, compact_tokens
 from busybar_apps import load_agents
 
 load_agents()
@@ -60,10 +60,10 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(clock.tobytes(), wait.crop((29,1,59,8)).tobytes())
         self.assertIsNotNone(clock.getbbox())
 
-    def test_centered_clock_and_compact_rates_have_distinct_colored_arrows(self):
+    def test_centered_clock_and_compact_counts_have_distinct_colored_arrows(self):
         now = 100
-        slow = NetworkRates(123,456,'en0')
-        fast = NetworkRates(4096,8192,'en0')
+        slow = TokenUsage(123,456)
+        fast = TokenUsage(4096,8192)
         front, _ = render(self.task(),now,1,slow)
         updated, _ = render(self.task(),now,1,fast)
         self.assertEqual(front.crop((28,0,72,9)).tobytes(),
@@ -94,33 +94,54 @@ class DisplayTests(unittest.TestCase):
                          wait.crop((4,0,72,16)).tobytes())
         self.assertEqual(back.tobytes(),waiting_back.tobytes())
 
-    def test_front_shows_one_combined_rate_and_back_keeps_directional_detail(self):
+    def test_front_keeps_independent_direction_counts_and_back_exact_values(self):
         from unittest.mock import patch
         from busybar_agents.display import tiny_text
         with patch('busybar_agents.display.tiny_text',wraps=tiny_text) as text:
-            front,back=render(self.task(),100,1,NetworkRates(1024,2048,'en0'))
+            front,back=render(self.task(),100,1,TokenUsage(123456,654321))
         values=[call.args[2] for call in text.call_args_list if call.args[2] not in ('↑','↓')]
-        self.assertEqual(values,['3.0K'])
-        swapped,swapped_back=render(self.task(),100,1,NetworkRates(2048,1024,'en0'))
-        self.assertEqual(front.tobytes(),swapped.tobytes())
+        self.assertEqual(values,['.1M','.6M'])
+        swapped,swapped_back=render(self.task(),100,1,TokenUsage(654321,123456))
+        self.assertNotEqual(front.tobytes(),swapped.tobytes())
         self.assertNotEqual(back.tobytes(),swapped_back.tobytes())
+        with patch('busybar_agents.display.ImageDraw.Draw') as drawing:
+            render(self.task(),100,1,TokenUsage(123456,654321))
+        back_draw=drawing.return_value
+        drawn=[str(call.args[1]) for call in back_draw.text.call_args_list]
+        self.assertIn('IN 123456',drawn)
+        self.assertIn('OUT 654321',drawn)
+        self.assertFalse(any('/s' in value for value in drawn))
 
-    def test_network_arrows_only_light_for_measured_activity(self):
-        for rates,up,down in ((NetworkRates(1024,0,'en0'),True,False),
-                              (NetworkRates(0,1024,'en0'),False,True),
-                              (None,False,False)):
-            front,_=render(self.task(),100,1,rates)
-            raw=front.crop((29,10,72,15)).tobytes()
-            colors=set(zip(raw[0::3],raw[1::3],raw[2::3]))
-            self.assertEqual((255,190,69) in colors,up)
-            self.assertEqual((69,215,255) in colors,down)
+    def test_usage_is_derived_from_selected_task_and_missing_is_unknown(self):
+        from unittest.mock import patch
+        from busybar_agents.display import tiny_text
+        task=self.task(); task.token_usage=TokenUsage(0,27)
+        for selected,expected in [(task,['0','27']),(self.task(),['--','--']),(None,['--','--'])]:
+            with patch('busybar_agents.display.tiny_text',wraps=tiny_text) as text:
+                render(selected,100)
+            self.assertEqual([call.args[2] for call in text.call_args_list if call.args[2] not in ('↑','↓')],expected)
 
-    def test_idle_keeps_clock_and_network_without_a_working_animation(self):
-        front, back=render(None,100,0,NetworkRates(100,200,'en0'))
+    def test_compact_counts_and_row_fit_three_glyphs_per_direction(self):
+        from unittest.mock import patch
+        from busybar_agents.display import tiny_text, ICON_X, TEXT_X
+        self.assertEqual((ICON_X,TEXT_X),(14,29))
+        values=[0,9,99,999,1000,12000,99999,100000,999999,1000000,1000000000,10**15]
+        for value in values:
+            self.assertLessEqual(len(compact_tokens(value)),3)
+            with patch('busybar_agents.display.tiny_text',wraps=tiny_text) as text:
+                front,_=render(self.task(),100,1,TokenUsage(value,value))
+            for call in text.call_args_list:
+                x,y=call.args[1]; label=call.args[2]
+                self.assertGreaterEqual(x,28)
+                self.assertLessEqual(x+len(label)*4-1,60)
+                self.assertEqual(y,10)
+            self.assertIsNone(front.crop((60,10,72,15)).getbbox())
+
+    def test_idle_keeps_clock_without_a_working_animation(self):
+        front,back=render(None,100,0)
         self.assertIsNotNone(front.crop((20,0,72,14)).getbbox())
         self.assertIsNotNone(back.getbbox())
-        payload=make_payload(None,100,0)
-        self.assertTrue(all(e['type']!='animation' for e in payload['elements']))
+        self.assertTrue(all(e['type']!='animation' for e in make_payload(None,100,0)['elements']))
 
     def test_standby_is_full_height_white_and_approval_is_yellow(self):
         for task in (None,self.task(state='done'),self.task(state='stopped')):

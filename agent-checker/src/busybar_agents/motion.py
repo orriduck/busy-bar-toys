@@ -6,7 +6,8 @@ from PIL import Image
 from . import profiles
 from .animation import glow_frame
 from .display import (ICON_X, TEXT_X, COLORS, clock_font, clock_text, make_payload,
-                      rate_left, to_xpm, total_rate_text)
+                      token_fields, token_labels, to_xpm)
+from .tokens import task_usage
 from .motion_assets import (FPS, PREFIX, REGIONS, bar_name, build_assets, fade_name)
 
 
@@ -20,7 +21,7 @@ class Presentation:
     task: object
     now: float
     count: int
-    rates: object
+    usage: object
 
     @property
     def state(self):return visual_state(self.task)
@@ -29,7 +30,7 @@ class Presentation:
     @property
     def clock(self):return clock_text(self.now)
     @property
-    def rate(self):return total_rate_text(self.rates)
+    def tokens(self):return token_labels(self.usage)
 
 
 class MotionDirector:
@@ -56,7 +57,7 @@ class MotionDirector:
                 self._uploaded.add(name)
 
     def _mask(self,region,reveal):
-        x,y={'view':(0,0),'bar':(0,0),'icon':(ICON_X,1),'rate':(TEXT_X,10)}[region]
+        x,y={'view':(0,0),'bar':(0,0),'icon':(ICON_X,1),'rate':(TEXT_X-1,10)}[region]
         return {'id':'motion-'+region,'type':'animation','display':'front',
                 'x':x,'y':y,'z_index':20 if region=='view' else 10,
                 'timeout':1 if reveal else 15,'path':fade_name(region,reveal),
@@ -74,20 +75,20 @@ class MotionDirector:
             for i,(old,new) in enumerate(zip(self.current.clock,target.clock)):
                 x=TEXT_X+round(clock_font().getlength(target.clock[:i]))
                 pairs.append(('clock',i,old,new,x,1))
-        if 'rate' not in regions and self.current.rate!=target.rate:
-            x=rate_left(target.rate)+10
-            for i,(old,new) in enumerate(zip(self.current.rate,target.rate)):
-                pairs.append(('rate',i,old,new,x+i*4,10))
+        if 'rate' not in regions and self.current.tokens!=target.tokens:
+            for (direction,old,_),(_,new,x) in zip(token_fields(self.current.usage),token_fields(target.usage)):
+                for i,(before,after) in enumerate(zip(old,new)):
+                    pairs.append(('rate-'+direction,i,before,after,x+i*4,10))
         for kind,i,old,new,x,y in pairs:
             if old==new or old not in '0123456789' or new not in '0123456789':continue
             result.append({'id':f'roll-{kind}-{i}','type':'animation','display':'front',
                            'x':x,'y':y,'z_index':5,'timeout':1,
-                           'path':f'{PREFIX}-{kind}.anim','section':old+'-'+new,
+                           'path':f'{PREFIX}-{kind.split("-")[0]}.anim','section':old+'-'+new,
                            'loop':False,'await_previous_end':False})
         return result
 
     def _commit(self,target,regions):
-        payload=make_payload(target.task,target.now,target.count,target.rates)
+        payload=make_payload(target.task,target.now,target.count,target.usage)
         strip=next(e for e in payload['elements'] if e['id']=='thinking')
         if self.reduced:
             if target.state=='working':
@@ -115,14 +116,15 @@ class MotionDirector:
         regions=[]
         if self.current.state!=target.state:regions.append('bar')
         if self.current.source!=target.source:regions.append('icon')
-        old,new=self.current.rate,target.rate
-        old_pattern=[(i,c) for i,c in enumerate(old) if not c.isdigit()]
-        new_pattern=[(i,c) for i,c in enumerate(new) if not c.isdigit()]
-        if old!=new and (len(old)!=len(new) or old_pattern!=new_pattern):regions.append('rate')
+        for old,new in zip(self.current.tokens,target.tokens):
+            old_pattern=[(i,c) for i,c in enumerate(old) if not c.isdigit()]
+            new_pattern=[(i,c) for i,c in enumerate(new) if not c.isdigit()]
+            if old!=new and (len(old)!=len(new) or old_pattern!=new_pattern):
+                regions.append('rate');break
         return regions
 
-    def show(self,task,now,count=1,rates=None):
-        target=Presentation(task,now,count,rates)
+    def show(self,task,now,count=1,usage=None):
+        target=Presentation(task,now,count,task_usage(task,usage))
         if self.reduced:return self._commit(target,[])
         self.prepare()
         if self.visible and self.clock()>=self._lease_until:

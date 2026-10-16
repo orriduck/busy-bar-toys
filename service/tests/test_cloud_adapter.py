@@ -118,6 +118,21 @@ class AdapterTest(unittest.TestCase):
             self.assertEqual(update[-1]['scene'],record['scene'])
             self.assertGreaterEqual(len(record['scene']['commands'][0]['elements']),3)
 
+    def test_agent_updates_both_direction_counts_even_with_unchanged_total(self):
+        from busybar_agents.tokens import TokenUsage
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer,reduced=True)
+            task=Task('s','t','codex','project','working',90,100,TokenUsage(123,456))
+            renderer.show(task,100)
+            record=producer.state.records['agent']; version=record['version']
+            front=next(e['data'] for e in record['scene']['commands'][0]['elements'] if e['id']=='front')
+            task.token_usage=TokenUsage(124,455)
+            renderer.show(task,100)
+            self.assertGreater(record['version'],version)
+            updated=next(e['data'] for e in record['scene']['commands'][0]['elements'] if e['id']=='front')
+            self.assertNotEqual(front,updated)
+            self.assertEqual(renderer.motion.current.usage,TokenUsage(124,455))
+
     def test_unchanged_agent_scene_still_renews_local_source_liveness(self):
         with tempfile.TemporaryDirectory() as directory:
             producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer,reduced=True)

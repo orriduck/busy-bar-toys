@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from PIL import Image,ImageDraw
 
 from busybar_agents.motion import MotionDirector
-from busybar_agents.network import NetworkRates
+from busybar_agents.tokens import TokenUsage
+from busybar_apps import load_agents
 
 
 def decode_asset(data):
@@ -72,13 +73,14 @@ def main():
     parser.add_argument('--output',default='.local/motion-preview.gif')
     parser.add_argument('--calendar',help='Optional raw 72x16 device calendar capture')
     args=parser.parse_args()
+    load_agents()
     calendar=Image.open(args.calendar).convert('RGB') if args.calendar else Image.new('RGB',(72,16))
     if calendar.size!=(72,16):raise ValueError('Calendar reference must be 72x16')
     tick=[0.0];device=PreviewDevice(lambda:tick[0],calendar)
     motion=MotionDirector(device,clock=lambda:tick[0])
     sequence=[('working','chatgpt',1024,2048),('working','chatgpt',2048,4096),
-              ('waiting','chatgpt',0,6144),('working','dots',12288,24576),
-              ('error','dots',1024**2,256*1024),('done','chatgpt',0,0)]
+              ('waiting','chatgpt',4096,6144),('working','dots',12288,24576),
+              ('error','dots',1024**2,256*1024),('done','chatgpt',1100000,300000)]
     labels=['ENTRY','DIGIT ROLL','COLOR CHANGE','ICON + FIELD FADE','ERROR','STANDBY','CALENDAR RELEASE']
     wall=datetime(2026,10,15,1,52,tzinfo=timezone.utc).timestamp();previous=-1;images=[]
     for frame in range(15*30):
@@ -89,7 +91,7 @@ def main():
             if phase<6:
                 state,source,up,down=sequence[phase]
                 task=SimpleNamespace(state=state,source=source,session_id='demo')
-                motion.show(task,wall+phase*60,1,NetworkRates(up,down,'DEMO'))
+                motion.show(task,wall+phase*60,1,TokenUsage(up,down))
             else:motion.hide()
             previous=phase
         motion.advance()

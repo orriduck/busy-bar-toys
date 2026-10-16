@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw
 from .animation import ANIMATION_FILE, thinking_offset, glow_frame, standby_glow, WIDTH, HEIGHT
-from .network import compact_rate
+from .tokens import compact_tokens, task_usage
 from . import profiles
 from busybar_shared.graphics import clock_text, clock_font, draw_clock, tiny_text, font, fitted_text, to_xpm
 
@@ -18,28 +18,22 @@ def source_icon(source, size=16):
     return profiles.profile(source).icon(size)
 
 
-def rate_label(value):
-    compact = compact_rate(value)
-    if compact == "--": return "-- B/s"
-    unit = {"B": "B/s", "K": "KiB/s", "M": "MiB/s", "G": "GiB/s"}[compact[-1]]
-    return compact[:-1] + " " + unit
+def token_labels(usage):
+    return (compact_tokens(usage.input_tokens if usage else None),
+            compact_tokens(usage.output_tokens if usage else None))
 
 
-def total_rate_text(rates):
-    if rates is None or rates.upload is None or rates.download is None:
-        return '--'
-    return compact_rate(rates.upload+rates.download)
+def token_fields(usage):
+    # Four pixels per tiny glyph. Reserve three glyphs in each direction.
+    return tuple(zip(('input','output'), token_labels(usage), (TEXT_X+3,TEXT_X+19)))
 
 
-def rate_left(value):
-    return TEXT_X+(TEXT_WIDTH-(10+len(value)*4-1))//2
-
-
-def render(task, now, count=1, rates=None):
+def render(task, now, count=1, usage=None):
     source = task.source if task else None
     state = task.state if task else "idle"
-    upload = rates.upload if rates else None
-    download = rates.download if rates else None
+    usage = task_usage(task, usage)
+    input_tokens = usage.input_tokens if usage else None
+    output_tokens = usage.output_tokens if usage else None
     front = Image.new("RGB", (72, 16), "black")
     # Center on the full display, like the native calendar. The status light
     # is an edge overlay and must not push the main content to the right.
@@ -48,12 +42,9 @@ def render(task, now, count=1, rates=None):
     value = clock_text(now)
     clock_width = round(clock_font().getlength(value))
     draw_clock(draw, (TEXT_X + (TEXT_WIDTH-clock_width)//2, 1), value)
-    total = total_rate_text(rates)
-    # Two activity indicators and a single aggregate rate fit under the clock.
-    left = rate_left(total)
-    tiny_text(draw, (left, 10), "↑", "#FFBE45" if upload is not None and upload>0 else "#303030")
-    tiny_text(draw, (left+4, 10), "↓", "#45D7FF" if download is not None and download>0 else "#303030")
-    tiny_text(draw, (left+10, 10), total, "#505050")
+    for (direction,label,x),arrow,color in zip(token_fields(usage),('↑','↓'),('#FFBE45','#45D7FF')):
+        tiny_text(draw, (x-4,10), arrow, color if usage is not None else '#303030')
+        tiny_text(draw, (x,10), label, '#505050')
     color = tuple(bytes.fromhex(COLORS.get(state, "#28313C")[1:]))
     if state in {"idle", "done", "stopped"}:
         light = standby_glow()
@@ -68,8 +59,8 @@ def render(task, now, count=1, rates=None):
     draw.text((36, 5), title + (" DEMO" if demo else ""),
               font=font(12 if demo else 16), fill="white")
     draw.text((5, 29), clock_text(now), font=font(18), fill="white")
-    draw.text((5, 53), "UP " + rate_label(upload), font=font(10), fill="#AAAAAA")
-    draw.text((5, 66), "DN " + rate_label(download), font=font(10), fill="#AAAAAA")
+    draw.text((5, 53), "IN " + (str(input_tokens) if input_tokens is not None else "--"), font=font(10), fill="#AAAAAA")
+    draw.text((5, 66), "OUT " + (str(output_tokens) if output_tokens is not None else "--"), font=font(10), fill="#AAAAAA")
     return front, back
 
 
@@ -88,8 +79,8 @@ def front_palette(source):
     return grays + UI_PALETTE[-2:] + shades
 
 
-def make_payload(task, now, count=1, rates=None):
-    images = render(task, now, count, rates)
+def make_payload(task, now, count=1, usage=None):
+    images = render(task, now, count, usage)
     background = images[0].copy()
     # The dedicated widget owns the full glow area; avoid double drawing or
     # spending the clock/icon palette on glow colors.

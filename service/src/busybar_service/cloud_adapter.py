@@ -240,7 +240,7 @@ class AgentRenderer:
                     pending.update(changed); live['update']=list(pending.values())
                 self.producer.state.save()
 
-    def show(self,task,now,count=1,rates=None):
+    def show(self,task,now,count=1,usage=None):
         state=visual_state(task)
         turn=(getattr(task,'session_id',None),getattr(task,'turn_id',None),state=='standby')
         if task is None and self._turn is not None and self._turn[2]: turn=self._turn
@@ -248,8 +248,8 @@ class AgentRenderer:
             # New task/standby is a new finite occurrence. Updates within a turn
             # keep identity and do not restart native animations or visible time.
             self.producer.state.clear('agent')
-        self._turn=turn; self._task=task; self._args=(task,now,count,rates)
-        self.motion.show(task,now,count,rates); self._save()
+        self._turn=turn; self._task=task; self._args=(task,now,count,usage)
+        self.motion.show(task,now,count,usage); self._save()
         with self.producer.state.lock:
             record=self.producer.state.records.get('agent')
             if record and not record.get('cleared') and not record.get('tombstone'):
@@ -275,10 +275,10 @@ class AgentSignals:
     @property
     def pending(self): return not self._waiting and self.status.pending
 
-    def show(self, task, now, count=1, rates=None):
-        self.show_tasks([task] if task is not None else [], now, count, rates)
+    def show(self, task, now, count=1, usage=None):
+        self.show_tasks([task] if task is not None else [], now, count, usage)
 
-    def show_tasks(self, tasks, now, count=1, rates=None):
+    def show_tasks(self, tasks, now, count=1, usage=None):
         from hashlib import sha256
         waiting=[task for task in tasks if task.state == 'waiting']
         notices=[]
@@ -295,7 +295,7 @@ class AgentSignals:
         task=max(status_tasks,key=lambda t:(priority.get(t.state,0),t.updated_at),default=None)
         self._waiting=bool(waiting) and task is None
         if self._waiting: self.status.hide()
-        else: self.status.show(task,now,count,rates)
+        else: self.status.show(task,now,count,usage)
 
     def advance(self):
         if not self._waiting: self.status.advance()

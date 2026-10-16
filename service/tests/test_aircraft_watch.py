@@ -57,10 +57,9 @@ class AircraftWatchTests(unittest.TestCase):
                        "read_token": Mock(return_value="test-only"), "BusyAPI": Mock(return_value=api),
                        "TaskRegistry": Mock(return_value=registry), "RolloutWatcher": Mock(return_value=watcher),
                        "configured_input_monitor": Mock(return_value=monitor),
-                       "configured_checker": Mock(return_value=checker), "NetworkSampler": Mock(),
+                       "configured_checker": Mock(return_value=checker),
                        "load_dot_thread_ids": Mock(return_value=set()), "read_spool": Mock(return_value=[]),
                        "SPAWN": lambda work: work()}
-            patches["NetworkSampler"].return_value.sample.return_value = None
             for name, value in patches.items():
                 stack.enter_context(patch("busybar_service.cli." + name, value))
             stack.enter_context(patch("busybar_service.cli.time.time", side_effect=lambda: clock["now"]))

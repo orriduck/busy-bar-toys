@@ -9,7 +9,7 @@ Each agent is an app that registers a source icon, a title, and a hook mapping.
 | [Your dot](../apps/src/busybar_apps/dots/README.md) | `dots` | Orbit identity and lifecycle commands. |
 | [Claude Code](../apps/src/busybar_apps/claude/README.md) | `claude` | Claude Code hooks. |
 
-The front display shows the source icon, a clock, and one network rate.
+The front display shows the source icon, a clock, and current-turn input/output token counts.
 The clock uses New York time and a 24-hour format.
 The layout matches the device calendar.
 
@@ -24,26 +24,24 @@ The layout matches the device calendar.
 | Thin white light | The display is in standby. |
 | Red light | A task reported an error. |
 | Gray light | No task update arrived for 30 minutes. |
-| Orange up arrow | The Mac sent data during the last sample. |
-| Cyan down arrow | The Mac received data during the last sample. |
-| Dark arrow | That direction has no measured activity. |
+| Amber up arrow | Input tokens in this Codex turn. |
+| Cyan down arrow | Output tokens in this Codex turn. |
 
 The source icon identifies the agent app of the task.
 
-The network number is the sum of upload and download rates.
-The program reads the Mac's default network interface every five seconds.
-It does not run a speed test.
-The back display shows separate UP and DN rates.
+The two numbers show reported input and output tokens for the current Codex turn.
+A new turn resets both counts. The program reads usage from local rollout records.
+Counts update when Codex reports usage. They are not a per-second rate.
+Cached input is part of input tokens. Reasoning output is part of output tokens.
+The program does not add either component again.
+The back display shows exact input and output counts.
 
-| Front unit | Full unit |
-|---|---|
-| B | B/s |
-| K | KiB/s |
-| M | MiB/s |
-| G | GiB/s |
-
-`--` means that a rate is not available.
-A first sample, an interface change, or a counter reset can cause this indication.
+The front display uses decimal abbreviations: K means one thousand and M means one million.
+Each count has three characters. For example, `.1M` means 100,000 tokens.
+Compact values are rounded down. Use the back display for exact counts.
+`--` means that usage is not available, including sources that do not report it.
+An unknown turn baseline or a reset in the source counter also shows `--`.
+The program does not substitute session totals or estimate missing usage.
 
 ## Return to the calendar
 
@@ -64,7 +62,7 @@ An icon change uses the same sequence.
 The clock stays visible during these changes.
 
 Changed digits roll upward.
-A change of network unit fades the complete rate field.
+A change of count format fades the token field.
 Repeated values do not restart an effect.
 The device plays the animation frames from stored files.
 
@@ -235,7 +233,7 @@ Show an 18-second transition demo:
 .venv/bin/busy-bar motion-demo --seconds 18
 ```
 
-This demo uses example clock values and network rates.
+This demo uses example clock values and synthetic token counts.
 It does not change the device clock.
 
 Start the observer after the demo:

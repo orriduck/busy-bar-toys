@@ -18,16 +18,20 @@ class PreviewWatchTest(unittest.TestCase):
                  patch.object(cloud_watch,'RolloutWatcher'), \
                  patch.object(cloud_watch,'load_dot_thread_ids',return_value=set()), \
                  patch.object(cloud_watch,'AgentRenderer'), \
-                 patch.object(cloud_watch,'AgentSignals'), \
+                 patch.object(cloud_watch,'AgentSignals') as agents, \
+                 patch('busybar_agents.network.NetworkSampler',side_effect=AssertionError('network sampling is forbidden')) as sampler, \
                  patch.object(cloud_watch,'notifier_sources',return_value=[]), \
                  patch.object(cloud_watch,'configured_checker',return_value=None), \
                  patch.object(cloud_watch,'ViewMode') as view, \
                  patch.object(cloud_watch,'read_spool',return_value=[]), \
                  patch.object(cloud_watch,'InputMonitor',return_value=monitor), \
                  patch.object(cloud_watch.time,'sleep',side_effect=KeyboardInterrupt):
-                view.return_value.allows.return_value=False
+                view.return_value.allows.return_value=True
                 with self.assertRaises(KeyboardInterrupt):
                     cloud_watch.watch(SimpleNamespace(),Path(runtime),Path(runtime))
+                sampler.assert_not_called()
+                agents.return_value.show_tasks.assert_called_once()
+                self.assertEqual(len(agents.return_value.show_tasks.call_args.args),3)
                 bridge.assert_called_once_with(Path(runtime),clients)
                 bridge.return_value.start.assert_called_once_with()
                 bridge.return_value.stop.assert_called_once_with()

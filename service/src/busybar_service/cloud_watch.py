@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 from busybar_shared.cloud import CloudError, Producer, Transport, State, keychain, load_config
-from busybar_agents.network import NetworkSampler
 from busybar_agents.view import ViewMode
 from busybar_shared.device_input import configured_input_monitor, InputMonitor
 from busybar_shared.preview import PreviewBridge
@@ -93,7 +92,7 @@ def watch(args,runtime,repo):
         registry=CodexTaskRegistry(); dot_ids=set(getattr(args,'dot_thread',[]))
         watcher=RolloutWatcher(Path.home()/'.codex/sessions',registry,
                               load_dot_thread_ids(Path.home()/'.codex/.codex-global-state.json')|dot_ids)
-        network=NetworkSampler(); reduced=getattr(args,'reduced_motion',False)
+        reduced=getattr(args,'reduced_motion',False)
         agent_client=next((client for key,client in clients.items() if client.config.get('template',key)=='agent'),None)
         agent=None
         if agent_client:
@@ -168,7 +167,7 @@ def watch(args,runtime,repo):
             if agent:
                 if view.allows(registry.active_turns(now),known_turns=known_turns):
                     if now>=next_draw:
-                        agent.show_tasks(registry.visible_tasks(now),now,registry.active_count(now),network.sample()); next_draw=now+5
+                        agent.show_tasks(registry.visible_tasks(now),now,registry.active_count(now)); next_draw=now+5
                     if agent.due: agent.advance()
                 else: agent.hide()
             if now>=next_status:
