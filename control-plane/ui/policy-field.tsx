@@ -81,33 +81,31 @@ export function PolicyField({
   const scaled = value / definition.scale;
   const detents = definition.presets.map((p) => p.value / definition.scale);
   return (
-    <Field className="min-w-0 gap-3">
-      <div className="flex min-w-0 items-center gap-1.5">
+    <Field className="grid min-w-0 grid-cols-[minmax(0,1fr)_6rem] items-center gap-x-5 gap-y-0 py-2 md:grid-cols-[7rem_minmax(0,1fr)_6rem]">
+      <div className="order-1 flex min-w-0 items-center gap-1.5">
         <FieldLabel id={`${id}-label`}>{definition.label}</FieldLabel>
         <HelpTip label={definition.label}>{definition.help}</HelpTip>
-        <InputGroup size="sm" className="ml-auto w-28 shrink-0">
-          <InputGroupInput
-            aria-label={`${definition.label} value`}
-            type="number"
-            required
-            min={definition.min}
-            max={definition.max}
-            step={field === "priority" ? 1 : "any"}
-            value={scaled}
-            onChange={(event) =>
-              onChange(
-                Math.round(Number(event.target.value) * definition.scale),
-              )
-            }
-          />
-          {definition.unit && (
-            <InputGroupAddon align="inline-end">
-              {definition.unit}
-            </InputGroupAddon>
-          )}
-        </InputGroup>
       </div>
-      <FieldContent className="min-w-0">
+      <InputGroup size="sm" variant="quiet" className="order-2 md:order-3">
+        <InputGroupInput
+          aria-label={`${definition.label} value`}
+          type="number"
+          required
+          min={definition.min}
+          max={definition.max}
+          step={field === "priority" ? 1 : "any"}
+          value={scaled}
+          onChange={(event) =>
+            onChange(Math.round(Number(event.target.value) * definition.scale))
+          }
+        />
+        {definition.unit && (
+          <InputGroupAddon align="inline-end">
+            {definition.unit}
+          </InputGroupAddon>
+        )}
+      </InputGroup>
+      <FieldContent className="order-3 col-span-2 min-w-0 md:order-2 md:col-span-1">
         <div className="policy-slider">
           <Slider
             aria-label={`${definition.label} slider`}

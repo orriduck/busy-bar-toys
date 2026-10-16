@@ -894,7 +894,7 @@ a {
 }
 .configuration-detail {
   border-top: 1px solid var(--border);
-  padding: 1.25rem;
+  padding: 0.75rem 1.25rem;
 }
 .configuration-status {
   min-height: 1.5rem;
@@ -1008,7 +1008,7 @@ a {
 .policy-slider { min-width: 0; padding: 0.625rem 0 1.5rem; position: relative; }
 .slider-stops { position: absolute; left: 0; right: 0; bottom: 0.25rem; height: 1.1rem; pointer-events: none; }
 .slider-stops > span { position: absolute; width: 1px; height: 0.3rem; background: var(--priority-tone, var(--muted-foreground)); }
-.slider-stops small { position: absolute; top: 0.4rem; white-space: nowrap; font-size: 0.625rem; color: var(--priority-tone, var(--muted-foreground)); }
+.slider-stops small { position: absolute; top: 0.4rem; white-space: nowrap; font-size: 0.6875rem; color: var(--priority-tone, var(--muted-foreground)); }
 .policy-actions { display: flex; flex-direction: row-reverse; align-items: center; gap: 0.5rem; margin-top: 1rem; }
 .policy-card { overflow: visible; }
 .device-group-heading h2 { font-family: ui-monospace, monospace; font-size: 0.8125rem; font-weight: 500; overflow-wrap: anywhere; min-width: 0; }

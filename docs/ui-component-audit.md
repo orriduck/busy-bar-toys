@@ -49,7 +49,7 @@ Shared Input, InputGroup, and Select must use one control surface definition. In
 
 ## Compact policy layout
 
-Priority, Hold, Later, and Heartbeat each have one always-visible Slider and an exact InputGroup value. No dropdown duplicates the slider. Desktop uses two columns; small screens use one. Exit remains an enum Select. Shared small controls are 40px high before the approved 90% density.
+Priority, Hold, Later, and Heartbeat each have one always-visible Slider and an exact InputGroup value. No dropdown duplicates the slider. Desktop uses aligned setting rows: label, slider, then a quiet exact value. Small screens put label/value above the slider. Exit remains a short enum Select. Shared small controls are 40px high before the approved 90% density. Exact values use the shared quiet InputGroup variant; embedded inputs have no second control surface. Save/Discard appears only for a changed draft.
 
 ## Verification
 
@@ -59,6 +59,8 @@ Check consistent computed materials within shared default/small control sizes; d
 
 - 200 tests across 19 files passed; TypeScript and the production build passed.
 - Browser: pointer drag within 2% of Normal returns exactly 50; outside the snap zone can reach intermediate values. ArrowRight from 50 advances to 54. Discard resets the form.
-- Desktop: two policy columns. At 390px: one column, document width375px, no horizontal overflow. No browser console warnings/errors observed.
+- Desktop: compact aligned policy rows. At 390px: label/value above each slider, document width375px, no horizontal overflow. No browser console warnings/errors observed.
 - Use the Slider default center alignment: the previous edge prehydration mode could leave thumbs/indicators hidden when loaded inside a collapsed, keep-mounted panel. Visible sliders and their range inputs were verified after opening the panel.
 - Existing library Select keyboard behavior, draft preservation, revoke Cancel/Escape focus restoration, finite/unknown Progress, and keyboard DnD save were checked with local synthetic services.
+
+- Refined row layout: quiet exact-value inputs share their InputGroup surface; no nested input outline remains. Pristine forms omit the action footer. Discard is disabled during a pending request; successful Save and Discard move focus to the persistent named form, with the next Tab reaching About Priority. Both paths were exercised in the local browser.

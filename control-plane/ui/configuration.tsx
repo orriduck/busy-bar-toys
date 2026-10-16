@@ -80,7 +80,9 @@ function ConfigurationRow({
             {rank}
           </span>
           <CollapsibleTrigger
-            render={<Button variant="ghost" className="configuration-open" />}
+            render={
+              <Button variant="disclosure" className="configuration-open" />
+            }
           >
             <span className="configuration-name">
               <strong>{serviceLabel(service)}</strong>

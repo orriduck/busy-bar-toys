@@ -68,6 +68,7 @@ export function ServiceEditor({
   }) => void;
 }) {
   const formId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const [config, setConfig] = useState(service.config);
   const [dirty, setDirty] = useState(false);
   const edits = useRef(0);
@@ -109,8 +110,18 @@ export function ServiceEditor({
       "PATCH",
     );
     if (result) {
-      if (edits.current === submittedEdit) setDirty(false);
-      else {
+      if (edits.current === submittedEdit) {
+        const form = formRef.current;
+        if (
+          form?.getClientRects().length &&
+          (document.activeElement === document.body ||
+            form
+              .querySelector(".policy-actions")
+              ?.contains(document.activeElement))
+        )
+          form.focus({ preventScroll: true });
+        setDirty(false);
+      } else {
         const state = result.snapshot as
           { configRevision?: number } | undefined;
         if (typeof state?.configRevision === "number")
@@ -130,22 +141,25 @@ export function ServiceEditor({
     );
   return (
     <form
-      className="policy-card"
+      ref={formRef}
+      tabIndex={-1}
+      aria-label={`${serviceLabel(service)} settings`}
+      className="policy-card outline-none"
       id={formId}
       onSubmit={(event) => void save(event)}
     >
-      <FieldGroup className="grid grid-cols-1 gap-x-8 gap-y-5 lg:grid-cols-2">
+      <FieldGroup className="gap-1">
         <PolicyField
           key={`priority-${resetVersion}`}
           field="priority"
           value={config.priority}
           onChange={(value) => edit("priority", value)}
         />
-        <Field className="min-w-0 gap-3">
+        <Field className="grid min-w-0 items-center gap-x-5 gap-y-2 py-2 md:grid-cols-[7rem_minmax(0,1fr)_6rem]">
           <div className="flex h-10 items-center">
             <FieldLabel htmlFor={`${formId}-field2`}>Exit</FieldLabel>
           </div>
-          <FieldContent className="min-w-0">
+          <FieldContent className="min-w-0 max-w-60 md:col-span-2">
             <SettingsSelect
               id={`${formId}-field2`}
               size="sm"
@@ -185,27 +199,33 @@ export function ServiceEditor({
           </AlertDescription>
         </Alert>
       )}
-      <Separator className="mt-5" />
-      <div className="policy-actions">
-        <Button type="submit" size="sm" disabled={pending || !dirty}>
-          Save{dirty ? " changes" : ""}
-        </Button>
-        {dirty && (
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            onClick={() => {
-              setDirty(false);
-              setResetVersion((v) => v + 1);
-              setConfig(service.config);
-              setBaseRevision(configRevision);
-            }}
-          >
-            Discard
-          </Button>
-        )}
-      </div>
+      {dirty && (
+        <>
+          <Separator className="mt-3" />
+          <div className="policy-actions">
+            <Button type="submit" size="sm" disabled={pending || !dirty}>
+              Save{dirty ? " changes" : ""}
+            </Button>
+            {dirty && (
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  formRef.current?.focus({ preventScroll: true });
+                  setDirty(false);
+                  setResetVersion((v) => v + 1);
+                  setConfig(service.config);
+                  setBaseRevision(configRevision);
+                }}
+              >
+                Discard
+              </Button>
+            )}
+          </div>
+        </>
+      )}
     </form>
   );
 }
