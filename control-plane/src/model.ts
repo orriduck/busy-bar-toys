@@ -146,6 +146,9 @@ export interface Command {
   itemKey?: string;
   itemVersion?: number;
   elementIds?: string[];
+  /** Prepare a replacement without dropping the native application between scenes. */
+  handoff?: boolean;
+  handoffReclaimed?: boolean;
 }
 export interface Asset {
   hash: string;
@@ -210,6 +213,8 @@ export interface State {
   pairings: Record<string, { computerId: string; expiresAt: number }>;
   elementExpiries: Record<string, { type: Element["type"]; expiresAt: number }>;
   nativeElements: Record<string, Element>;
+  /** A sent draw with an uncertain response requires complete namespace recovery. */
+  nativeRecoveryRequired?: boolean;
   nextTextAt: number | null;
   nextWidgetAt: number | null;
 }
@@ -759,6 +764,7 @@ export function enqueue(
   });
 }
 function switchTo(s: State, next: Item | null, now: number) {
+  const initial = s.generation === 0;
   const prior = s.selected ? s.items[s.selected] : null;
   if (prior && prior.state !== "paused" && prior.state !== "snoozed")
     prior.state = "preempted";
@@ -768,13 +774,14 @@ function switchTo(s: State, next: Item | null, now: number) {
   s.displaying = null;
   s.visibleSince = null;
   s.entryAt = null;
-  s.elementExpiries = {};
-  s.nativeElements = {};
+  // These describe actual device content, which stays visible during preparation.
+  // Only acknowledged native writes remove/replace it.
   s.nextTextAt = null;
   s.nextWidgetAt = null;
   s.admission = [];
   s.commands = s.commands.filter((c) => c.status === "inflight");
-  enqueue(s, { generation: s.generation, kind: "clear", dueAt: now });
+  if (!next || initial)
+    enqueue(s, { generation: s.generation, kind: "clear", dueAt: now });
   if (next) {
     next.state = "applying";
     s.admission = Object.values(s.items)
@@ -785,12 +792,13 @@ function switchTo(s: State, next: Item | null, now: number) {
           i.state !== "snoozed",
       )
       .map((i) => ({ itemKey: i.itemKey, version: i.version }));
-    for (const c of next.scene.commands)
+    for (const [index, c] of next.scene.commands.entries())
       enqueue(s, {
         generation: s.generation,
         kind: "draw",
         dueAt: now + c.offsetMs,
         elements: c.elements,
+        ...(index === 0 ? { handoff: true } : {}),
       });
   }
   s.revision++;

@@ -118,32 +118,32 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     }
     if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
-      tick(s, Date.now());
-      const item = s.selected ? s.items[s.selected] : null;
-      s.commands = [];
-      s.generation++;
-      s.displaying = null;
-      s.applying = s.selected;
-      s.visibleSince = null;
-      s.entryAt = null;
-      s.elementExpiries = {};
-      s.nativeElements = {};
-      enqueue(s, {
-        generation: s.generation,
-        kind: "clear",
-        dueAt: Date.now(),
-      });
-      if (item)
-        for (const c of item.scene.commands)
-          enqueue(s, {
-            generation: s.generation,
-            kind: "draw",
-            dueAt: Date.now() + c.offsetMs,
-            elements: c.elements,
-          });
-      s.revision++;
+      this.recoverScene(s, Date.now());
       this.save(s);
     }
+  }
+  private recoverScene(s: State, now: number) {
+    tick(s, now);
+    const item = s.selected ? s.items[s.selected] : null;
+    s.nativeRecoveryRequired = false;
+    s.commands = [];
+    s.generation++;
+    s.displaying = null;
+    s.applying = s.selected;
+    s.visibleSince = null;
+    s.entryAt = null;
+    s.elementExpiries = {};
+    s.nativeElements = {};
+    enqueue(s, { generation: s.generation, kind: "clear", dueAt: now });
+    if (item)
+      for (const c of item.scene.commands)
+        enqueue(s, {
+          generation: s.generation,
+          kind: "draw",
+          dueAt: now + c.offsetMs,
+          elements: c.elements,
+        });
+    s.revision++;
   }
   private load(): State | null {
     return this.store.load();
@@ -1183,6 +1183,123 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     }
     return elements;
   }
+  private handoffAnchor(s: State): Element {
+    const reserved = new Set([
+      ...Object.keys(s.nativeElements),
+      ...Object.values(s.items).flatMap((item) =>
+        item.scene.commands.flatMap((c) => c.elements.map((e) => e.id)),
+      ),
+    ]);
+    let index = 0;
+    while (reserved.has(`control-handoff-${index}`)) index++;
+    return {
+      id: `control-handoff-${index}`,
+      type: "rectangle",
+      display: "front",
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      color: "#000000FF",
+    };
+  }
+  private reclaimHandoff(s: State, command: Command, now: number) {
+    command.handoffReclaimed = true;
+    const anchor = this.handoffAnchor(s);
+    const old = Object.keys(s.nativeElements);
+    const prefix: Command[] = [];
+    const add = (
+      kind: "draw" | "clear",
+      elements?: Element[],
+      elementIds?: string[],
+    ) => {
+      enqueue(s, {
+        generation: s.generation,
+        kind,
+        dueAt: now,
+        refresh: true,
+        elements,
+        elementIds,
+      });
+      prefix.push(s.commands.pop()!);
+    };
+    // Free one widget if necessary before creating the anchor. The remaining
+    // old widgets still retain our namespace until the anchor is acknowledged.
+    if (old.length >= 128) add("clear", undefined, [old.shift()!]);
+    add("draw", [anchor]);
+    for (let offset = 0; offset < old.length; offset += 64)
+      add("clear", undefined, old.slice(offset, offset + 64));
+    s.commands.splice(s.commands.indexOf(command), 0, ...prefix);
+  }
+  private prepareHandoff(s: State, command: Command, now: number) {
+    command.handoff = false;
+    const incoming = new Map((command.elements ?? []).map((e) => [e.id, e]));
+    const old = Object.values(s.nativeElements);
+    const conflicts = old
+      .filter((e) => incoming.has(e.id) && incoming.get(e.id)!.type !== e.type)
+      .map((e) => e.id);
+    const obsolete = old.filter((e) => !incoming.has(e.id)).map((e) => e.id);
+    const before: Command[] = [],
+      after: Command[] = [];
+    const item = s.selected ? s.items[s.selected] : null;
+    if (!item) return;
+    // Admission remains unconfirmed until both the entrance and retirement ACK.
+    const batch = ++s.commandSeq;
+    const metadata = {
+      itemKey: item.itemKey,
+      itemVersion: item.version,
+      refreshBatch: batch,
+    };
+    for (const pending of s.commands)
+      if (
+        pending.generation === s.generation &&
+        pending.kind === "draw" &&
+        !pending.refresh
+      )
+        Object.assign(pending, metadata);
+    const add = (
+      target: Command[],
+      value: Omit<Command, "id" | "status" | "attempts">,
+    ) => {
+      enqueue(s, value);
+      target.push(s.commands.pop()!);
+    };
+    // Preserve the existing clear-before-type-change behavior. If conflicts
+    // would remove every widget, a tiny opaque anchor retains our application.
+    // Most scenes share the same front/back bitmap types and need no anchor.
+    if (conflicts.length && conflicts.length === old.length) {
+      const anchor = this.handoffAnchor(s);
+      add(before, {
+        generation: s.generation,
+        kind: "draw",
+        dueAt: now,
+        refresh: true,
+        elements: [anchor],
+        ...metadata,
+      });
+      obsolete.push(anchor.id);
+    }
+    for (let offset = 0; offset < conflicts.length; offset += 64)
+      add(before, {
+        generation: s.generation,
+        kind: "clear",
+        dueAt: now,
+        elementIds: conflicts.slice(offset, offset + 64),
+        refresh: true,
+        ...metadata,
+      });
+    for (let offset = 0; offset < obsolete.length; offset += 64)
+      add(after, {
+        generation: s.generation,
+        kind: "clear",
+        dueAt: now,
+        elementIds: obsolete.slice(offset, offset + 64),
+        refresh: true,
+        ...metadata,
+      });
+    const index = s.commands.indexOf(command);
+    s.commands.splice(index, 1, ...before, command, ...after);
+  }
   private queueRefresh(
     s: State,
     elements: Element[],
@@ -1276,6 +1393,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         const s = this.load();
         if (!s?.tokenCipher) break;
         const now = Date.now();
+        if (s.nativeRecoveryRequired) {
+          const retry = s.commands[0];
+          if (retry?.status === "pending" && retry.dueAt > now) {
+            this.save(s);
+            break;
+          }
+          this.recoverScene(s, now);
+        }
         tick(s, now);
         s.commands = s.commands.filter(
           (c) => c.generation === s.generation || c.status === "inflight",
@@ -1287,10 +1412,42 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         }
         // Reserve all assets for the generation before any draw. Playing/pending slots stay pinned.
         if (cmd.kind === "draw") {
-          const hashes = (cmd.elements ?? []).flatMap((e) =>
-            e.assetHash ? [e.assetHash] : [],
-          );
-          const slots = reserveSlots(s, hashes, pinnedSlots(s), now);
+          const hashes = (
+            cmd.handoff && s.selected
+              ? s.items[s.selected].scene.commands.flatMap((c) => c.elements)
+              : (cmd.elements ?? [])
+          ).flatMap((e) => (e.assetHash ? [e.assetHash] : []));
+          const priorSlots = structuredClone(s.slots);
+          let slots;
+          try {
+            const union = new Set([
+              ...Object.keys(s.nativeElements),
+              ...(cmd.elements ?? []).map((e) => e.id),
+            ]);
+            if (cmd.handoff && union.size > 128)
+              throw new ProtocolError("NATIVE_ELEMENT_CAPACITY", 413);
+            slots = reserveSlots(s, hashes, pinnedSlots(s), now);
+          } catch (error) {
+            s.slots = priorSlots;
+            if (
+              cmd.handoff &&
+              !cmd.handoffReclaimed &&
+              Object.keys(s.nativeElements).length &&
+              error instanceof ProtocolError &&
+              [
+                "SLOT_CAPACITY",
+                "SLOT_BYTES_CAPACITY",
+                "NATIVE_ELEMENT_CAPACITY",
+              ].includes(error.code)
+            ) {
+              // A large pair cannot coexist. Retire through an acknowledged
+              // anchor rather than exposing calendar or overwriting live slots.
+              this.reclaimHandoff(s, cmd, now);
+              this.save(s);
+              continue;
+            }
+            throw error;
+          }
           const pending = slots.filter((slot) => !slot.uploaded);
           if (pending.length) {
             for (const slot of pending.reverse())
@@ -1307,6 +1464,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             this.save(s);
             continue;
           }
+        }
+        if (cmd.kind === "draw" && cmd.handoff) {
+          this.prepareHandoff(s, cmd, now);
+          this.save(s);
+          continue;
         }
         cmd.status = "inflight";
         cmd.startedAt = now;
@@ -1404,6 +1566,18 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         const currentCommand = live.commands.find((c) => c.id === cmd.id);
         if (!currentCommand) continue;
         if (failed) {
+          // The device may have applied a request whose response was lost. Its
+          // unknown widgets cannot be safely retired from the ACK inventory.
+          if (
+            drawSentAt !== undefined &&
+            (!(failed instanceof ProtocolError) ||
+              [
+                "UPSTREAM_FAILURE",
+                "UPSTREAM_UNAVAILABLE",
+                "UPSTREAM_INVALID_RESPONSE",
+              ].includes(failed.code))
+          )
+            live.nativeRecoveryRequired = true;
           console.warn("Device command failed", {
             kind: cmd.kind,
             code:
@@ -1433,8 +1607,32 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           );
           if (slot) slot.uploaded = true;
         }
+        const acceptedAt = Date.now();
+        if (
+          cmd.kind === "draw" &&
+          drawExpiresAt !== undefined &&
+          drawSentAt !== undefined
+        )
+          for (const element of cmd.elements ?? []) {
+            live.elementExpiries[element.id] = {
+              type: element.type,
+              expiresAt:
+                element.type === "text" ? drawExpiresAt : drawSentAt + 60000,
+            };
+            live.nativeElements[element.id] = element;
+          }
+        if (cmd.kind === "clear") {
+          if (cmd.elementIds)
+            for (const id of cmd.elementIds) {
+              delete live.elementExpiries[id];
+              delete live.nativeElements[id];
+            }
+          else {
+            live.elementExpiries = {};
+            live.nativeElements = {};
+          }
+        }
         if (cmd.generation === live.generation) {
-          const acceptedAt = Date.now();
           if (cmd.kind === "draw") {
             if (live.entryAt === null && !cmd.refresh) {
               const item = live.selected ? live.items[live.selected] : null;
@@ -1446,27 +1644,6 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                   !following.refresh
                 )
                   following.dueAt += delay;
-            }
-            if (drawExpiresAt !== undefined && drawSentAt !== undefined)
-              for (const element of cmd.elements ?? []) {
-                const expiresAt =
-                  element.type === "text" ? drawExpiresAt : drawSentAt + 60000;
-                live.elementExpiries[element.id] = {
-                  type: element.type,
-                  expiresAt,
-                };
-                live.nativeElements[element.id] = element;
-              }
-          }
-          if (cmd.kind === "clear") {
-            if (cmd.elementIds)
-              for (const id of cmd.elementIds) {
-                delete live.elementExpiries[id];
-                delete live.nativeElements[id];
-              }
-            else {
-              live.elementExpiries = {};
-              live.nativeElements = {};
             }
           }
           if (

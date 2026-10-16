@@ -282,10 +282,7 @@ describe("generation races and content revisions", () => {
       calls.push({
         method: r.method,
         path,
-        body:
-          r.method === "POST"
-            ? ((await r.json()) as Record<string, unknown>)
-            : null,
+        body: r.body ? ((await r.json()) as Record<string, unknown>) : null,
       });
       if (r.method === "POST" && first) {
         first = false;
@@ -294,7 +291,14 @@ describe("generation races and content revisions", () => {
       }
       return Response.json({ ok: true });
     });
-    await send("/publish", presentation(epoch));
+    const old = presentation(epoch);
+    old.scene.commands[0].elements.push({
+      id: "old-overlay",
+      type: "text",
+      text: "Old",
+      font: "small",
+    });
+    await send("/publish", old);
     await entered;
     const urgent = { ...presentation(epoch, "two"), level: "urgent" };
     await send("/publish", urgent);
@@ -316,9 +320,13 @@ describe("generation races and content revisions", () => {
     expect(calls.map((c) => c.method)).toEqual([
       "DELETE",
       "POST",
-      "DELETE",
       "POST",
+      "DELETE",
     ]);
+    expect(calls.at(-1)!.body).toEqual({
+      application_name: "busy-control",
+      element_ids: ["old-overlay"],
+    });
   });
   it("constructor reconstructs uncertain persisted command before clearing and replaying full scene", async () => {
     const { send, admin, epoch, deviceId } = await setup();
@@ -1217,4 +1225,283 @@ it("does not charge a confirmation gap when renewal ACK precedes a late alarm", 
     expect(s.serviceTurns.test.remainingMs).toBe(4000);
     expect(s.visibleSince).toBe(start + 55000);
   });
+});
+
+describe("continuous scene handoff", () => {
+  it.each(["same-id", "new-id", "new-type"])(
+    "keeps the native application populated while handing off %s content",
+    async (variant) => {
+      const { send, admin, epoch } = await setup();
+      await send("/publish", presentation(epoch));
+      await displayed(admin);
+      const screen = new Map<string, string>([["text", "text"]]);
+      const emptyFrames: string[] = [];
+      setUpstream(async (request) => {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/display/draw")) {
+          const body = request.body
+            ? ((await request.json()) as Record<string, unknown>)
+            : null;
+          if (request.method === "DELETE") {
+            if (Array.isArray(body?.element_ids))
+              for (const id of body.element_ids) screen.delete(String(id));
+            else screen.clear();
+          } else {
+            for (const e of body!.elements as { id: string; type: string }[]) {
+              if (screen.has(e.id) && screen.get(e.id) !== e.type)
+                return Response.json(
+                  { error: "type must be cleared first" },
+                  { status: 400 },
+                );
+              screen.set(e.id, e.type);
+            }
+          }
+          if (!screen.size) emptyFrames.push(request.method);
+        }
+        return Response.json({ ok: true });
+      });
+      const next = presentation(epoch, "two");
+      next.scene.commands[0].elements =
+        variant === "new-type"
+          ? ([{ id: "text", type: "rectangle", width: 10, height: 2 }] as never)
+          : [
+              {
+                id: variant === "same-id" ? "text" : "next",
+                type: "text",
+                text: "Next",
+                font: "small",
+              },
+            ];
+      await send("/publish", next);
+      await send("/withdraw", {
+        epoch,
+        instanceId: "mac",
+        itemId: "one",
+        version: 1,
+      });
+      const settled = (await displayed(admin)) as {
+        displaying: { itemKey: string };
+      };
+      expect(settled.displaying.itemKey).toContain("two");
+      expect(emptyFrames).toEqual([]);
+      expect([...screen.keys()]).toEqual([
+        variant === "new-id" ? "next" : "text",
+      ]);
+      await send("/withdraw", {
+        epoch,
+        instanceId: "mac",
+        itemId: "two",
+        version: 1,
+      });
+      for (let j = 0; j < 30 && screen.size; j++) await admin("/snapshot");
+      expect(screen.size).toBe(0);
+    },
+  );
+});
+
+it("keeps outgoing content and pins while all incoming scene assets upload", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  const { digest } = await import("../src/security");
+  const hashes = await Promise.all([digest("first"), digest("later")]);
+  for (const [i, hash] of hashes.entries())
+    expect(
+      (
+        await send("/assets", {
+          hash,
+          type: "png",
+          data: btoa(i ? "later" : "first"),
+        })
+      ).status,
+    ).toBe(200);
+  await send("/publish", presentation(epoch));
+  await displayed(admin);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((r) => (enter = r)),
+    gate = new Promise<void>((r) => (release = r));
+  const events: string[] = [];
+  let waiting = true;
+  setUpstream(async (request) => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/assets/upload")) {
+      events.push("upload");
+      if (waiting) {
+        waiting = false;
+        enter();
+        await gate;
+      }
+    } else events.push(request.method);
+    return Response.json({ ok: true });
+  });
+  await send("/publish", {
+    ...presentation(epoch, "two"),
+    scene: {
+      entryDurationMs: 0,
+      commands: hashes.map((hash, i) => ({
+        offsetMs: 0,
+        elements: [
+          { id: i ? "later" : "text", type: "image", assetHash: hash },
+        ],
+      })),
+    },
+  });
+  await send("/withdraw", {
+    epoch,
+    instanceId: "mac",
+    itemId: "one",
+    version: 1,
+  });
+  await entered;
+  try {
+    expect(events).toEqual(["upload"]);
+    const pending = await runInDurableObject(
+      env.DEVICES.getByName(deviceId),
+      (_instance, ctx) => new StateStore(ctx.storage).load()!,
+    );
+    expect(pending.nativeElements.text.type).toBe("text");
+    expect(pending.displaying).toBeNull();
+  } finally {
+    release();
+  }
+  const final = (await displayed(admin)) as { displaying: { itemKey: string } };
+  expect(final.displaying.itemKey).toContain("two");
+  expect(events.slice(0, 2)).toEqual(["upload", "upload"]);
+});
+
+it("reclaims full asset slots through an anchor without exposing calendar", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  const { digest } = await import("../src/security");
+  const hash = await digest("next");
+  await send("/assets", { hash, type: "png", data: btoa("next") });
+  await send("/publish", presentation(epoch));
+  await displayed(admin);
+  const stub = env.DEVICES.getByName(deviceId);
+  // Mock 16 live asset slots: storage metadata exercises the real allocator.
+  await runInDurableObject(stub, (_instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    s.nativeElements = {};
+    s.elementExpiries = {};
+    s.slots = [];
+    for (let i = 0; i < 16; i++) {
+      const oldHash = i.toString(16).padStart(64, "0"),
+        id = `old-${i}`;
+      s.slots.push({
+        slot: i,
+        hash: oldHash,
+        type: "png",
+        bytes: 10,
+        uploaded: true,
+      });
+      s.nativeElements[id] = { id, type: "image", assetHash: oldHash };
+      s.elementExpiries[id] = { type: "image", expiresAt: Date.now() + 60000 };
+    }
+    store.save(s);
+  });
+  const screen = new Set(Array.from({ length: 16 }, (_, i) => `old-${i}`));
+  const empty: boolean[] = [];
+  setUpstream(async (request) => {
+    if (new URL(request.url).pathname.endsWith("/display/draw")) {
+      const body = request.body
+        ? ((await request.json()) as {
+            elements?: { id: string }[];
+            element_ids?: string[];
+          })
+        : null;
+      if (request.method === "DELETE") {
+        if (body?.element_ids)
+          for (const id of body.element_ids) screen.delete(id);
+        else screen.clear();
+      } else for (const e of body!.elements!) screen.add(e.id);
+      if (!screen.size) empty.push(true);
+    }
+    return Response.json({ ok: true });
+  });
+  await send("/publish", {
+    ...presentation(epoch, "two"),
+    scene: {
+      entryDurationMs: 0,
+      commands: [
+        {
+          offsetMs: 0,
+          elements: [{ id: "next", type: "image", assetHash: hash }],
+        },
+      ],
+    },
+  });
+  await send("/withdraw", {
+    epoch,
+    instanceId: "mac",
+    itemId: "one",
+    version: 1,
+  });
+  const final = (await displayed(admin)) as { displaying: { itemKey: string } };
+  expect(final.displaying.itemKey).toContain("two");
+  expect(empty).toEqual([]);
+  expect([...screen]).toEqual(["next"]);
+});
+
+it("retires a preempted draw even when its response is lost after the device applied it", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((r) => (enter = r)),
+    gate = new Promise<void>((r) => (release = r));
+  const screen = new Set<string>();
+  let first = true;
+  setUpstream(async (request) => {
+    const body = request.body
+      ? ((await request.json()) as {
+          elements?: { id: string }[];
+          element_ids?: string[];
+        })
+      : null;
+    if (request.method === "DELETE") {
+      if (body?.element_ids)
+        for (const id of body.element_ids) screen.delete(id);
+      else screen.clear();
+    } else {
+      for (const e of body!.elements!) screen.add(e.id);
+      if (first) {
+        first = false;
+        enter();
+        await gate;
+        return Response.json({ error: "reply lost" }, { status: 503 });
+      }
+    }
+    return Response.json({ ok: true });
+  });
+  const old = presentation(epoch);
+  old.scene.commands[0].elements[0].id = "uncertain-overlay";
+  await send("/publish", old);
+  await entered;
+  try {
+    await send("/publish", presentation(epoch, "two"));
+    await send("/withdraw", {
+      epoch,
+      instanceId: "mac",
+      itemId: "one",
+      version: 1,
+    });
+  } finally {
+    release();
+  }
+  const stub = env.DEVICES.getByName(deviceId);
+  for (let j = 0; j < 30; j++) {
+    await admin("/snapshot");
+    const pending = await runInDurableObject(stub, (_instance, ctx) =>
+      new StateStore(ctx.storage).load()!,
+    );
+    if (pending.nativeRecoveryRequired) break;
+  }
+  await runInDurableObject(stub, (_instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    expect(s.nativeRecoveryRequired).toBe(true);
+    expect(s.commands[0].dueAt).toBeGreaterThan(Date.now());
+    s.commands[0].dueAt = Date.now();
+    store.save(s);
+  });
+  await runDurableObjectAlarm(stub);
+  const final = (await displayed(admin)) as { displaying: { itemKey: string } };
+  expect(final.displaying.itemKey).toContain("two");
+  expect([...screen]).toEqual(["text"]);
 });
