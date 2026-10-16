@@ -4,7 +4,14 @@ import { Field, FieldLabel } from "./components/ui/field";
 import { Input } from "./components/ui/input";
 import { Button } from "./components/ui/button";
 import { Slider } from "./components/ui/slider";
-import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+} from "./components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -16,6 +23,7 @@ import {
   priorityPreset,
   sliderPosition,
   sliderValue,
+  sliderNudge,
 } from "./policy-presets";
 import type { PolicyKey } from "./policy-presets";
 
@@ -85,32 +93,43 @@ export function PolicyField({
         <FieldLabel id={`${id}-label`}>{definition.label}</FieldLabel>
         <HelpTip label={definition.label}>{definition.help}</HelpTip>
       </div>
-      <ToggleGroup
-        className="policy-options"
-        variant="outline"
-        size="sm"
-        aria-labelledby={`${id}-label`}
-        value={[selected]}
-        onValueChange={(values) => {
-          const choice = values[0];
+      <Select
+        items={[
+          ...definition.presets.map((p) => ({ value: p.id, label: p.label })),
+          { value: "custom", label: "Custom" },
+        ]}
+        value={selected}
+        onValueChange={(choice) => {
           if (!choice) return;
           setCustom(choice === "custom");
           const option = definition.presets.find((p) => p.id === choice);
           if (option) onChange(option.value);
         }}
       >
-        {definition.presets.map((option) => (
-          <ToggleGroupItem
-            key={option.id}
-            value={option.id}
-            data-priority={field === "priority" ? option.id : undefined}
-          >
-            {field === "priority" && <span className="priority-dot" />}
-            {option.label}
-          </ToggleGroupItem>
-        ))}
-        <ToggleGroupItem value="custom">Custom</ToggleGroupItem>
-      </ToggleGroup>
+        <SelectTrigger
+          className="policy-choice"
+          aria-labelledby={`${id}-label`}
+          data-priority={field === "priority" ? selected : undefined}
+        >
+          {field === "priority" && <span className="priority-dot" />}
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="start" alignItemWithTrigger={false}>
+          <SelectGroup>
+            {definition.presets.map((option) => (
+              <SelectItem
+                key={option.id}
+                value={option.id}
+                data-priority={field === "priority" ? option.id : undefined}
+              >
+                {field === "priority" && <span className="priority-dot" />}
+                {option.label}
+              </SelectItem>
+            ))}
+            <SelectItem value="custom">Custom</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
       {selected === "custom" && (
         <div className="policy-custom">
           <div className="policy-slider">
@@ -121,23 +140,63 @@ export function PolicyField({
               value={[sliderPosition(scaled, definition.stops)]}
               min={0}
               max={100}
-              step={2}
+              step={1}
+              onKeyDownCapture={(event) => {
+                const direction =
+                  event.key === "ArrowRight" || event.key === "ArrowUp"
+                    ? 1
+                    : event.key === "ArrowLeft" || event.key === "ArrowDown"
+                      ? -1
+                      : null;
+                if (direction === null) return;
+                event.preventDefault();
+                onChange(
+                  sliderNudge(
+                    value,
+                    direction,
+                    definition.stops,
+                    definition.scale,
+                    definition.presets.map((p) => p.value / definition.scale),
+                  ),
+                );
+              }}
               onValueChange={(values) => {
                 const position = Array.isArray(values) ? values[0] : values;
                 onChange(
-                  sliderValue(position, definition.stops, definition.scale),
+                  sliderValue(
+                    position,
+                    definition.stops,
+                    definition.scale,
+                    definition.presets.map((p) => p.value / definition.scale),
+                  ),
                 );
               }}
             />
             <div className="slider-stops" aria-hidden="true">
-              {definition.stops.map((stop, index) => (
-                <span
-                  key={stop}
-                  style={{
-                    left: `${(index / (definition.stops.length - 1)) * 100}%`,
-                  }}
-                />
-              ))}
+              {definition.presets.map((option) => {
+                const position = sliderPosition(
+                  option.value / definition.scale,
+                  definition.stops,
+                );
+                return (
+                  <span
+                    key={option.id}
+                    data-priority={field === "priority" ? option.id : undefined}
+                    style={{ left: `${position}%` }}
+                  >
+                    <small
+                      style={{
+                        transform:
+                          position === 100
+                            ? "translateX(-100%)"
+                            : "translateX(-50%)",
+                      }}
+                    >
+                      {option.label}
+                    </small>
+                  </span>
+                );
+              })}
             </div>
           </div>
           <div className="policy-exact">
