@@ -997,7 +997,7 @@ a {
 }
 
 /* Domain-specific slider annotations and priority tones. */
-:root { --priority-low: #9da3ae; --priority-normal: #79aaff; --priority-high: #edc56d; --priority-critical: #ff8e9a; }
+:root { --slider-hold: #438dff; --slider-later: #a38bfa; --slider-heartbeat: #46c6ae; --priority-low: #9da3ae; --priority-normal: #79aaff; --priority-high: #edc56d; --priority-critical: #ff8e9a; }
 [data-priority="low"] { --priority-tone: var(--priority-low); }
 [data-priority="normal"] { --priority-tone: var(--priority-normal); }
 [data-priority="high"] { --priority-tone: var(--priority-high); }

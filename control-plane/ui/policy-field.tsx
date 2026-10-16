@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useState, type CSSProperties } from "react";
 import { SettingNumber } from "./setting-number";
 import { cn } from "./lib/utils";
 import { CircleHelp } from "lucide-react";
@@ -89,6 +89,37 @@ export function PolicyField({
   const [editing, setEditing] = useState(false);
   const scaled = value / definition.scale;
   const detents = definition.presets.map((p) => p.value / definition.scale);
+  const meaning =
+    field === "priority"
+      ? "priority"
+      : field === "visibleMs"
+        ? "hold"
+        : field === "snoozeMs"
+          ? "later"
+          : "heartbeat";
+  const tones = [
+    "--priority-low",
+    "--priority-normal",
+    "--priority-high",
+    "--priority-critical",
+  ];
+  const anchors = [10, 50, 100, 1000];
+  const interval = Math.max(
+    0,
+    anchors.findIndex((anchor) => value <= anchor) - 1,
+  );
+  const index = value >= 1000 ? 2 : interval;
+  const mix = Math.max(
+    0,
+    Math.min(
+      100,
+      ((value - anchors[index]) / (anchors[index + 1] - anchors[index])) * 100,
+    ),
+  );
+  const accent =
+    field === "priority"
+      ? `color-mix(in oklch, var(${tones[index]}) ${100 - mix}%, var(${tones[index + 1]}) ${mix}%)`
+      : `var(--slider-${meaning})`;
   return (
     <Field
       className={cn(
@@ -140,6 +171,8 @@ export function PolicyField({
         <div className="policy-slider">
           <Slider
             variant="pill"
+            meaning={meaning}
+            style={{ "--slider-accent": accent } as CSSProperties}
             marks={detents.map((stop) =>
               sliderPosition(stop, definition.stops),
             )}

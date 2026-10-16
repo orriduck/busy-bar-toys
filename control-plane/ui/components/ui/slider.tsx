@@ -1,10 +1,12 @@
 import { Slider as SliderPrimitive } from "@base-ui/react/slider";
+import { SliderMotion, type SliderMeaning } from "@/slider-motion";
 import { cn } from "@/lib/utils";
 
 function Slider({
   className,
   variant = "default",
   marks = [],
+  meaning,
   defaultValue,
   value,
   min = 0,
@@ -17,6 +19,7 @@ function Slider({
   valueText?: string;
   variant?: "default" | "pill";
   marks?: number[];
+  meaning?: SliderMeaning;
 }) {
   const _values = Array.isArray(value)
     ? value
@@ -50,8 +53,17 @@ function Slider({
         >
           <SliderPrimitive.Indicator
             data-slot="slider-range"
-            className="bg-primary select-none data-horizontal:h-full data-vertical:w-full"
-          />
+            className={cn(
+              "relative select-none data-horizontal:h-full data-vertical:w-full",
+              variant === "pill"
+                ? "bg-[var(--slider-accent,var(--primary))] bg-linear-to-r from-transparent to-white/15 transition-colors duration-300 motion-reduce:transition-none"
+                : "bg-primary",
+            )}
+          >
+            {variant === "pill" && meaning && (
+              <SliderMotion meaning={meaning} />
+            )}
+          </SliderPrimitive.Indicator>
           {variant === "pill" && (
             <div
               aria-hidden="true"

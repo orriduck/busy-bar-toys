@@ -200,6 +200,7 @@ export function ServiceEditor({
               onValueChange={(value) => edit("exit", value)}
             >
               <TabsList
+                size="lg"
                 className="w-fit"
                 aria-labelledby={`${formId}-exit-label`}
               >
