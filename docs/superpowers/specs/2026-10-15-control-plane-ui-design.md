@@ -93,3 +93,7 @@ Implement in the isolated `feat/control-plane-ui` worktree. The real service con
 The user selected a smoother preview with approximately150ms of extra browser playout delay after real production measurements showed network batches losing intermediate frames in the latest-only canvas slot. The server keeps its existing bounded latest-frame relay. The browser may retain at most6 verified actual frames, with a short maximum pending age, and uses capture cadence plus a local monotonic clock to schedule playback. It must never synthesize or repeat frames to inflate measured FPS.
 
 Flush pending pixels on stream/device/session change, disconnect, pagehide, stale data and teardown. Keep identity/sequence/freshness checks at receive and draw time. Source clock discontinuity and a long interruption must safely reanchor a new bounded buffer. Count fresh accepted and drawn frames separately; report latency at actual draw, including the playout delay. Startup history may be dropped to keep delay bounded. Verify real receive/draw FPS and latency on the production URL; approximately150ms smoothing does not establish that the source itself provides30fps.
+
+## Approved component/dock follow-up
+
+The later [component and persistent dock specification](2026-10-15-ui-components-dock.md) supersedes this document’s Display-only capture-demand and initial asset choices. Any visible authenticated management page now keeps the same live Preview; hidden-document and session cleanup remain unchanged.
