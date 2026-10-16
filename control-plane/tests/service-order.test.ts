@@ -85,7 +85,7 @@ describe("explicit per-computer service order", () => {
     model.tick(s, now + 2);
     expect(selected(s)).toBe("a");
   });
-  it("keeps an active computer's source lease and rotates to the next ready computer at completion", () => {
+  it("keeps FIFO turns within global tiers and advances on completion", () => {
     const s = state();
     send(s, "c", "active", { kind: "agent", exit: "source" });
     model.acceptDisplay(s, s.generation, now);
@@ -105,33 +105,18 @@ describe("explicit per-computer service order", () => {
     model.finishItem(s, s.selected!, "resolved", 1, now + 2);
     expect(selected(s)).toBe("a");
   });
-  it("resumes an unfinished normal source after urgent interruption and its own higher service overlay", () => {
+  it("resumes a lower tier only after all higher-tier work clears", () => {
     const s = state();
-    s.computers["computer-a"].serviceOrder = ["a", "c"];
-    const original = send(s, "c", "source", { kind: "agent", exit: "source" });
+    const original = send(s, "a", "source", { kind: "agent", exit: "source" });
     model.acceptDisplay(s, s.generation, now);
     send(s, "b");
+    expect(selected(s)).toBe("b");
     send(s, "d", "urgent", { level: "urgent" });
     expect(selected(s)).toBe("d");
-    model.acceptDisplay(s, s.generation, now);
     model.finishItem(s, s.selected!, "resolved", 1, now + 1);
-    expect(s.selected).toBe(original.itemKey);
-    send(s, "a", "overlay");
-    model.acceptDisplay(s, s.generation, now + 2);
-    expect(selected(s)).toBe("a");
-    expect(model.groups(s).map((g) => g.representative.serviceId)).toEqual([
-      "a",
-      "c",
-      "b",
-    ]);
-    expect(
-      model.snapshot(s, now + 2).items.find((i) => i.serviceId === "b")?.eta
-        .kind,
-    ).toBe("await-resolution");
-    model.finishItem(s, s.selected!, "resolved", 1, now + 3);
-    expect(s.selected).toBe(original.itemKey);
-    model.finishItem(s, s.selected!, "resolved", 1, now + 4);
     expect(selected(s)).toBe("b");
+    model.finishItem(s, s.selected!, "resolved", 1, now + 2);
+    expect(s.selected).toBe(original.itemKey);
   });
   it("preserves urgent precedence and current urgent ownership across computers", () => {
     const s = state();

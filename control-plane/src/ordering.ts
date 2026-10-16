@@ -40,68 +40,86 @@ export function servicePosition(s: State, id: string) {
 export function computerOf(s: State, item: Item) {
   return s.services[item.serviceId]?.computerId ?? item.serviceId;
 }
-/** Round-robin across ready computers, retaining the active normal computer until
- * its source ends or finite playback completes. No time slicing of source leases. */
+/** A turn belongs to a service, not a message or publisher instance. */
+export function prepareTurns(s: State) {
+  s.serviceTurns ??= {};
+  s.turnSeq ??= 0;
+  const live = new Set(
+    Object.values(s.items)
+      .filter((i) => i.level !== "urgent")
+      .map((i) => i.serviceId),
+  );
+  for (const id of Object.keys(s.serviceTurns))
+    if (!live.has(id)) delete s.serviceTurns[id];
+  const items = Object.values(s.items)
+    .filter((i) => i.level !== "urgent")
+    .sort((a, b) => a.enqueueSeq - b.enqueueSeq);
+  for (const item of items)
+    if (!s.serviceTurns[item.serviceId]) {
+      const totalMs = s.services[item.serviceId].config.visibleMs;
+      s.serviceTurns[item.serviceId] = {
+        totalMs,
+        remainingMs: totalMs,
+        ticket: ++s.turnSeq,
+      };
+    }
+}
+export function hasTurnPeer(s: State, item: Item) {
+  return (
+    item.level !== "urgent" &&
+    Object.values(s.items).some(
+      (i) =>
+        i.serviceId !== item.serviceId &&
+        i.level !== "urgent" &&
+        i.state !== "paused" &&
+        i.state !== "snoozed" &&
+        servicePosition(s, i.serviceId) === servicePosition(s, item.serviceId),
+    )
+  );
+}
+export function yieldTurn(s: State, id: string) {
+  const totalMs = s.services[id].config.visibleMs;
+  s.serviceTurns[id] = { totalMs, remainingMs: totalMs, ticket: ++s.turnSeq };
+  s.revision++;
+}
+/** Position is a global tier; equal-tier services rotate by persisted FIFO turn. */
 export function normalOrder<T extends { representative: Item }>(
   s: State,
   groups: T[],
 ) {
   const by = new Map<string, T[]>();
-  for (const group of groups) {
-    const id = computerOf(s, group.representative);
-    by.set(id, [...(by.get(id) ?? []), group]);
-  }
-  for (const group of by.values())
-    group.sort(
+  const active = s.selected ? s.items[s.selected] : null;
+  const activeGroup = (i: Item) =>
+    !!active &&
+    i.serviceId === active.serviceId &&
+    (i.groupKey !== undefined
+      ? i.groupKey === active.groupKey
+      : i.itemKey === active.itemKey);
+  for (const g of groups)
+    by.set(g.representative.serviceId, [
+      ...(by.get(g.representative.serviceId) ?? []),
+      g,
+    ]);
+  const round = new Map<T, number>();
+  for (const own of by.values()) {
+    own.sort(
       (a, b) =>
-        servicePosition(s, a.representative.serviceId) -
-          servicePosition(s, b.representative.serviceId) ||
-        (a.representative.serviceId === b.representative.serviceId
-          ? 0
-          : a.representative.serviceId.localeCompare(
-              b.representative.serviceId,
-            )) ||
-        a.representative.receivedAt - b.representative.receivedAt ||
+        Number(activeGroup(b.representative)) -
+          Number(activeGroup(a.representative)) ||
         a.representative.enqueueSeq - b.representative.enqueueSeq,
     );
-  const ids = [...by.keys()].sort();
-  const last = s.lastNormalComputer;
-  const next = last ? ids.findIndex((id) => id > last) : 0;
-  const start = next < 0 ? 0 : next;
-  const order = [...ids.slice(start), ...ids.slice(0, start)];
-  const lease = s.normalLeaseItem ? s.items[s.normalLeaseItem] : null;
-  const active =
-    lease &&
-    groups.some((g) => g.representative.serviceId === lease.serviceId) &&
-    lease.state !== "paused" &&
-    lease.state !== "snoozed"
-      ? lease
-      : s.selected
-        ? s.items[s.selected]
-        : null;
-  if (
-    active &&
-    active.level !== "urgent" &&
-    groups.some((g) => g.representative.serviceId === active.serviceId)
-  ) {
-    const id = computerOf(s, active),
-      index = order.indexOf(id);
-    if (index >= 0) order.unshift(...order.splice(index, 1));
+    own.forEach((g, index) => round.set(g, index));
   }
-  const result: T[] = [];
-  // An overlay resumes the retained source before another computer. Reflect
-  // that continuation in queue order and ETA as well as the next selection.
-  if (active && active.level !== "urgent") {
-    const own = by.get(computerOf(s, active));
-    const leaseIndex =
-      own?.findIndex((g) => g.representative.serviceId === active.serviceId) ??
-      -1;
-    if (own && leaseIndex > 0) result.push(...own.splice(0, leaseIndex));
-  }
-  for (let index = 0; index < groups.length; index++)
-    for (const id of order) {
-      const group = by.get(id)?.[index];
-      if (group) result.push(group);
-    }
-  return result;
+  return [...groups].sort((a, b) => {
+    const x = a.representative,
+      y = b.representative;
+    return (
+      servicePosition(s, x.serviceId) - servicePosition(s, y.serviceId) ||
+      round.get(a)! - round.get(b)! ||
+      (s.serviceTurns?.[x.serviceId]?.ticket ?? x.enqueueSeq) -
+        (s.serviceTurns?.[y.serviceId]?.ticket ?? y.enqueueSeq) ||
+      x.receivedAt - y.receivedAt ||
+      x.enqueueSeq - y.enqueueSeq
+    );
+  });
 }

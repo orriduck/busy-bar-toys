@@ -1,4 +1,11 @@
-import { computerOf, normalOrder } from "./ordering";
+import {
+  computerOf,
+  normalOrder,
+  prepareTurns,
+  hasTurnPeer,
+  yieldTurn,
+  servicePosition,
+} from "./ordering";
 /** Deterministic v5 state machine. Every operation is persisted atomically by DeviceControl. */
 export class ProtocolError extends Error {
   constructor(
@@ -50,6 +57,7 @@ export interface Service {
   computerId?: string;
   /** Collector instance IDs observed through authenticated heartbeat messages. */
   computerIds?: string[];
+  lastHeartbeatAt?: number;
 }
 export interface Computer {
   id: string;
@@ -163,6 +171,11 @@ export interface State {
   selected: string | null;
   lastNormalComputer: string | null;
   normalLeaseItem: string | null;
+  serviceTurns: Record<
+    string,
+    { totalMs: number; remainingMs: number; ticket: number }
+  >;
+  turnSeq: number;
   applying: string | null;
   displaying: {
     itemKey: string;
@@ -208,6 +221,8 @@ export function createState(deviceId: string): State {
     selected: null,
     lastNormalComputer: null,
     normalLeaseItem: null,
+    serviceTurns: {},
+    turnSeq: 0,
     applying: null,
     displaying: null,
     admission: [],
@@ -647,6 +662,7 @@ export function publish(
   );
   if (!old) s.seq++;
   s.items[key] = item;
+  service.lastHeartbeatAt = now;
   s.revision++;
   tick(s, now);
   return item;
@@ -676,6 +692,7 @@ export function heartbeat(
     }
     return { itemKey: key, status: s.tombstones[key] ? "ended" : "missing" };
   });
+  service.lastHeartbeatAt = now;
   service.computerIds = [
     ...(service.computerIds ?? []).filter((id) => id !== instanceId),
     instanceId,
@@ -706,7 +723,8 @@ export function finishItem(
   const i = s.items[key];
   if (i) {
     requireThat(version >= i.version, "STALE_VERSION", 409);
-    end(s, i, reason, version);
+    tick(s, now);
+    if (s.items[key]) end(s, i, reason, version);
   }
   tick(s, now);
 }
@@ -758,14 +776,57 @@ function switchTo(s: State, next: Item | null, now: number) {
   }
   s.revision++;
 }
+/** Count only a matching, healthy native proof, after the entrance. */
+export function visibleElapsed(s: State, now: number) {
+  if (
+    s.visibleSince === null ||
+    !s.displaying ||
+    s.displaying.itemKey !== s.selected ||
+    s.displaying.generation !== s.generation ||
+    s.health.status !== "healthy"
+  )
+    return 0;
+  return Math.max(
+    0,
+    Math.min(
+      now,
+      s.displaying.confirmedValidUntil,
+      s.health.confirmedValidUntil,
+    ) - s.visibleSince,
+  );
+}
+export function turnDeadline(s: State, now: number) {
+  const item = s.selected ? s.items[s.selected] : null;
+  if (
+    !item ||
+    !hasTurnPeer(s, item) ||
+    s.visibleSince === null ||
+    s.displaying?.itemKey !== item.itemKey ||
+    s.displaying.generation !== s.generation ||
+    s.health.status !== "healthy"
+  )
+    return null;
+  const remaining = s.serviceTurns[item.serviceId]?.remainingMs;
+  if (remaining === undefined) return null;
+  const at = s.visibleSince + remaining;
+  return at <=
+    Math.min(s.displaying.confirmedValidUntil, s.health.confirmedValidUntil) &&
+    at >= now
+    ? at
+    : null;
+}
 export function tick(s: State, now: number) {
+  prepareTurns(s);
   const current = s.selected ? s.items[s.selected] : null;
   if (current && s.visibleSince !== null && now > s.visibleSince) {
+    const elapsed = visibleElapsed(s, now);
     if (current.remainingMs !== null)
-      current.remainingMs = Math.max(
-        0,
-        current.remainingMs - (now - s.visibleSince),
-      );
+      current.remainingMs = Math.max(0, current.remainingMs - elapsed);
+    const turn = s.serviceTurns[current.serviceId];
+    if (current.level !== "urgent" && turn)
+      turn.remainingMs = Math.max(0, turn.remainingMs - elapsed);
+    // Move the accounting cursor even across an unconfirmed gap. A later ACK
+    // starts a fresh interval; it cannot retroactively charge that gap.
     s.visibleSince = now;
   }
   for (const i of Object.values(s.items)) {
@@ -806,6 +867,8 @@ export function tick(s: State, now: number) {
     }
     if (s.items[current.itemKey]?.level === "urgent")
       end(s, current, "completed", current.version);
+    if (current.level !== "urgent" && s.serviceTurns[current.serviceId])
+      yieldTurn(s, current.serviceId);
   }
   for (const id of Object.keys(s.nativeElements))
     if ((s.elementExpiries[id]?.expiresAt ?? 0) <= now) {
@@ -845,6 +908,14 @@ export function tick(s: State, now: number) {
     }
     if (a.createdAt + 86400000 <= now) delete s.actions[key];
   }
+  prepareTurns(s);
+  const turnOwner = s.selected ? s.items[s.selected] : null;
+  if (
+    turnOwner &&
+    s.serviceTurns[turnOwner.serviceId]?.remainingMs === 0 &&
+    hasTurnPeer(s, turnOwner)
+  )
+    yieldTurn(s, turnOwner.serviceId);
   const queue = groups(s);
   let candidate = queue[0]?.representative ?? null;
   const active = s.selected ? s.items[s.selected] : null;
@@ -867,6 +938,14 @@ export function acceptDisplay(s: State, generation: number, now: number) {
   if (generation !== s.generation || !s.selected) return;
   const i = s.items[s.selected];
   if (!i) return;
+  const elapsed = visibleElapsed(s, now);
+  if (i.remainingMs !== null)
+    i.remainingMs = Math.max(0, i.remainingMs - elapsed);
+  if (i.level !== "urgent" && s.serviceTurns[i.serviceId])
+    s.serviceTurns[i.serviceId].remainingMs = Math.max(
+      0,
+      s.serviceTurns[i.serviceId].remainingMs - elapsed,
+    );
   s.health = {
     status: "healthy",
     confirmedValidUntil: now + 60000,
@@ -1036,17 +1115,48 @@ export function snapshot(s: State, now: number, serviceId?: string) {
   const queue = groups(s),
     controller = s.selected ? s.items[s.selected] : null;
   let eta = now;
-  let unknown = false;
+  let unresolvedTier: number | null = null;
+  let urgentSource = false;
+  const seenServices = new Set<string>();
   const estimates = new Map<string, { kind: string; at?: number }>();
   for (const g of queue) {
+    const i = g.representative;
+    const tier = servicePosition(s, i.serviceId);
+    const unknown =
+      urgentSource ||
+      (unresolvedTier !== null && tier > unresolvedTier) ||
+      seenServices.has(i.serviceId);
     estimates.set(
       g.id,
       unknown ? { kind: "await-resolution" } : { kind: "estimate", at: eta },
     );
-    if (g.representative.remainingMs === null) unknown = true;
-    else
+    if (unknown) continue;
+    seenServices.add(i.serviceId);
+    const elapsed = i.itemKey === s.selected ? visibleElapsed(s, now) : 0;
+    if (i.level === "urgent") {
+      if (i.remainingMs === null) urgentSource = true;
+      else
+        eta += Math.max(0, i.remainingMs - elapsed) + i.scene.entryDurationMs;
+    } else {
+      const turn = s.serviceTurns?.[i.serviceId];
+      const budget = Math.max(
+        0,
+        (turn?.remainingMs ?? s.services[i.serviceId].config.visibleMs) -
+          elapsed,
+      );
       eta +=
-        g.representative.remainingMs + g.representative.scene.entryDurationMs;
+        Math.min(
+          budget,
+          i.remainingMs === null
+            ? Infinity
+            : Math.max(0, i.remainingMs - elapsed),
+        ) +
+        (i.itemKey === s.selected && s.visibleSince !== null
+          ? Math.max(0, s.visibleSince - now)
+          : i.scene.entryDurationMs);
+      if (i.remainingMs === null || i.remainingMs - elapsed > budget)
+        unresolvedTier = tier;
+    }
   }
   const items = Object.values(s.items)
     .filter((i) => !serviceId || i.serviceId === serviceId)
@@ -1114,12 +1224,30 @@ export function snapshot(s: State, now: number, serviceId?: string) {
               validUntil: s.displaying.confirmedValidUntil,
             }
           : undefined;
+      const turn = hasTurnPeer(s, i)
+        ? s.serviceTurns?.[i.serviceId]
+        : undefined;
       return {
         ...publicItem,
-        playback: {
+        lifetime: {
           totalMs: i.remainingMs === null ? null : (originalVisibleMs ?? null),
           remainingMs:
             i.remainingMs === null
+              ? null
+              : Math.max(0, i.remainingMs - elapsed),
+        },
+        playback: {
+          totalMs: turn
+            ? Math.min(turn.totalMs, originalVisibleMs ?? Infinity)
+            : i.remainingMs === null
+              ? null
+              : (originalVisibleMs ?? null),
+          remainingMs: turn
+            ? Math.max(
+                0,
+                Math.min(turn.remainingMs, i.remainingMs ?? Infinity) - elapsed,
+              )
+            : i.remainingMs === null
               ? null
               : Math.max(0, i.remainingMs - elapsed),
           running,

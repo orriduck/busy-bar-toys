@@ -32,3 +32,18 @@ class CloudRoutingTest(unittest.TestCase):
         shown=Mock();router.on_shown=shown
         item=Notification('one','info','github','GH','NEW','detail',source='github')
         queue.on_shown(item);shown.assert_called_once_with(item)
+
+    def test_runtime_rejects_missing_same_or_wrong_template_agent_notifier(self):
+        from types import SimpleNamespace
+        from pathlib import Path
+        import tempfile
+        from unittest.mock import patch
+        from busybar_service import cloud_watch
+        for target,template in ((None,'notifier'),('status','notifier'),('other','agent')):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                agent=Mock();agent.config={'serviceId':'status','template':'agent','computerId':'pc'}
+                other=Mock();other.config={'serviceId':'other','template':template,'computerId':'pc'}
+                with patch.object(cloud_watch,'producers',return_value={'agent':agent,'other':other}), \
+                     patch.object(cloud_watch,'load_computer',return_value={'routes':{'agent-notifier':target}}):
+                    with self.assertRaisesRegex(CloudError,'setup_required_agent_notifier'):
+                        cloud_watch.watch(SimpleNamespace(reduced_motion=True),Path(directory),Path(directory))

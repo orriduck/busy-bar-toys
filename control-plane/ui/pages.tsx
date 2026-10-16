@@ -173,6 +173,7 @@ function ServiceRows({
             readOnly={readOnly}
             mode="access"
             service={service}
+            snapshot={snapshot}
             configRevision={snapshot.configRevision}
             mutate={mutate}
             pending={pending}

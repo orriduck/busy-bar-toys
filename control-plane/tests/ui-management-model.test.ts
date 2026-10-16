@@ -327,3 +327,52 @@ it.each(["missing", "constructor", "__proto__"])(
     expect(s).toEqual(before);
   },
 );
+
+describe("service runtime details", () => {
+  it("reports service-specific heartbeat, queue and global tier without borrowing device health", async () => {
+    const { serviceRuntime } = await import("../ui/service-runtime");
+    const m = await import("../src/model");
+    const s = m.createState("d"),
+      at = 1800000000000;
+    m.registerService(
+      s,
+      { id: "one", name: "One", template: "agent" },
+      "h",
+      "e",
+      at,
+    );
+    m.registerService(
+      s,
+      { id: "two", name: "Two", template: "notifier" },
+      "h",
+      "e",
+      at,
+    );
+    for (const id of ["one", "two"]) s.services[id].computerId = "pc";
+    s.computers.pc = {
+      id: "pc",
+      credentialHash: "h",
+      createdAt: at,
+      serviceOrder: ["one", "two"],
+    };
+    m.heartbeat(
+      s,
+      "one",
+      { epoch: "e", instanceId: "mac", itemIds: [], validUntil: at + 60000 },
+      at,
+    );
+    let snap = m.snapshot(s, at + 1);
+    expect(serviceRuntime(snap, snap.services[0])).toMatchObject({
+      connection: "Online",
+      tier: 1,
+      queued: 0,
+      display: "Idle",
+    });
+    expect(serviceRuntime(snap, snap.services[1])).toMatchObject({
+      connection: "Not reported",
+      tier: 2,
+    });
+    snap = m.snapshot(s, at + 100000);
+    expect(serviceRuntime(snap, snap.services[0]).connection).toBe("Offline");
+  });
+});

@@ -28,6 +28,7 @@ import type { Snapshot, Mutate, Service, CredentialValue } from "./api";
 import { cn } from "./lib/utils";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
+import { ServiceDetails } from "./service-details";
 import { ServiceEditor } from "./services";
 import { SettingNumber } from "./setting-number";
 import { orderedDeviceGroups, serviceLabel } from "./service-layout";
@@ -301,6 +302,9 @@ export function ConfigurationList({
                   Read only
                 </Badge>
               )}
+            </div>
+            <div className="mb-4 border-b border-border pb-4">
+              <ServiceDetails snapshot={snapshot} service={service} />
             </div>
             <ServiceEditor
               service={service}

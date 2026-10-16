@@ -19,7 +19,7 @@ from busybar_apps.adsbao.checker import configured_checker
 from busybar_apps.adsbao.source import aircraft_source
 from busybar_notifier.source import Poller
 from busybar_notifier.config import read_config
-from .cloud_adapter import AgentRenderer, CloudQueue, RoutedCloudQueue
+from .cloud_adapter import AgentRenderer, AgentSignals, CloudQueue, RoutedCloudQueue
 from .cloud_registration import FILE as COMPUTER_FILE, load_computer
 
 LOG = logging.getLogger('busy-bar')
@@ -95,12 +95,25 @@ def watch(args,runtime,repo):
                               load_dot_thread_ids(Path.home()/'.codex/.codex-global-state.json')|dot_ids)
         network=NetworkSampler(); reduced=getattr(args,'reduced_motion',False)
         agent_client=next((client for key,client in clients.items() if client.config.get('template',key)=='agent'),None)
-        agent=AgentRenderer(agent_client,reduced=reduced) if agent_client else None
+        agent=None
+        if agent_client:
+            computer_mode=any(c.config.get('computerId') for c in clients.values())
+            routes=load_computer(runtime)['routes'] if computer_mode else {}
+            notify_client=next((c for c in clients.values() if c.config['serviceId']==routes.get('agent-notifier')),None) if computer_mode else clients.get('notifier')
+            if (notify_client is None or notify_client.config['serviceId']==agent_client.config['serviceId']
+                    or notify_client.config.get('template','notifier')!='notifier'):
+                raise CloudError('setup_required_agent_notifier')
+            agent=AgentSignals(AgentRenderer(agent_client,reduced=reduced),CloudQueue(notify_client,reduced=reduced))
         view=ViewMode(runtime/'cloud-view.json'); known_turns=set(); cleared=set()
         if agent:
             def tombstone(item_id,reason):
                 if reason=='cleared': cleared.add(item_id)
-            agent_client.on_tombstone=tombstone
+            for client in (agent_client, notify_client):
+                previous=client.on_tombstone
+                def chained(item_id,reason,previous=previous):
+                    tombstone(item_id,reason)
+                    if previous: previous(item_id,reason)
+                client.on_tombstone=chained
         computer_mode=any(client.config.get('computerId') for client in clients.values())
         if computer_mode or 'notifier' in clients:
             sources=notifier_sources(read_config(runtime),runtime,inbox=runtime/'inbox',refresh=lambda name:poller.refresh(name))
@@ -155,7 +168,7 @@ def watch(args,runtime,repo):
             if agent:
                 if view.allows(registry.active_turns(now),known_turns=known_turns):
                     if now>=next_draw:
-                        agent.show(registry.select(now),now,registry.active_count(now),network.sample()); next_draw=now+5
+                        agent.show_tasks(registry.visible_tasks(now),now,registry.active_count(now),network.sample()); next_draw=now+5
                     if agent.due: agent.advance()
                 else: agent.hide()
             if now>=next_status:

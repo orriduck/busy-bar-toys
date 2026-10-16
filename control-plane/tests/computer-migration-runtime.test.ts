@@ -59,11 +59,15 @@ it("backfills an already-playing legacy source lease and claims its migrated ord
     const legacy = JSON.parse(row.value);
     delete legacy.normalLeaseItem;
     delete legacy.lastNormalComputer;
+    delete legacy.serviceTurns;
+    delete legacy.turnSeq;
     ctx.storage.sql.exec(
       "UPDATE control SET value=? WHERE id=1",
       JSON.stringify(legacy),
     );
     const restored = store.load()!;
+    expect(restored.serviceTurns).toEqual({});
+    expect(restored.turnSeq).toBe(0);
     expect(restored.normalLeaseItem).toBe(s.selected);
     expect(restored.lastNormalComputer).toBe("legacy-mac");
     migrateServiceOrders(restored, now);

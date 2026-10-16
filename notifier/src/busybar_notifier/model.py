@@ -29,7 +29,11 @@ class Notification:
     payload: object = field(default=None, compare=False, hash=False, repr=False)
     source: str | None = field(default=None, compare=False)
 
+    exit: str | None = None
+
     def __post_init__(self):
+        if self.exit not in (None, "source", "finite"):
+            raise ValueError("Unknown notification exit")
         if self.level not in LEVEL_RANK:
             raise ValueError(f"Unknown notification level: {self.level}")
 

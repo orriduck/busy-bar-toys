@@ -43,6 +43,7 @@ import {
   snapshot,
   text,
   tick,
+  turnDeadline,
   validateElements,
   validateScene,
 } from "./model";
@@ -433,6 +434,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           "/api/publish",
           "/api/update",
           "/api/end",
+          "/api/withdraw",
           "/api/heartbeat",
           "/api/assets",
           "/api/input",
@@ -716,8 +718,12 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         const id = producer();
         const results = heartbeat(s, id, body, now);
         response = json({ results, snapshot: snapshot(s, now, id) });
-      } else if (path === "/api/end" && method === "POST") {
+      } else if (
+        (path === "/api/end" || path === "/api/withdraw") &&
+        method === "POST"
+      ) {
         const id = producer();
+        const reason = path === "/api/withdraw" ? "withdrawn" : "resolved";
         requireThat(body.epoch === s.services[id].epoch, "EPOCH_EXPIRED", 409);
         const key = JSON.stringify([
           id,
@@ -737,14 +743,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             epoch: s.services[id].epoch,
             expiresAt: s.services[id].epochExpiresAt,
             version: integer(body.version, 1, Number.MAX_SAFE_INTEGER),
-            reason: "resolved",
+            reason,
           };
           s.revision++;
         }
         finishItem(
           s,
           key,
-          "resolved",
+          reason,
           integer(body.version, 1, Number.MAX_SAFE_INTEGER),
           now,
         );
@@ -1013,6 +1019,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     const current = s.selected ? s.items[s.selected] : null;
     if (current && current.remainingMs !== null && s.visibleSince !== null)
       deadlines.push(Math.max(now, s.visibleSince) + current.remainingMs);
+    const turnAt = turnDeadline(s, now);
+    if (turnAt !== null) deadlines.push(turnAt);
     const firstCommand = s.commands[0];
     if (firstCommand)
       deadlines.push(
@@ -1106,6 +1114,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       const admission = live.admission.find((a) => a.itemKey === cmd.itemKey);
       if (admission) admission.version = cmd.itemVersion;
     }
+    // Settle the old bounded proof before a renewal extends it. A delayed ACK
+    // cannot charge an unconfirmed gap or confirm a generation that just yielded.
+    tick(live, acceptedAt);
+    if (cmd.generation !== live.generation) return;
     const futureEntrance = live.commands.some(
       (c) =>
         c.generation === live.generation && !c.refresh && c.kind === "draw",

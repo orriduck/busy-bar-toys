@@ -258,3 +258,61 @@ class AdapterTest(unittest.TestCase):
             self.assertGreater(record['version'],version)
             self.assertEqual(record['scene'],scene)
             self.assertEqual([b for _,p,b in producer.http.calls if p=='/api/publish'][-1]['app'],'custom-two')
+
+class AgentNotificationRoutingTest(unittest.TestCase):
+    producer = AdapterTest.producer
+    def test_waiting_uses_separate_notifier_and_resolves_on_working(self):
+        from busybar_service.cloud_adapter import AgentSignals
+        with tempfile.TemporaryDirectory() as directory:
+            status=self.producer(directory,'agent'); notices=self.producer(directory,'agent-notifier')
+            renderer=AgentSignals(AgentRenderer(status,reduced=True),CloudQueue(notices,reduced=True))
+            task=Task('session','turn','codex','project','working',100,100)
+            renderer.show(task,100)
+            self.assertFalse(status.state.records['agent'].get('cleared'))
+            task.state='waiting';renderer.show(task,101)
+            self.assertTrue(status.state.records['agent']['cleared'])
+            record=next(iter(notices.state.records.values()))
+            self.assertEqual((record['kind'],record['level'],record['exit']),('condition','attention','source'))
+            self.assertIn('input',record['title'].lower())
+            occurrence=record['itemId'];renderer.show(task,102)
+            self.assertEqual(next(iter(notices.state.records.values()))['itemId'],occurrence)
+            task.state='working';renderer.show(task,103)
+            self.assertTrue(next(iter(notices.state.records.values()))['cleared'])
+            self.assertFalse(status.state.records['agent'].get('cleared'))
+
+    def test_withdrawal_is_durable_until_server_ack_and_does_not_republish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory);queue=CloudQueue(producer,reduced=True)
+            queue.push([Notification('one','info','app','APP','ONE',source='test')]);producer.flush()
+            queue.withdraw('test','one');producer.flush()
+            requests=[b for _,p,b in producer.http.calls if p=='/api/withdraw']
+            self.assertEqual(len(requests),1)
+            self.assertEqual(requests[0]['itemId'],producer.state.records['test:one']['itemId'])
+            self.assertFalse(producer.state.data['ends'])
+
+    def test_two_waiting_sessions_remain_independent_while_other_task_runs(self):
+        from busybar_service.cloud_adapter import AgentSignals
+        with tempfile.TemporaryDirectory() as directory:
+            status=self.producer(directory,'agent');notices=self.producer(directory,'agent-notifier')
+            renderer=AgentSignals(AgentRenderer(status,reduced=True),CloudQueue(notices,reduced=True))
+            a=Task('a','1','codex','A','waiting',100,100);b=Task('b','2','codex','B','waiting',100,101)
+            work=Task('c','3','codex','C','working',100,101)
+            renderer.show_tasks([a,b,work],101)
+            ids={k:r['itemId'] for k,r in notices.state.records.items()}
+            self.assertEqual(len(ids),2);self.assertFalse(status.state.records['agent'].get('cleared'))
+            renderer.show_tasks([a,work],102)
+            live={k:r['itemId'] for k,r in notices.state.records.items() if not r.get('cleared')}
+            self.assertEqual(len(live),1);self.assertTrue(all(ids[k]==v for k,v in live.items()))
+
+    def test_withdrawal_failure_remains_in_outbox_for_retry(self):
+        from busybar_shared.cloud import CloudError
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory);queue=CloudQueue(producer,reduced=True)
+            queue.push([Notification('one','info','app','APP','ONE',source='test')]);producer.flush()
+            queue.withdraw('test','one')
+            with patch.object(producer.http,'request',side_effect=CloudError('offline')):
+                with self.assertRaises(CloudError):producer.flush()
+            self.assertTrue(producer.state.data['ends'])
+            producer.flush();self.assertFalse(producer.state.data['ends'])
+            self.assertTrue(producer.state.records['test:one']['cleared'])

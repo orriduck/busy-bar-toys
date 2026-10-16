@@ -126,8 +126,11 @@ class TaskRegistry:
             return task
         return None
 
+    def visible_tasks(self, now: float) -> list[Task]:
+        return [candidate for task in self._tasks.values() if (candidate := self._visible(task, now))]
+
     def select(self, now: float) -> Task | None:
-        visible = [candidate for task in self._tasks.values() if (candidate := self._visible(task, now))]
+        visible = self.visible_tasks(now)
         priority = {"waiting": 5, "working": 4, "error": 3, "unknown": 2, "done": 1, "stopped": 1}
         return max(visible, key=lambda task: (priority[task.state], task.updated_at), default=None)
 
