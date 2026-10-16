@@ -303,14 +303,14 @@ function App() {
             </Alert>
           )}
           {session === null ? (
-            <MotionPage key="connecting" active>
+            <MotionPage key="connecting" className="auth-slot" active>
               <section className="signin">
                 <h1>Connecting…</h1>
                 <Skeleton className="h-12 w-64" />
               </section>
             </MotionPage>
           ) : !session ? (
-            <MotionPage key="signin" active>
+            <MotionPage key="signin" className="auth-slot" active>
               <SignIn
                 demo={demo === true}
                 onSignIn={beginSession}
@@ -318,7 +318,7 @@ function App() {
               />
             </MotionPage>
           ) : !snapshot ? (
-            <MotionPage key="loading" active>
+            <MotionPage key="loading" className="auth-slot" active>
               <section className="signin">
                 <h1>Loading your device…</h1>
                 <Skeleton className="h-12 w-64" />

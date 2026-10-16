@@ -4,6 +4,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { listMotion, motionTiming, type RowPosition } from "./motion-model";
 import { measuredMotionScope } from "./motion-scope";
+import { cn } from "./lib/utils";
 
 gsap.registerPlugin(useGSAP);
 
@@ -26,9 +27,11 @@ const motionEnvironment = () =>
 export function MotionPage({
   active,
   children,
+  className,
 }: {
   active: boolean;
   children: ReactNode;
+  className?: string;
 }) {
   const scope = useRef<HTMLDivElement>(null);
   const visited = useRef(false);
@@ -67,7 +70,7 @@ export function MotionPage({
   );
   return (
     <MotionContext.Provider value={{ active: visible, enabled }}>
-      <div ref={scope} className="page-slot" hidden={!active}>
+      <div ref={scope} className={cn("page-slot", className)} hidden={!active}>
         {children}
       </div>
     </MotionContext.Provider>
