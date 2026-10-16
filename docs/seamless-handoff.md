@@ -9,3 +9,10 @@ A shared ID that changes widget type keeps the existing selective-clear behavior
 An empty queue still clears the application and returns to the calendar. Cold start, recovery from an in-flight command after a crash, and a sent draw whose response is uncertain retain a full clear and complete replay. These recovery paths can briefly show the calendar because the server cannot safely infer the device's widgets. Recovery retains retry backoff and does not count unconfirmed time.
 
 The regression device is a mock. It records an empty native application after each request and rejects a same-ID type change without a selective clear. Tests cover same-ID/new-ID/type-change handoffs, delayed multi-command asset preparation, a late old-generation ACK, bounded slot reclamation, uncertain responses, and return to calendar when no scene remains. No mock scene is sent to production by these tests.
+
+
+Production acceptance after PR46 found a calendar sample during the first synthetic notification-to-Agent handoff. Two later warm handoffs did not show the calendar in their sampled frames; this is not proof about every frame. A 16-asset synthetic capacity test retained the application but showed a white anchor pixel and an upstream 409. The occurrence was withdrawn and the Agent resumed. The calendar sample's cause remains unconfirmed.
+
+The anchor now uses an opaque black one-pixel XPM bitmap. The previous rectangle used a text-style `color` field; firmware rectangles instead default to a white border unless configured with their fill/border fields. This correction needs its own real-device acceptance.
+
+Bounded server logs identify recovery (`inflight_restart` or `uncertain_draw`), full versus selective clears, and prepared/reclaimed handoffs. They record only generation, counts and remaining expiry time. They omit device/computer/service identifiers, content, credentials, locations and asset data. A prolonged upload or retry can still outlast the outgoing widget TTL and expose the calendar; the logs help distinguish that case from an explicit clear or recovery. No new playback guarantee is inferred from logs.

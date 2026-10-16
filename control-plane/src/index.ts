@@ -118,11 +118,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     }
     if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
-      this.recoverScene(s, Date.now());
+      this.recoverScene(s, Date.now(), "inflight_restart");
       this.save(s);
     }
   }
-  private recoverScene(s: State, now: number) {
+  private recoverScene(
+    s: State,
+    now: number,
+    reason: "inflight_restart" | "uncertain_draw",
+  ) {
+    console.info("Display recovery", { reason, generation: s.generation });
     tick(s, now);
     const item = s.selected ? s.items[s.selected] : null;
     s.nativeRecoveryRequired = false;
@@ -1194,19 +1199,21 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     while (reserved.has(`control-handoff-${index}`)) index++;
     return {
       id: `control-handoff-${index}`,
-      type: "rectangle",
+      type: "xpmbitmap",
       display: "front",
       x: 0,
       y: 0,
-      width: 1,
-      height: 1,
-      color: "#000000FF",
+      data: "! XPM2\n1 1 1 1\nB c #000000\nB\n",
     };
   }
   private reclaimHandoff(s: State, command: Command, now: number) {
     command.handoffReclaimed = true;
     const anchor = this.handoffAnchor(s);
     const old = Object.keys(s.nativeElements);
+    console.info("Display handoff reclaim", {
+      generation: s.generation,
+      outgoingElements: old.length,
+    });
     const prefix: Command[] = [];
     const add = (
       kind: "draw" | "clear",
@@ -1239,6 +1246,18 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       .filter((e) => incoming.has(e.id) && incoming.get(e.id)!.type !== e.type)
       .map((e) => e.id);
     const obsolete = old.filter((e) => !incoming.has(e.id)).map((e) => e.id);
+    console.info("Display handoff prepared", {
+      generation: s.generation,
+      outgoingElements: old.length,
+      incomingElements: incoming.size,
+      typeConflicts: conflicts.length,
+      obsoleteElements: obsolete.length,
+      outgoingExpiryMs: old.length
+        ? Math.min(
+            ...old.map((e) => s.elementExpiries[e.id]?.expiresAt ?? now),
+          ) - now
+        : null,
+    });
     const before: Command[] = [],
       after: Command[] = [];
     const item = s.selected ? s.items[s.selected] : null;
@@ -1399,7 +1418,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             this.save(s);
             break;
           }
-          this.recoverScene(s, now);
+          this.recoverScene(s, now, "uncertain_draw");
         }
         tick(s, now);
         s.commands = s.commands.filter(
@@ -1500,7 +1519,13 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               409,
             );
           });
-          if (cmd.kind === "clear")
+          if (cmd.kind === "clear") {
+            console.info("Display clear", {
+              generation: cmd.generation,
+              scope: cmd.elementIds ? "selective" : "full",
+              elementCount: cmd.elementIds?.length ?? null,
+              hasNextScene: !!s.selected,
+            });
             await client.request(
               "DELETE",
               "/display/draw?application_name=" + NAMESPACE,
@@ -1508,7 +1533,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                 ? { application_name: NAMESPACE, element_ids: cmd.elementIds }
                 : undefined,
             );
-          else if (cmd.kind === "upload") {
+          } else if (cmd.kind === "upload") {
             const slot = s.slots.find(
               (v) => v.slot === cmd.slot && v.hash === cmd.hash,
             );

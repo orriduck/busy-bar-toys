@@ -1399,11 +1399,19 @@ it("reclaims full asset slots through an anchor without exposing calendar", asyn
   });
   const screen = new Set(Array.from({ length: 16 }, (_, i) => `old-${i}`));
   const empty: boolean[] = [];
+  let anchorIsOpaqueBlack = false;
   setUpstream(async (request) => {
     if (new URL(request.url).pathname.endsWith("/display/draw")) {
       const body = request.body
         ? ((await request.json()) as {
-            elements?: { id: string }[];
+            elements?: {
+              id: string;
+              type: string;
+              data?: string;
+              fill?: string;
+              fill_colors?: string[];
+              border_width?: number;
+            }[];
             element_ids?: string[];
           })
         : null;
@@ -1411,7 +1419,35 @@ it("reclaims full asset slots through an anchor without exposing calendar", asyn
         if (body?.element_ids)
           for (const id of body.element_ids) screen.delete(id);
         else screen.clear();
-      } else for (const e of body!.elements!) screen.add(e.id);
+      } else
+        for (const e of body!.elements!) {
+          screen.add(e.id);
+          if (e.id.startsWith("control-handoff-")) {
+            if (e.type === "xpmbitmap" && e.data) {
+              const lines = e.data.trim().split("\n");
+              const [width, height, count, chars] = lines[1]
+                .split(" ")
+                .map(Number);
+              const palette = new Map(
+                lines
+                  .slice(2, 2 + count)
+                  .map((line) => [
+                    line.slice(0, chars),
+                    line.slice(chars).trim().replace(/^c /, "").toUpperCase(),
+                  ]),
+              );
+              anchorIsOpaqueBlack =
+                width === 1 &&
+                height === 1 &&
+                palette.get(lines[2 + count].slice(0, chars)) === "#000000";
+            } else
+              anchorIsOpaqueBlack =
+                e.type === "rectangle" &&
+                e.fill === "solid" &&
+                e.fill_colors?.[0] === "#000000FF" &&
+                e.border_width === 0;
+          }
+        }
       if (!screen.size) empty.push(true);
     }
     return Response.json({ ok: true });
@@ -1437,6 +1473,7 @@ it("reclaims full asset slots through an anchor without exposing calendar", asyn
   const final = (await displayed(admin)) as { displaying: { itemKey: string } };
   expect(final.displaying.itemKey).toContain("two");
   expect(empty).toEqual([]);
+  expect(anchorIsOpaqueBlack).toBe(true);
   expect([...screen]).toEqual(["next"]);
 });
 
