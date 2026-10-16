@@ -1,81 +1,157 @@
+import { useState } from "react";
+import { ChevronDown, LockKeyhole } from "lucide-react";
 import type { Snapshot, Service } from "./api";
 import { time } from "./api";
 import { serviceRuntime } from "./service-runtime";
+import { serviceLabel } from "./service-layout";
+import { cn } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
+import { Button } from "./components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./components/ui/collapsible";
+import { Separator } from "./components/ui/separator";
 import { SettingNumber } from "./setting-number";
+import { MotionFeedback, MotionReveal } from "./motion";
+
+/** Keep operational context visible; registration diagnostics are opt-in. */
 export function ServiceDetails({
   snapshot,
   service,
+  readOnly = false,
 }: {
   snapshot: Snapshot;
   service: Service;
+  readOnly?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const status = serviceRuntime(snapshot, service);
+  const bridges = [
+    service.config.allowPreview && "Live preview",
+    service.config.allowInput && "Bar buttons",
+  ].filter(Boolean);
   return (
-    <div className="service-runtime" aria-label="Service runtime">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Badge variant="secondary">{status.connection}</Badge>
-        <span className="text-sm text-muted-foreground">
-          {service.template === "agent"
-            ? "Agent status"
-            : service.template === "notifier"
-              ? "Notifier"
-              : "Custom publisher"}
-        </span>
-        {status.tier !== null && (
-          <Badge
-            variant="outline"
-            title="Position is a global priority tier across computers. Smaller wins; equal tiers rotate by Hold."
+    <div className="service-runtime min-w-0" aria-label="Service runtime">
+      <header className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2
+            tabIndex={-1}
+            className="max-w-full text-base font-semibold leading-snug [overflow-wrap:anywhere] outline-none"
           >
-            Tier <SettingNumber value={status.tier} />
-          </Badge>
-        )}
-      </div>
-      <dl className="mt-3 grid min-w-0 grid-cols-2 gap-x-5 gap-y-3 text-sm">
-        <div>
-          <dt className="text-muted-foreground">Display</dt>
-          <dd className="mt-1">{status.display}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Queued</dt>
-          <dd className="mt-1">
-            <SettingNumber value={status.queued} />
-            {status.paused > 0 && (
+            {serviceLabel(service)}
+          </h2>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {service.template === "agent"
+                ? "Agent status"
+                : service.template === "notifier"
+                  ? "Notifier"
+                  : "Custom publisher"}
+            </span>
+            {status.tier !== null && (
               <>
-                {" "}
-                · <SettingNumber value={status.paused} /> paused
+                <span aria-hidden="true">·</span>
+                <span title="Global priority tier. Smaller wins; equal tiers rotate by Hold.">
+                  Tier <SettingNumber value={status.tier} />
+                </span>
               </>
             )}
-          </dd>
+            {readOnly && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="inline-flex items-center gap-1">
+                  <LockKeyhole className="size-3" aria-hidden="true" />
+                  Read only
+                </span>
+              </>
+            )}
+          </div>
         </div>
-        <div>
-          <dt className="text-muted-foreground">Last heartbeat</dt>
-          <dd className="mt-1 tabular-nums">{time(status.lastHeartbeat)}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Capabilities</dt>
-          <dd className="mt-1">
-            {[
-              service.config.allowPreview && "Preview",
-              service.config.allowInput && "Bar buttons",
-            ]
-              .filter(Boolean)
-              .join(" · ") || "Publisher only"}
-          </dd>
-        </div>
-        <div className="col-span-2 min-w-0">
-          <dt className="text-muted-foreground">Computer</dt>
-          <dd className="mt-1 break-all font-mono text-xs">
-            {service.computerId ?? "Not assigned"}
-          </dd>
+        <Badge
+          variant="ghost"
+          aria-label={`Publisher ${status.connection.toLowerCase()}`}
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "size-1.5 rounded-full bg-muted-foreground",
+              status.connection === "Online" && "bg-success",
+              status.connection === "Offline" && "bg-destructive",
+            )}
+          />
+          <MotionFeedback value={status.connection}>
+            {status.connection}
+          </MotionFeedback>
+        </Badge>
+      </header>
+      <Collapsible open={expanded} onOpenChange={setExpanded} className="mt-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <MotionFeedback value={status.display}>
+              {status.display}
+            </MotionFeedback>
+            {status.queued > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>
+                  <SettingNumber value={status.queued} /> queued
+                </span>
+              </>
+            )}
+            {status.paused > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>
+                  <SettingNumber value={status.paused} /> paused
+                </span>
+              </>
+            )}
+          </div>
+          <CollapsibleTrigger
+            render={<Button type="button" variant="disclosure" size="sm" />}
+            className="group shrink-0"
+          >
+            Details
+            <ChevronDown
+              data-icon="inline-end"
+              className="transition-transform duration-200 group-aria-expanded:rotate-180"
+            />
+          </CollapsibleTrigger>
         </div>
         {status.current && (
-          <div className="col-span-2 min-w-0">
-            <dt className="text-muted-foreground">Current message</dt>
-            <dd className="mt-1 break-words">{status.current}</dd>
-          </div>
+          <p
+            className="mt-1 line-clamp-2 text-sm text-muted-foreground [overflow-wrap:anywhere]"
+            title={status.current}
+          >
+            {status.current}
+          </p>
         )}
-      </dl>
+        <CollapsibleContent className="motion-collapse">
+          <MotionReveal className="pt-3">
+            <dl className="grid min-w-0 grid-flow-dense grid-cols-[6.5rem_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2.5 text-xs">
+              <dt className="text-muted-foreground">Service ID</dt>
+              <dd className="min-w-0 select-all font-mono [overflow-wrap:anywhere]">
+                {service.id}
+              </dd>
+              <dt className="text-muted-foreground">Computer ID</dt>
+              <dd className="min-w-0 select-all font-mono [overflow-wrap:anywhere]">
+                {service.computerId ?? "Not assigned"}
+              </dd>
+              <dt className="text-muted-foreground">Last heartbeat</dt>
+              <dd className="min-w-0 tabular-nums">
+                {status.lastHeartbeat === null
+                  ? "Not received"
+                  : time(status.lastHeartbeat)}
+              </dd>
+              <dt className="text-muted-foreground">Bridges</dt>
+              <dd className="min-w-0">{bridges.join(" · ") || "None"}</dd>
+            </dl>
+          </MotionReveal>
+        </CollapsibleContent>
+      </Collapsible>
+      <Separator className="my-4" />
     </div>
   );
 }

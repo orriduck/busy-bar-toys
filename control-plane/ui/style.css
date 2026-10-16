@@ -1088,13 +1088,10 @@ a {
 .configuration-lock { width:.875rem; height:.875rem; margin:0 .625rem; color:var(--muted-foreground); flex-shrink:0; }
 .configuration-select { flex:1; min-width:0; height:2.75rem; padding:0 .5rem; gap:.5rem; font-weight:500; }
 .configuration-select>svg { color:var(--muted-foreground); width:.875rem; flex-shrink:0; }
-.configuration-editor-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:.75rem; margin-bottom:1.5rem; }
-.configuration-editor-heading h2 { font-size:1rem; font-weight:600; margin:0; }
-.configuration-editor-heading p { font-size:.7rem; color:var(--muted-foreground); margin:.4rem 0 0; }
-.configuration-editor-heading>div { min-width:0; }
 .configuration-back { display:none; }
 .configuration-status { min-height:1rem; margin:.5rem .5rem 0; font-size:.75rem; color:var(--muted-foreground); }
 .configuration-editor[hidden] { display:none; }
+.service-runtime h2 { margin:0; font-size:1rem; line-height:1.4; font-weight:600; }
 @media(max-width:900px) {
  .configuration-workspace { grid-template-columns:minmax(0,1fr); }
  .configuration-order-pane { border-right:0; }
