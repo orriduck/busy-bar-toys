@@ -37,7 +37,7 @@ describe("policy preset and precision controls", () => {
     const f = policyFields.heartbeatMs,
       position = sliderPosition(90, f.stops);
     expect(sliderValue(position + 0.5, f.stops, f.scale)).toBe(90000);
-    expect(sliderValue(position + 2, f.stops, f.scale)).toBeGreaterThan(90000);
+    expect(sliderValue(position + 2, f.stops, f.scale)).toBe(90000);
     const value = sliderValue(position + 5, f.stops, f.scale);
     expect(value).toBeGreaterThan(90000);
     expect(value).toBeLessThan(120000);
@@ -70,7 +70,13 @@ describe("preset-only slider detents", () => {
         );
         if (position < 98)
           expect(
-            sliderValue(position + 2, f.stops, f.scale, detents),
+            sliderNudge(
+              Math.round(stop * f.scale),
+              1,
+              f.stops,
+              f.scale,
+              detents,
+            ),
           ).toBeGreaterThan(Math.round(stop * f.scale));
       }
     },
@@ -104,4 +110,19 @@ it("keyboard movement leaves integer rounding plateaus and respects range ends",
   expect(sliderNudge(1, -1, f.stops, f.scale, detents)).toBeLessThan(1);
   expect(sliderNudge(0, -1, f.stops, f.scale, detents)).toBe(0);
   expect(sliderNudge(1000, 1, f.stops, f.scale, detents)).toBe(1000);
+});
+
+it("uses a visible pointer snap zone without reversing keyboard movement", () => {
+  const f = policyFields.priority,
+    detents = f.presets.map((p) => p.value);
+  const position = sliderPosition(50, f.stops);
+  expect(sliderValue(position - 2, f.stops, 1, detents)).toBe(50);
+  expect(sliderValue(position + 2, f.stops, 1, detents)).toBe(50);
+  expect(sliderValue(position + 5, f.stops, 1, detents)).toBeGreaterThan(50);
+  for (let value = 1; value < 1000; value++) {
+    expect(sliderNudge(value, 1, f.stops, 1, detents)).toBeGreaterThan(value);
+    expect(sliderNudge(value, -1, f.stops, 1, detents)).toBeLessThan(value);
+  }
+  expect(sliderNudge(49, 1, f.stops, 1, detents)).toBe(50);
+  expect(sliderNudge(51, -1, f.stops, 1, detents)).toBe(50);
 });

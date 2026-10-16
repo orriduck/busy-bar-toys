@@ -82,7 +82,7 @@ export function sliderValue(
   const raw = (Math.max(0, Math.min(100, position)) / 100) * (stops.length - 1);
   const clamped = Math.max(0, Math.min(100, position));
   const snap = detents.find(
-    (stop) => Math.abs(sliderPosition(stop, stops) - clamped) <= 0.8,
+    (stop) => Math.abs(sliderPosition(stop, stops) - clamped) <= 3,
   );
   if (snap !== undefined) return Math.round(snap * scale);
   const index = Math.min(stops.length - 2, Math.floor(raw));
@@ -100,7 +100,18 @@ export function sliderNudge(
   detents: readonly number[],
 ) {
   const position = sliderPosition(value / scale, stops);
-  const next = sliderValue(position + direction * 2, stops, scale, detents);
+  const candidate = sliderValue(position + direction * 2, stops, scale, []);
+  // Keyboard movement is directional: land on a crossed preset, then leave it
+  // on the next key. Pointer magnetism must never pull a key step backwards.
+  const crossed = detents
+    .map((stop) => Math.round(stop * scale))
+    .filter((stop) =>
+      direction === 1
+        ? stop > value && stop <= candidate
+        : stop < value && stop >= candidate,
+    )
+    .sort((a, b) => direction * (a - b));
+  const next = crossed[0] ?? candidate;
   return Math.max(
     Math.round(stops[0] * scale),
     Math.min(

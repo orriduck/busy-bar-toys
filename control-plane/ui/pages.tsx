@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, time } from "./api";
 import type { Mutate, Snapshot } from "./api";
 import { Icon, serviceName } from "./common";
@@ -7,6 +7,9 @@ import { Empty, EmptyHeader, EmptyDescription } from "./components/ui/empty";
 import { cn } from "./lib/utils";
 import type { IconName } from "./common";
 import { ServiceEditor, Register } from "./services";
+import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
+import { ItemGroup, ItemSeparator } from "./components/ui/item";
+import { Separator } from "./components/ui/separator";
 import { Badge } from "./components/ui/badge";
 import { MoreHorizontal } from "lucide-react";
 import {
@@ -14,6 +17,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuGroup,
 } from "./components/ui/dropdown-menu";
 import { useComputerBinding } from "./computer-binding";
 import { deviceGroups } from "./service-layout";
@@ -97,18 +101,21 @@ export function ServicesPage({
       )}
       <div className="service-list">
         {deviceGroups(snapshot.services, snapshot.items).map((group) => (
-          <section
-            className="device-service-group"
+          <Card
+            role="region"
+            className="device-service-group gap-0 overflow-hidden p-0"
             key={group.name}
             aria-label={`${group.name} services`}
           >
-            <header className="device-group-heading">
+            <CardHeader className="device-group-heading bg-muted/50">
               <Icon name="computer" />
-              <h2 title={group.name}>
-                {group.name.startsWith("service:")
-                  ? group.name.slice(8)
-                  : group.name}
-              </h2>
+              <CardTitle className="min-w-0 flex-1">
+                <h2 title={group.name}>
+                  {group.name.startsWith("service:")
+                    ? group.name.slice(8)
+                    : group.name}
+                </h2>
+              </CardTitle>
               {thisComputer === group.name && (
                 <Badge variant="secondary" className="this-computer-badge">
                   This computer
@@ -132,35 +139,45 @@ export function ServicesPage({
                     <MoreHorizontal />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() =>
-                        bindComputer(
-                          thisComputer === group.name ? null : group.name,
-                        )
-                      }
-                    >
-                      {thisComputer === group.name
-                        ? "Clear this computer"
-                        : "Use as this computer"}
-                    </DropdownMenuItem>
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        onClick={() =>
+                          bindComputer(
+                            thisComputer === group.name ? null : group.name,
+                          )
+                        }
+                      >
+                        {thisComputer === group.name
+                          ? "Clear this computer"
+                          : "Use as this computer"}
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-            </header>
-            <div>
-              {group.services.map((service) => (
-                <ServiceEditor
-                  mode="access"
-                  key={service.id}
-                  service={service}
-                  configRevision={snapshot.configRevision}
-                  mutate={mutate}
-                  pending={pending}
-                  onCredential={onCredential}
-                />
-              ))}
-            </div>
-          </section>
+            </CardHeader>
+            <Separator />
+            <CardContent className="p-0">
+              <ItemGroup className="gap-0 has-data-[size=sm]:gap-0">
+                {group.services.map((service, index) => (
+                  <Fragment key={service.id}>
+                    {index > 0 && (
+                      <ItemSeparator className="my-0" aria-hidden="true" />
+                    )}
+                    <ServiceEditor
+                      mode="access"
+                      key={service.id}
+                      service={service}
+                      configRevision={snapshot.configRevision}
+                      mutate={mutate}
+                      pending={pending}
+                      onCredential={onCredential}
+                    />
+                  </Fragment>
+                ))}
+              </ItemGroup>
+            </CardContent>
+          </Card>
         ))}
       </div>
       {!snapshot.services.length && (

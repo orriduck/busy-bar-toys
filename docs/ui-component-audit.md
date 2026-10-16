@@ -9,9 +9,9 @@ The baseline contains 23 shadcn source modules. Having a module installed is not
 | Area | Baseline implementation | Decision |
 | --- | --- | --- |
 | App actions and navigation | shadcn Button; BUSY variants | Keep Button. Theme its shared variants. Keep semantic nav and the persistent preview layout; the Sidebar component adds collapse/mobile behaviors this app does not need. |
-| Policy presets | shadcn Select | Keep. Use the same Select for Exit, registration Computer, and Template. Remove NativeSelect. |
-| Text and exact numbers | shadcn Input, but old material differs from Select | Restore official source first. Put exact numbers and units in InputGroup, beside their Custom selector. |
-| Timing and priority | shadcn Slider with application preset labels | Keep the library track/thumb, pointer/keyboard behavior and accessibility. Preset labels are domain-specific annotations, not a replacement slider. |
+| Enum settings | Mixed Select and NativeSelect | Use shared shadcn Select for Exit, registration Computer, and Template. Remove NativeSelect. Numeric policy fields have no dropdown. |
+| Text and exact numbers | shadcn Input, but old material differs from Select | Restore official source first. Put exact numbers and units in InputGroup, beside each slider label. |
+| Timing and priority | shadcn Slider with application preset labels | Keep the library track/thumb, pointer/keyboard behavior and accessibility. Preset labels are domain-specific annotations, not a replacement slider. Pointer positions within three percentage points snap to a named preset. Arrow keys move monotonically and stop at crossed presets. |
 | Form structure | FieldGroup, Field, FieldLabel | Keep and use FieldContent for related controls. |
 | Service groups and rows | Hand-styled section/header/row divs | Use Card composition for each computer and Item composition for each service. |
 | Revoke confirmation | Inline div with confirm/cancel buttons | Replace the existing confirmation with AlertDialog; retain pending/error and revision behavior. |
@@ -47,6 +47,18 @@ Read-only inspection of `https://cloud.busy.app/api-tokens`, including its Creat
 
 Shared Input, InputGroup, and Select must use one control surface definition. InputGroup owns its input's unit and focus treatment. Button owns action variants. Card/Item own surfaces and row composition. Colors remain semantic tokens; no page-level control skin overrides.
 
+## Compact policy layout
+
+Priority, Hold, Later, and Heartbeat each have one always-visible Slider and an exact InputGroup value. No dropdown duplicates the slider. Desktop uses two columns; small screens use one. Exit remains an enum Select. Shared small controls are 40px high before the approved 90% density.
+
 ## Verification
 
-Check equal computed heights/materials for all form controls; dropdown keyboard selection; exact input/slider synchronization and named detents; Discard and dirty-draft preservation; existing revoke confirmation/cancel; DnD order save; one mounted preview; actual pixel rendering; and390px layout without horizontal overflow. Use local synthetic data for mutations. Production checks must not submit user drafts, rotate credentials, revoke services or change policies.
+Check consistent computed materials within shared default/small control sizes; dropdown keyboard selection; exact input/slider synchronization and named detents; Discard and dirty-draft preservation; existing revoke confirmation/cancel; DnD order save; one mounted preview; actual pixel rendering; and390px layout without horizontal overflow. Use local synthetic data for mutations. Production checks must not submit user drafts, rotate credentials, revoke services or change policies.
+
+## Completed validation
+
+- 200 tests across 19 files passed; TypeScript and the production build passed.
+- Browser: pointer drag within 2% of Normal returns exactly 50; outside the snap zone can reach intermediate values. ArrowRight from 50 advances to 54. Discard resets the form.
+- Desktop: two policy columns. At 390px: one column, document width375px, no horizontal overflow. No browser console warnings/errors observed.
+- Use the Slider default center alignment: the previous edge prehydration mode could leave thumbs/indicators hidden when loaded inside a collapsed, keep-mounted panel. Visible sliders and their range inputs were verified after opening the panel.
+- Existing library Select keyboard behavior, draft preservation, revoke Cancel/Escape focus restoration, finite/unknown Progress, and keyboard DnD save were checked with local synthetic services.
