@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { etaText, queueMetadata } from "./api";
 import type { Snapshot, QueueItem, Mutate } from "./api";
 import { AppIcon, Icon } from "./common";
@@ -19,6 +20,7 @@ import {
   TableCell,
 } from "./components/ui/table";
 import { cn } from "./lib/utils";
+import { queuePlayback, receivedTime } from "./queue-playback";
 
 type QueueRow = {
   groupId: string;
@@ -27,6 +29,8 @@ type QueueRow = {
   meta: ReturnType<typeof queueMetadata>;
   open: boolean;
   current: boolean;
+  priority: number | undefined;
+  progress: number | null;
   toggle: (id: string) => void;
 };
 const features = tableFeatures({});
@@ -36,19 +40,48 @@ const columns = column.columns([
     id: "app",
     header: "App",
     cell: ({ row }) => {
-      const { groupId, meta, open, toggle } = row.original;
+      const { groupId, meta, open, toggle, priority, current, progress } =
+        row.original;
       return (
-        <Button
-          variant="ghost"
-          className="queue-open"
-          aria-expanded={open}
-          aria-controls={`details-${encodeURIComponent(groupId)}`}
-          aria-label={`${open ? "Hide" : "Show"} ${meta.app} details from ${meta.sender}`}
-          onClick={() => toggle(groupId)}
-        >
-          <AppIcon app={meta.appId} />
-          <span>{meta.app}</span>
-        </Button>
+        <div className="queue-app-cell">
+          <Button
+            variant="ghost"
+            className="queue-open"
+            aria-expanded={open}
+            aria-controls={`details-${encodeURIComponent(groupId)}`}
+            aria-label={`${open ? "Hide" : "Show"} ${meta.app} details from ${meta.sender}`}
+            onClick={() => toggle(groupId)}
+          >
+            <AppIcon app={meta.appId} />
+            <span>{meta.app}</span>
+          </Button>
+          <Badge
+            variant="outline"
+            className="queue-priority"
+            title="Service priority"
+          >
+            P{priority ?? "—"}
+          </Badge>
+          {current && <span className="queue-playing">Playing</span>}
+          {current && (
+            <span
+              className={cn(
+                "queue-playback-line",
+                progress === null && "queue-playback-indeterminate",
+              )}
+              role="progressbar"
+              aria-label={`${meta.app} playback`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={
+                progress === null ? undefined : Math.round(progress)
+              }
+              aria-valuetext={
+                progress === null ? "Playing · duration unknown" : undefined
+              }
+            />
+          )}
+        </div>
       );
     },
   }),
@@ -69,11 +102,7 @@ const columns = column.columns([
       const date = new Date(row.original.meta.receivedAt);
       return (
         <time dateTime={date.toISOString()} title={date.toLocaleString()}>
-          {date.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          })}
+          {receivedTime(row.original.meta.receivedAt)}
         </time>
       );
     },
@@ -89,6 +118,29 @@ export function Queue({
   pending: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const anchor = useMemo(() => performance.now(), [snapshot]);
+  const [monotonicNow, setMonotonicNow] = useState(anchor);
+  useEffect(() => {
+    const update = () => setMonotonicNow(performance.now());
+    update();
+    const owner = snapshot.items.find(
+      (item) => item.itemKey === snapshot.displaying?.itemKey,
+    );
+    if (!owner?.playback.running) return;
+    const validUntil = Math.min(
+      owner.playback.validUntil,
+      snapshot.health.confirmedValidUntil,
+      snapshot.displaying!.confirmedValidUntil,
+    );
+    if (validUntil <= snapshot.serverNow) return;
+    const timer = window.setInterval(() => {
+      update();
+      if (performance.now() - anchor >= validUntil - snapshot.serverNow)
+        window.clearInterval(timer);
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [snapshot, anchor]);
+  const elapsed = Math.max(0, monotonicNow - anchor);
   const toggle = useCallback(
     (id: string) =>
       setExpanded((previous) => {
@@ -115,18 +167,26 @@ export function Queue({
         memberKeys: [item.itemKey],
         representativeItem: item,
       }));
-    return [...groups, ...orphaned].map((group): QueueRow => ({
-      groupId: group.groupId,
-      memberKeys: group.memberKeys,
-      item: group.representativeItem!,
-      meta: queueMetadata(group.representativeItem!, snapshot),
-      open: expanded.has(group.groupId),
-      current:
-        snapshot.health.status === "healthy" &&
-        group.memberKeys.includes(snapshot.displaying?.itemKey || ""),
-      toggle,
-    }));
-  }, [snapshot, expanded, toggle]);
+    return [...groups, ...orphaned].map((group): QueueRow => {
+      const playback = queuePlayback(
+        snapshot,
+        group.memberKeys,
+        group.representativeItem!,
+        elapsed,
+      );
+      return {
+        groupId: group.groupId,
+        memberKeys: group.memberKeys,
+        item: playback.item,
+        meta: queueMetadata(playback.item, snapshot),
+        open: expanded.has(group.groupId),
+        current: playback.current,
+        priority: playback.priority,
+        progress: playback.progress,
+        toggle,
+      };
+    });
+  }, [snapshot, expanded, toggle, elapsed]);
   const table = useTable({
     features,
     columns,
@@ -251,7 +311,16 @@ export function Queue({
             const group = row.original;
             return (
               <Fragment key={row.id}>
-                <TableRow className={cn(group.current && "current-row")}>
+                <TableRow
+                  className={cn(group.current && "current-row")}
+                  style={
+                    group.current && group.progress !== null
+                      ? ({
+                          "--queue-progress": `${group.progress}%`,
+                        } as CSSProperties)
+                      : undefined
+                  }
+                >
                   {row.getAllCells().map((cell) => (
                     <TableCell key={cell.id}>
                       <table.FlexRender cell={cell} />
