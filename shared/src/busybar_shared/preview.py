@@ -232,13 +232,19 @@ class PreviewBridge:
         self._latest=asyncio.Queue(maxsize=1); self._sequence=0; self._last_sent=0
         self._diag_lock=threading.Lock(); self._started=time.monotonic()
         self._diag={'status':'idle','connected':False,'demand':False,'captureRequested':0,
-                    'captured':0,'sent':0,'dropped':0,'busySkipped':0,'captureErrors':0}
+                    'captured':0,'sent':0,'dropped':0,'busySkipped':0,'captureErrors':0,
+                    'invalidatedDropped':0,'outOfOrderDropped':0,'supersededDropped':0,'noDemandDropped':0}
 
     def _update(self,**values):
         with self._diag_lock: self._diag.update(values)
 
     def _count(self,key):
         with self._diag_lock: self._diag[key]+=1
+
+    def _drop(self,reason):
+        with self._diag_lock:
+            self._diag['dropped']+=1
+            self._diag[reason]+=1
 
     def diagnostics(self):
         with self._diag_lock: result=dict(self._diag)
@@ -283,7 +289,7 @@ class PreviewBridge:
         if self._active_send is not None and not self._active_send.done():
             self._active_send.cancel()
         while not self._latest.empty():
-            self._latest.get_nowait(); self._count('dropped')
+            self._latest.get_nowait(); self._drop('invalidatedDropped')
         self._update(demand=False)
 
     async def _offload(self,work):
@@ -323,15 +329,18 @@ class PreviewBridge:
             except Exception:
                 self._capture_failed(client,generation,PreviewError('unavailable')); return
             if pixels is None:
-                self._count('dropped'); return
+                self._drop('invalidatedDropped'); return
             self._count('captured')
-            if not self._valid(client,generation) or sequence<=self._last_sent:
-                self._count('dropped'); return
+            if not self._valid(client,generation):
+                self._drop('invalidatedDropped'); return
+            if sequence<=self._last_sent:
+                self._drop('outOfOrderDropped'); return
             if not self._latest.empty():
                 queued_generation,queued=self._latest.get_nowait()
-                self._count('dropped')
                 if queued_generation==generation and queued['sequence']>sequence:
+                    self._drop('outOfOrderDropped')
                     self._latest.put_nowait((queued_generation,queued)); return
+                self._drop('supersededDropped' if queued_generation==generation else 'invalidatedDropped')
             self._latest.put_nowait((generation,{'type':'frame','sequence':sequence,
                                               'capturedAt':captured_at,'pixels':pixels}))
         future.add_done_callback(complete)
@@ -339,10 +348,12 @@ class PreviewBridge:
     async def _capture(self,client,device_id):
         device=None; verified=-1
         loop=asyncio.get_running_loop(); period=1/FPS
+        next_tick=None; last_tick=None
         while True:
             if self._capture_error is not None: raise self._capture_error
             generation=self._generation
             if not self._valid(client,generation):
+                next_tick=None
                 await asyncio.sleep(.02); continue
             if device is None:
                 if self._device_future is None:
@@ -365,17 +376,28 @@ class PreviewBridge:
                 await self._offload(lambda:device.verify(device_id) if self._valid(client,generation) else None)
                 if not self._valid(client,generation): continue
                 verified=generation
-            next_tick=loop.time()+period
+                next_tick=None
+            now=loop.time()
+            if next_tick is None: next_tick=now
+            # Keep the phase through bounded wake lateness and bookkeeping;
+            # the minimum gap prevents a short catch-up tick.
+            wake_at=next_tick if last_tick is None else max(next_tick,last_tick+.025)
+            if wake_at>now:
+                await asyncio.sleep(wake_at-now)
+                continue  # Recheck generation, demand and identity after waking.
+            next_tick+=period
+            if next_tick<=now:
+                # Skip missed periods after a stall, with no catch-up batch.
+                next_tick+=(int((now-next_tick)/period)+1)*period
             self._update(status='capturing')
+            last_tick=loop.time()
             try: slot=self._busy.index(False)
             except ValueError: self._count('busySkipped')
             else: self._submit_frame(device,slot,client,generation)
-            # Include bookkeeping in this actual tick's interval. A late wake
-            # starts a new tick instead of catching up to an earlier phase; an
-            # overrun waits a full interval. Submit at most one read per tick.
-            now=loop.time()
-            if next_tick<=now: next_tick=now+period
-            await asyncio.sleep(next_tick-now)
+            if loop.time()>=max(next_tick,last_tick+.025):
+                # Overrun bookkeeping must still let demand and worker
+                # completion callbacks run before another capture tick.
+                await asyncio.sleep(0)
 
     async def _receive(self,ws,device_id):
         stream=None
@@ -384,7 +406,7 @@ class PreviewBridge:
                 value=json.loads(raw) if isinstance(raw,str) and len(raw.encode('utf-8'))<=MAX_MESSAGE else None
             except (ValueError,UnicodeError,RecursionError): raise PreviewError('protocol') from None
             if isinstance(value,dict) and value=={'type':'error','code':'PREVIEW_NO_DEMAND'}:
-                self._count('dropped'); continue
+                self._drop('noDemandDropped'); continue
             demand=parse_demand(raw,device_id)
             if stream is not None and stream!=demand['streamId']: raise PreviewError('protocol')
             stream=demand['streamId']
@@ -395,8 +417,10 @@ class PreviewBridge:
     async def _send(self,ws,client):
         while True:
             generation,frame=await self._latest.get()
-            if not self._valid(client,generation) or frame['sequence']<=self._last_sent:
-                self._count('dropped'); continue
+            if not self._valid(client,generation):
+                self._drop('invalidatedDropped'); continue
+            if frame['sequence']<=self._last_sent:
+                self._drop('outOfOrderDropped'); continue
             raw=json.dumps(frame,separators=(',',':'),allow_nan=False)
             if len(raw.encode('utf-8'))>MAX_MESSAGE: raise PreviewError('frame')
             sending=asyncio.create_task(ws.send(raw))
@@ -405,7 +429,7 @@ class PreviewBridge:
                 await asyncio.wait_for(sending,timeout=1)
             except asyncio.CancelledError:
                 if not self._valid(client,generation):
-                    self._count('dropped')
+                    self._drop('invalidatedDropped')
                     # A canceled partial socket write requires closing this
                     # session before reconnecting; never reuse its stream.
                     raise PreviewError('unavailable') from None
@@ -415,7 +439,7 @@ class PreviewBridge:
                 if not sending.done(): sending.cancel()
                 await asyncio.gather(sending,return_exceptions=True)
             if not self._valid(client,generation):
-                self._count('dropped'); continue
+                self._drop('invalidatedDropped'); continue
             self._last_sent=frame['sequence']; self._count('sent')
 
     async def _heartbeat(self,ws):
