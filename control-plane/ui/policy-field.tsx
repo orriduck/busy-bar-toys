@@ -1,4 +1,6 @@
 import { useId, useState } from "react";
+import { SettingNumber } from "./setting-number";
+import { cn } from "./lib/utils";
 import { CircleHelp } from "lucide-react";
 import { Field, FieldContent, FieldLabel } from "./components/ui/field";
 import {
@@ -33,7 +35,11 @@ export function PriorityBadge({ value }: { value: number }) {
       title={`Priority ${value}`}
     >
       <span className="priority-dot" />
-      {preset?.label ?? `Custom · ${value}`}
+      {preset?.label ?? (
+        <>
+          Custom · <SettingNumber value={value} />
+        </>
+      )}
     </Badge>
   );
 }
@@ -69,45 +75,74 @@ export function HelpTip({
 }
 export function PolicyField({
   field,
+  className,
   value,
   onChange,
 }: {
   field: PolicyKey;
+  className?: string;
   value: number;
   onChange: (value: number) => void;
 }) {
   const id = useId(),
     definition = policyFields[field];
+  const [editing, setEditing] = useState(false);
   const scaled = value / definition.scale;
   const detents = definition.presets.map((p) => p.value / definition.scale);
   return (
-    <Field className="grid min-w-0 grid-cols-[minmax(0,1fr)_6rem] items-center gap-x-5 gap-y-0 py-2 md:grid-cols-[7rem_minmax(0,1fr)_6rem]">
+    <Field
+      className={cn(
+        "grid min-w-0 grid-cols-[minmax(0,1fr)_9.5rem] items-center gap-x-2 gap-y-0",
+        className,
+      )}
+    >
       <div className="order-1 flex min-w-0 items-center gap-1.5">
         <FieldLabel id={`${id}-label`}>{definition.label}</FieldLabel>
         <HelpTip label={definition.label}>{definition.help}</HelpTip>
       </div>
-      <InputGroup size="sm" variant="quiet" className="order-2 md:order-3">
-        <InputGroupInput
-          aria-label={`${definition.label} value`}
-          type="number"
-          required
-          min={definition.min}
-          max={definition.max}
-          step={field === "priority" ? 1 : "any"}
-          value={scaled}
-          onChange={(event) =>
-            onChange(Math.round(Number(event.target.value) * definition.scale))
-          }
-        />
+      <InputGroup size="sm" variant="quiet" className="order-2">
+        <div className="relative h-full min-w-0 flex-1">
+          <InputGroupInput
+            data-readout={!editing}
+            onFocus={() => setEditing(true)}
+            onBlur={() => setEditing(false)}
+            aria-label={`${definition.label} value`}
+            type="number"
+            required
+            min={definition.min}
+            max={definition.max}
+            step={field === "priority" ? 1 : "any"}
+            value={scaled}
+            onChange={(event) =>
+              onChange(
+                Math.round(Number(event.target.value) * definition.scale),
+              )
+            }
+          />
+          <span
+            aria-hidden="true"
+            data-hidden={editing || undefined}
+            className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-sm tabular-nums data-[hidden]:hidden"
+          >
+            <SettingNumber
+              value={scaled}
+              decimals={field === "priority" ? 0 : 6}
+            />
+          </span>
+        </div>
         {definition.unit && (
           <InputGroupAddon align="inline-end">
             {definition.unit}
           </InputGroupAddon>
         )}
       </InputGroup>
-      <FieldContent className="order-3 col-span-2 min-w-0 md:order-2 md:col-span-1">
+      <FieldContent className="order-3 col-span-2 min-w-0">
         <div className="policy-slider">
           <Slider
+            variant="pill"
+            marks={detents.map((stop) =>
+              sliderPosition(stop, definition.stops),
+            )}
             aria-label={`${definition.label} slider`}
             thumbLabel={`${definition.label} slider`}
             valueText={`${scaled} ${definition.unit}`.trim()}

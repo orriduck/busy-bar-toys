@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type { Service, Mutate } from "./api";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
 import { SettingsSelect } from "./settings-select";
 import { Separator } from "./components/ui/separator";
 import {
@@ -144,35 +145,17 @@ export function ServiceEditor({
       ref={formRef}
       tabIndex={-1}
       aria-label={`${serviceLabel(service)} settings`}
-      className="policy-card outline-none"
+      className="policy-card @container/policy outline-none"
       id={formId}
       onSubmit={(event) => void save(event)}
     >
-      <FieldGroup className="gap-1">
+      <FieldGroup className="grid grid-cols-1 gap-x-8 gap-y-4 @2xl/policy:grid-cols-2">
         <PolicyField
           key={`priority-${resetVersion}`}
           field="priority"
           value={config.priority}
           onChange={(value) => edit("priority", value)}
         />
-        <Field className="grid min-w-0 items-center gap-x-5 gap-y-2 py-2 md:grid-cols-[7rem_minmax(0,1fr)_6rem]">
-          <div className="flex h-10 items-center">
-            <FieldLabel htmlFor={`${formId}-field2`}>Exit</FieldLabel>
-          </div>
-          <FieldContent className="min-w-0 max-w-60 md:col-span-2">
-            <SettingsSelect
-              id={`${formId}-field2`}
-              size="sm"
-              value={config.exit}
-              onChange={(value) => edit("exit", value)}
-              options={[
-                { value: "default", label: "Automatic" },
-                { value: "finite", label: "Fixed time" },
-                { value: "source", label: "Source ends" },
-              ]}
-            />
-          </FieldContent>
-        </Field>
         <PolicyField
           key={`visibleMs-${resetVersion}`}
           field="visibleMs"
@@ -191,6 +174,51 @@ export function ServiceEditor({
           value={config.heartbeatMs}
           onChange={(value) => edit("heartbeatMs", value)}
         />
+        <Field className="grid min-w-0 items-center gap-2 @2xl/policy:col-span-2 @2xl/policy:grid-cols-[7rem_minmax(0,1fr)]">
+          <div className="flex h-10 items-center">
+            <FieldLabel id={`${formId}-exit-label`} htmlFor={`${formId}-exit`}>
+              Exit
+            </FieldLabel>
+          </div>
+          <FieldContent className="min-w-0">
+            <div className="@2xl/policy:hidden">
+              <SettingsSelect
+                id={`${formId}-exit`}
+                size="sm"
+                value={config.exit}
+                onChange={(value) => edit("exit", value)}
+                options={[
+                  { value: "default", label: "Automatic" },
+                  { value: "finite", label: "Fixed time" },
+                  { value: "source", label: "Source ends" },
+                ]}
+              />
+            </div>
+            <Tabs
+              className="hidden @2xl/policy:flex"
+              value={config.exit}
+              onValueChange={(value) => edit("exit", value)}
+            >
+              <TabsList
+                className="w-fit"
+                aria-labelledby={`${formId}-exit-label`}
+              >
+                <TabsTrigger value="default">Automatic</TabsTrigger>
+                <TabsTrigger value="finite">Fixed time</TabsTrigger>
+                <TabsTrigger value="source">Source ends</TabsTrigger>
+              </TabsList>
+              <TabsContent value="default" className="sr-only">
+                Use each message’s default display duration.
+              </TabsContent>
+              <TabsContent value="finite" className="sr-only">
+                Use the Hold duration for each message.
+              </TabsContent>
+              <TabsContent value="source" className="sr-only">
+                Display until the sender finishes.
+              </TabsContent>
+            </Tabs>
+          </FieldContent>
+        </Field>
       </FieldGroup>
       {dirty && baseRevision !== configRevision && (
         <Alert className="mt-5">

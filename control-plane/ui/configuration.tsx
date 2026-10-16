@@ -28,6 +28,7 @@ import {
   CollapsibleContent,
 } from "./components/ui/collapsible";
 import { ServiceEditor } from "./services";
+import { SettingNumber } from "./setting-number";
 import { PriorityBadge } from "./policy-field";
 import { priorityOrder, serviceLabel, computerIds } from "./service-layout";
 function ConfigurationRow({
@@ -77,7 +78,9 @@ function ConfigurationRow({
             <GripVertical />
           </Button>
           <span className="configuration-rank" aria-label={`Position ${rank}`}>
-            {rank}
+            <span aria-hidden="true">
+              <SettingNumber value={rank} />
+            </span>
           </span>
           <CollapsibleTrigger
             render={

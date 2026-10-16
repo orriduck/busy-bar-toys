@@ -138,7 +138,7 @@ function InputGroupInput({
       data-slot="input-group-control"
       variant="embedded"
       className={cn(
-        "h-full flex-1 group-data-[variant=quiet]/input-group:text-sm group-data-[variant=quiet]/input-group:tabular-nums group-data-[variant=quiet]/input-group:text-right group-data-[variant=quiet]/input-group:px-2 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0 dark:bg-transparent dark:disabled:bg-transparent",
+        "data-[readout=true]:text-transparent h-full flex-1 group-data-[variant=quiet]/input-group:text-sm group-data-[variant=quiet]/input-group:tabular-nums group-data-[variant=quiet]/input-group:text-right group-data-[variant=quiet]/input-group:px-2 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0 dark:bg-transparent dark:disabled:bg-transparent",
         className,
       )}
       {...props}
