@@ -26,7 +26,7 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
 function DialogOverlay({
   className,
   ...props
-}: DialogPrimitive.Backdrop.Props) {
+}: Omit<DialogPrimitive.Backdrop.Props, "className"> & { className?: string }) {
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
@@ -44,7 +44,8 @@ function DialogContent({
   children,
   showCloseButton = true,
   ...props
-}: DialogPrimitive.Popup.Props & {
+}: Omit<DialogPrimitive.Popup.Props, "className"> & {
+  className?: string;
   showCloseButton?: boolean;
 }) {
   return (
@@ -116,7 +117,10 @@ function DialogFooter({
   );
 }
 
-function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
+function DialogTitle({
+  className,
+  ...props
+}: Omit<DialogPrimitive.Title.Props, "className"> & { className?: string }) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
@@ -132,7 +136,9 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
 function DialogDescription({
   className,
   ...props
-}: DialogPrimitive.Description.Props) {
+}: Omit<DialogPrimitive.Description.Props, "className"> & {
+  className?: string;
+}) {
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"

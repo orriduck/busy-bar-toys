@@ -5,7 +5,8 @@ function Switch({
   className,
   size = "default",
   ...props
-}: SwitchPrimitive.Root.Props & {
+}: Omit<SwitchPrimitive.Root.Props, "className"> & {
+  className?: string;
   size?: "sm" | "default";
 }) {
   return (
