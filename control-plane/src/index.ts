@@ -23,6 +23,7 @@ import {
   publish,
   record,
   registerService,
+  removeService,
   reorderServices,
   requestAction,
   requireThat,
@@ -284,7 +285,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           this.preview.viewer(auth, identifier(body.viewerId), body.operation),
         );
       }
-      if (!orderingServices) tick(s, now);
+      const removingService =
+        /^\/api\/services\/[\w-]+\/remove$/.test(path) && method === "POST";
+      if (removingService)
+        requireThat(auth.kind === "session", "FORBIDDEN", 403);
+      if (!orderingServices && !removingService) tick(s, now);
       const admin = () =>
         requireThat(auth.kind === "session", "FORBIDDEN", 403);
       const producer = () => {
@@ -392,6 +397,15 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             : {}),
           snapshot: snapshot(s, now),
         });
+      } else if (removingService) {
+        admin();
+        removeService(
+          s,
+          path.split("/")[3],
+          Number(body.expectedRevision),
+          now,
+        );
+        response = json({ snapshot: snapshot(s, now) });
       } else if (path === "/api/publish" && method === "POST") {
         const id = producer();
         const scene = record(body.scene);
