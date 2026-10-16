@@ -7,7 +7,9 @@ import {
   useState,
 } from "react";
 import { etaText, queueMetadata } from "./api";
+import { priorityGroupLabels } from "./priority-groups";
 import { compactSender } from "./queue-metadata";
+import { ChevronDown } from "lucide-react";
 import { PriorityGroupBadge } from "./priority-group-badge";
 import type { Snapshot, QueueItem, Mutate } from "./api";
 import { AppIcon, Icon } from "./common";
@@ -54,24 +56,29 @@ const columns = column.columns([
       return (
         <div className="queue-app-cell">
           <Button
-            variant="ghost"
+            variant="disclosure"
             className="queue-open"
             aria-expanded={open}
             aria-controls={`details-${encodeURIComponent(groupId)}`}
-            aria-label={`${open ? "Hide" : "Show"} ${meta.app} details from ${meta.sender}`}
+            aria-label={`${open ? "Hide" : "Show"} ${meta.app} details from ${meta.sender}${meta.priorityGroup ? `, ${priorityGroupLabels[meta.priorityGroup]} priority` : ""}${current ? ", playing" : ""}`}
             onClick={() => toggle(groupId)}
           >
-            <AppIcon app={meta.appId} />
-            <span>{meta.app}</span>
+            <span className="queue-app-icon">
+              <AppIcon app={meta.appId} />
+            </span>
+            <span className="queue-app-copy">
+              <span className="queue-app-name">
+                <span>{meta.app}</span>
+                {current && (
+                  <span className="queue-live-dot" aria-label="Playing" />
+                )}
+              </span>
+              {meta.priorityGroup && (
+                <PriorityGroupBadge group={meta.priorityGroup} />
+              )}
+            </span>
+            <ChevronDown className="queue-disclosure" aria-hidden="true" />
           </Button>
-          {meta.priorityGroup && (
-            <PriorityGroupBadge group={meta.priorityGroup} />
-          )}
-          {current && (
-            <Badge variant="secondary" className="queue-playing">
-              Playing
-            </Badge>
-          )}
           {current && (
             <Progress
               className="queue-playback-line"
@@ -90,15 +97,26 @@ const columns = column.columns([
   column.accessor((row) => row.meta.sender, {
     id: "sender",
     header: "Sender",
-    cell: ({ row }) => (
-      <span
-        className="sender"
-        title={`${row.original.meta.sender} · source ${row.original.item.instanceId}`}
-      >
-        <Icon name="computer" />
-        {compactSender(row.original.meta.sender)}
-      </span>
-    ),
+    cell: ({ row }) => {
+      const { meta, item } = row.original;
+      const [computer, ...parts] = compactSender(meta.sender).split(" · ");
+      const service = parts.join(" · ");
+      const normalize = (value: string) =>
+        value.toLowerCase().replace(/\s+code$/, "");
+      const distinctService =
+        service && normalize(service) !== normalize(meta.app);
+      return (
+        <span
+          className="sender"
+          title={`${meta.sender} · source ${item.instanceId}`}
+        >
+          <span className="queue-computer">{computer}</span>
+          {distinctService && (
+            <span className="queue-source-service">{service}</span>
+          )}
+        </span>
+      );
+    },
   }),
   column.accessor((row) => row.meta.receivedAt, {
     id: "received",

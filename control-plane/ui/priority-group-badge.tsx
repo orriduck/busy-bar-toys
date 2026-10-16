@@ -13,7 +13,7 @@ export function PriorityGroupBadge({ group }: { group: PriorityGroup }) {
       title={priorityGroupDescriptions[group]}
     >
       <span className="priority-group-dot" aria-hidden="true" />
-      {priorityGroupLabels[group]}
+      <span>{priorityGroupLabels[group]}</span>
     </Badge>
   );
 }
