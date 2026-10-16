@@ -222,6 +222,9 @@ a {
 .workspace[data-page="display"] > .page-slot:not([hidden]) {
   margin-bottom: auto;
 }
+.workspace[data-page="display"] > .page-slot.auth-slot:not([hidden]) {
+  margin-block: auto;
+}
 .display-page {
   display: flex;
   flex-direction: column;
