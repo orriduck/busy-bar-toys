@@ -53,14 +53,8 @@ export function Icon({
 }
 export function Brand() {
   return (
-    <div className="brand" aria-label="BUSY Bar Toys">
-      <span className="busy-mark">
-        <svg viewBox="0 0 12 18" aria-hidden="true">
-          <path d="M0 0v18l12-9Z" fill="currentColor" />
-        </svg>
-        BUSY
-      </span>
-      <span className="brand-toys">TOYS</span>
+    <div className="brand" aria-label="BUSY Bar">
+      <img src="/busy-logo.svg" width="80" height="26" alt="BUSY" />
     </div>
   );
 }

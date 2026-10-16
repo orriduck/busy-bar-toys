@@ -272,12 +272,18 @@ function App() {
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <div className="app-shell">
-        <aside className="sidebar">
+      <div
+        className="app-shell"
+        data-demo={demo || undefined}
+        data-docked={Boolean(session && snapshot && page !== "display")}
+      >
+        <header className="app-header">
           <Brand />
+        </header>
+        <aside className="sidebar">
           {session && <Navigation page={page} onPage={setPage} />}
         </aside>
-        <main className="workspace" id="main-content">
+        <main className="workspace" id="main-content" data-page={page}>
           {error && (
             <Alert variant="destructive" className="error">
               <AlertDescription>{error}</AlertDescription>
@@ -314,15 +320,25 @@ function App() {
             </section>
           ) : (
             <>
+              {/* Keep this host and its keyed Preview in place across navigation. */}
+              <section
+                className={`preview-host ${page === "display" ? "preview-host-full" : "preview-host-dock"}`}
+                aria-label="Live device preview"
+              >
+                <div className="preview-caption">
+                  <strong>BUSY Bar</strong>
+                  <span>Front display</span>
+                </div>
+                <Preview
+                  key={`${snapshot.deviceId}-${sessionGeneration}`}
+                  deviceId={snapshot.deviceId}
+                  active
+                  onSessionEnd={invalidate}
+                  onStats={setPreviewStats}
+                />
+              </section>
               <div className="page-slot" hidden={page !== "display"}>
                 <section className="display-page" aria-label="Display">
-                  <Preview
-                    key={`${snapshot.deviceId}-${sessionGeneration}`}
-                    deviceId={snapshot.deviceId}
-                    active={page === "display"}
-                    onSessionEnd={invalidate}
-                    onStats={setPreviewStats}
-                  />
                   <Queue
                     snapshot={snapshot}
                     mutate={mutate}

@@ -258,8 +258,10 @@ export function DevicePage({
         </dd>
       </dl>
       <p className="field-hint">
-        Preview runs while Display is visible. A Mac must be online and able to
-        read the Bar over local Wi-Fi. Latency uses the Mac and browser clocks.
+        Preview runs on every visible management page: above the queue on
+        Display and in the preview dock elsewhere. A Mac must be online and able
+        to read the Bar over local Wi-Fi. Latency includes the 150 ms playback
+        buffer and uses the Mac and browser clocks.
       </p>
       <Button variant="ghost" className="signout" onClick={onLogout}>
         Sign out

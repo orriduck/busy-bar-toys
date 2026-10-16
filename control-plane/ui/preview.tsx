@@ -269,10 +269,10 @@ export function Preview({
     <div className="bar-preview" aria-label="Actual BUSY Bar front display">
       <img
         className="bar-shell"
-        src="/busy-bar-shell.png"
+        src="/busy-device-shell.webp"
         alt=""
-        width="1983"
-        height="793"
+        width="1024"
+        height="330"
       />
       <canvas
         ref={canvas}
