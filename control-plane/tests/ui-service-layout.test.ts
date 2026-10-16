@@ -7,20 +7,41 @@ import {
 import type { Service } from "../ui/api";
 const service = (id: string, name: string, priority = 10) =>
   ({ id, name, config: { priority } }) as Service;
-it("groups only explicit registered device labels and preserves ungrouped services", () => {
-  const values = [
-    service("a", "This Mac · Codex"),
-    service("b", "This Mac · ADSBao"),
-    service("c", "MacBook · Notifier"),
-    service("d", "Custom"),
-  ];
-  expect(deviceGroups(values).map((g) => [g.name, g.services.length])).toEqual([
-    ["This Mac", 2],
-    ["MacBook", 1],
-    ["Ungrouped", 1],
+it("groups by observed computer IDs and never treats This Mac as identity", () => {
+  const a = {
+    ...service("a", "This Mac · Codex"),
+    computerIds: ["computer-a"],
+  };
+  const b = {
+    ...service("b", "This Mac · ADSBao"),
+    computerIds: ["computer-b"],
+  };
+  const c = {
+    ...service("c", "Old name · Notifier"),
+    computerIds: ["computer-a"],
+  };
+  expect(
+    deviceGroups([a, b, c, service("d", "Custom")]).map((g) => [
+      g.name,
+      g.services.length,
+    ]),
+  ).toEqual([
+    ["computer-a", 2],
+    ["computer-b", 1],
+    ["service:d", 1],
   ]);
-  expect(serviceLabel(values[0])).toBe("Codex");
-  expect(serviceLabel(values[3])).toBe("Custom");
+  expect(serviceLabel(a)).toBe("Codex");
+});
+it("falls back to live item IDs and supports shared services on multiple computers", () => {
+  const a = service("a", "Some label");
+  const items = [
+    { serviceId: "a", instanceId: "computer-a" },
+    { serviceId: "a", instanceId: "computer-b" },
+  ] as import("../ui/api").QueueItem[];
+  expect(deviceGroups([a], items).map((g) => g.name)).toEqual([
+    "computer-a",
+    "computer-b",
+  ]);
 });
 it("sorts descending priority with stable deterministic ties without mutating the source", () => {
   const values = [

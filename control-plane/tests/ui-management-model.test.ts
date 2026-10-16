@@ -231,3 +231,64 @@ describe("confirmed playback metadata", () => {
     });
   });
 });
+
+describe("authenticated computer observations", () => {
+  it("remembers IDs without live messages, deduplicates and bounds retained history", () => {
+    const s = state(),
+      revision = s.configRevision;
+    for (let i = 0; i < 34; i++)
+      model.heartbeat(
+        s,
+        "a",
+        {
+          epoch: "epoch",
+          instanceId: `computer-${i}`,
+          itemIds: [],
+          validUntil: now + 10000,
+        },
+        now,
+      );
+    expect(s.services.a.computerIds).toHaveLength(32);
+    expect(s.services.a.computerIds?.[0]).toBe("computer-2");
+    model.heartbeat(
+      s,
+      "a",
+      {
+        epoch: "epoch",
+        instanceId: "computer-2",
+        itemIds: [],
+        validUntil: now + 10000,
+      },
+      now,
+    );
+    expect(s.services.a.computerIds).toHaveLength(32);
+    expect(
+      model
+        .snapshot(s, now)
+        .services.find((v) => v.id === "a")
+        ?.computerIds?.at(-1),
+    ).toBe("computer-2");
+    expect(s.configRevision).toBe(revision);
+    expect(s.services.b.computerIds).toBeUndefined();
+  });
+  it("does not record IDs from expired epochs or invalid heartbeats", () => {
+    const s = state();
+    for (const body of [
+      {
+        epoch: "wrong",
+        instanceId: "spoof",
+        itemIds: [],
+        validUntil: now + 10000,
+      },
+      {
+        epoch: "epoch",
+        instanceId: "bad id",
+        itemIds: [],
+        validUntil: now + 10000,
+      },
+      { epoch: "epoch", instanceId: "spoof", itemIds: [], validUntil: now },
+    ])
+      expect(() => model.heartbeat(s, "a", body, now)).toThrow();
+    expect(s.services.a.computerIds).toBeUndefined();
+  });
+});

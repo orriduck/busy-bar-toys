@@ -26,6 +26,22 @@ class CloudTest(unittest.TestCase):
             self.assertEqual((Path(directory)/'cloud-agent.json').stat().st_mode & 0o777,0o600)
             self.assertEqual(again['epoch'],'stable')
 
+    def test_new_roles_share_instance_without_rekeying_existing_roles(self):
+        class HTTP:
+            def __init__(self,url,secret): self.role=secret
+            def request(self,*args):
+                return {'protocol':1,'services':[{'id':self.role,'template':self.role,'epoch':'stable'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            def setup(role,instance=None):
+                return cloud.setup(directory,'http://localhost:8787',role,instance=instance,secret=role,store=lambda *args:None,transport=HTTP)
+            agent=setup('agent')
+            notifier=setup('notifier')
+            self.assertEqual(agent['instanceId'],notifier['instanceId'])
+            explicit=setup('notifier','chosen-id')
+            self.assertEqual(explicit['instanceId'],'chosen-id')
+            self.assertEqual(setup('notifier')['instanceId'],'chosen-id')
+            self.assertEqual(setup('agent')['instanceId'],agent['instanceId'])
+
     def test_configured_fallback_survives_setup_and_producer_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             now=[100.0]; notices=[]

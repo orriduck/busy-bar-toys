@@ -16,6 +16,7 @@ import {
   DropdownMenuItem,
 } from "./components/ui/dropdown-menu";
 import { serviceLabel } from "./service-layout";
+import { PolicyField } from "./policy-field";
 import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
 import {
   Card,
@@ -50,13 +51,24 @@ export function ServiceEditor({
   const [config, setConfig] = useState(service.config);
   const [dirty, setDirty] = useState(false);
   const edits = useRef(0);
+  const [resetVersion, setResetVersion] = useState(0);
+  const remotePolicy = [
+    service.config.priority,
+    service.config.visibleMs,
+    service.config.snoozeMs,
+    service.config.heartbeatMs,
+    service.config.exit,
+  ].join(":");
+  const lastPolicy = useRef(remotePolicy);
   const [baseRevision, setBaseRevision] = useState(configRevision);
   useEffect(() => {
     if (!dirty) {
+      if (lastPolicy.current !== remotePolicy) setResetVersion((v) => v + 1);
+      lastPolicy.current = remotePolicy;
       setConfig(service.config);
       setBaseRevision(configRevision);
     }
-  }, [service.config, configRevision, dirty]);
+  }, [service.config, configRevision, dirty, remotePolicy]);
   const edit = (key: string, value: unknown) => {
     edits.current++;
     setConfig((previous) => ({ ...previous, [key]: value }));
@@ -97,24 +109,16 @@ export function ServiceEditor({
       />
     );
   return (
-    <Card className="service">
+    <Card className="service policy-card">
       <form id={formId} onSubmit={(event) => void save(event)}>
         <CardContent>
-          <FieldGroup className="service-fields">
-            <Field>
-              <FieldLabel htmlFor={`${formId}-field1`}>{"Priority"}</FieldLabel>
-              <Input
-                id={`${formId}-field1`}
-                type="number"
-                required
-                min="0"
-                max="1000"
-                value={config.priority}
-                onChange={(event) =>
-                  edit("priority", Number(event.target.value))
-                }
-              />
-            </Field>
+          <FieldGroup className="service-fields policy-fields">
+            <PolicyField
+              key={`priority-${resetVersion}`}
+              field="priority"
+              value={config.priority}
+              onChange={(value) => edit("priority", value)}
+            />
             <Field>
               <FieldLabel htmlFor={`${formId}-field2`}>{"Exit"}</FieldLabel>
               <NativeSelect
@@ -133,64 +137,24 @@ export function ServiceEditor({
                 </NativeSelectOption>
               </NativeSelect>
             </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-field3`}>{"Hold (s)"}</FieldLabel>
-              <Input
-                id={`${formId}-field3`}
-                type="number"
-                required
-                min="1"
-                step="any"
-                max="86400"
-                value={config.visibleMs / 1000}
-                onChange={(event) =>
-                  edit(
-                    "visibleMs",
-                    Math.round(Number(event.target.value) * 1000),
-                  )
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-field4`}>
-                {"Later (min)"}
-              </FieldLabel>
-              <Input
-                id={`${formId}-field4`}
-                type="number"
-                required
-                min="0.016666666666666666"
-                step="any"
-                max="1440"
-                value={config.snoozeMs / 60000}
-                onChange={(event) =>
-                  edit(
-                    "snoozeMs",
-                    Math.round(Number(event.target.value) * 60000),
-                  )
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-field5`}>
-                {"Heartbeat (s)"}
-              </FieldLabel>
-              <Input
-                id={`${formId}-field5`}
-                type="number"
-                required
-                min="5"
-                step="any"
-                max="300"
-                value={config.heartbeatMs / 1000}
-                onChange={(event) =>
-                  edit(
-                    "heartbeatMs",
-                    Math.round(Number(event.target.value) * 1000),
-                  )
-                }
-              />
-            </Field>
+            <PolicyField
+              key={`visibleMs-${resetVersion}`}
+              field="visibleMs"
+              value={config.visibleMs}
+              onChange={(value) => edit("visibleMs", value)}
+            />
+            <PolicyField
+              key={`snoozeMs-${resetVersion}`}
+              field="snoozeMs"
+              value={config.snoozeMs}
+              onChange={(value) => edit("snoozeMs", value)}
+            />
+            <PolicyField
+              key={`heartbeatMs-${resetVersion}`}
+              field="heartbeatMs"
+              value={config.heartbeatMs}
+              onChange={(value) => edit("heartbeatMs", value)}
+            />
           </FieldGroup>
           {dirty && baseRevision !== configRevision && (
             <Alert className="mt-5">
@@ -200,24 +164,26 @@ export function ServiceEditor({
             </Alert>
           )}
         </CardContent>
-        <CardFooter className="service-bottom gap-2 mt-5">
-          <Button type="submit" disabled={pending || !dirty}>
+        <div className="policy-actions">
+          <Button type="submit" size="sm" disabled={pending || !dirty}>
             Save{dirty ? " changes" : ""}
           </Button>
           {dirty && (
             <Button
-              variant="secondary"
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={() => {
                 setDirty(false);
+                setResetVersion((v) => v + 1);
                 setConfig(service.config);
                 setBaseRevision(configRevision);
               }}
             >
-              Reload
+              Discard
             </Button>
           )}
-        </CardFooter>
+        </div>
       </form>
     </Card>
   );

@@ -45,6 +45,8 @@ export interface Service {
   credentialHash: string;
   epoch: string;
   epochExpiresAt: number;
+  /** Collector instance IDs observed through authenticated heartbeat messages. */
+  computerIds?: string[];
 }
 export interface Item {
   itemKey: string;
@@ -624,6 +626,10 @@ export function heartbeat(
     }
     return { itemKey: key, status: s.tombstones[key] ? "ended" : "missing" };
   });
+  service.computerIds = [
+    ...(service.computerIds ?? []).filter((id) => id !== instanceId),
+    instanceId,
+  ].slice(-32);
   s.revision++;
   tick(s, now);
   return results;
@@ -1023,9 +1029,7 @@ export function snapshot(s: State, now: number, serviceId?: string) {
         ? Math.max(0, Math.min(now, confirmedUntil) - s.visibleSince!)
         : 0;
       const running =
-        actualDisplay &&
-        s.health.status === "healthy" &&
-        confirmedUntil > now;
+        actualDisplay && s.health.status === "healthy" && confirmedUntil > now;
       const waiting = i.state !== "displaying" && i.state !== "applying";
       const queueProof =
         waiting &&
