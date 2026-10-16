@@ -9,3 +9,5 @@ The front display has two compact values: amber input up-arrow and cyan output d
 Standalone, cloud, CLI previews and offline demo renderers must use the same token data. Production paths must no longer sample the default network interface for this display. The cloud scheduler, services, credentials, button/calendar behavior and paused FPS work stay unchanged. Document the reported-count basis and uncertainty. Refresh the token-count README clip; retain clearly marked historical media if it cannot be regenerated this run.
 
 Verify parser turn boundaries, duplicate/reset/malformed records, tail bootstrap/restart, session isolation, cache/reasoning non-duplication, both directional render values and bounds, native transitions and both service modes. Review independently, run CI, merge and reload the local service, then verify a live scene from actual local Codex usage without publishing fake production values.
+
+Superseded on 2026-10-16: the device owner chose tokens per second for every agent app, not per-turn counts. Sources report cumulative session totals and the agent checker derives the rate.

@@ -148,7 +148,7 @@ def watch(args,runtime,repo):
             if now-last_dot>=60:
                 watcher.dot_thread_ids=load_dot_thread_ids(Path.home()/'.codex/.codex-global-state.json')|dot_ids; last_dot=now
             if now-last_scan>=1:
-                watcher.poll(now); last_scan=now
+                watcher.poll(now); registry.refresh_usage(now); last_scan=now
             for event in read_spool(now=now):
                 key=event.get('session_id',''); stamp=event.get('timestamp')
                 if seen.get(key)!=stamp:

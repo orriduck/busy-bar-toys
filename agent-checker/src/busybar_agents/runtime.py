@@ -29,11 +29,15 @@ def hook_event(payload, *, now=None, source="chatgpt", previous_turn=None):
     if not turn and agent.new_turn_events:
         # Hooks without turn identifiers: a new prompt starts a new local turn.
         turn = f"local-{int(now * 1000)}" if event in agent.new_turn_events else (previous_turn or "")
-    return {"session_id": str(payload["session_id"])[:200],
-            "turn_id": turn[:200],
-            "state": state, "source": source,
-            "cwd": Path(str(payload.get("cwd", ""))).name,
-            "timestamp": now}
+    event_record = {"session_id": str(payload["session_id"])[:200],
+                    "turn_id": turn[:200],
+                    "state": state, "source": source,
+                    "cwd": Path(str(payload.get("cwd", ""))).name,
+                    "timestamp": now}
+    transcript = payload.get("transcript_path")
+    if agent.usage_reader and isinstance(transcript, str) and 0 < len(transcript) <= 1024:
+        event_record["transcript"] = transcript
+    return event_record
 
 
 def _event_path(root, session):
@@ -82,8 +86,12 @@ def read_spool(root=SPOOL, *, now=None):
             except OverflowError: continue
             if not math.isfinite(timestamp): continue
             if -60 <= now - timestamp <= 1812:
-                yield {"session_id": session, "turn_id": turn, "source": source,
-                       "state": state, "timestamp": timestamp,
-                       "cwd": Path(str(event.get("cwd", ""))).name[:100]}
+                record = {"session_id": session, "turn_id": turn, "source": source,
+                          "state": state, "timestamp": timestamp,
+                          "cwd": Path(str(event.get("cwd", ""))).name[:100]}
+                transcript = event.get("transcript")
+                if isinstance(transcript, str) and 0 < len(transcript) <= 1024:
+                    record["transcript"] = transcript
+                yield record
         except (OSError, ValueError, AttributeError):
             continue

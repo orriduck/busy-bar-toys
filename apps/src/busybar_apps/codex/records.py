@@ -1,13 +1,11 @@
 """Translate local Codex rollout records into agent lifecycle events."""
-from dataclasses import replace
 from hashlib import sha256
 import json
 from pathlib import Path
 import re
 
 from busybar_agents.events import FLASH_SECONDS, STALE_SECONDS, STATES, TaskRegistry, parse_timestamp
-
-from busybar_agents.tokens import TokenUsage, parse_usage
+from busybar_agents.tokens import parse_usage
 
 TAIL_BYTES = 1024 * 1024
 WAITING_TOOLS = frozenset({"request_user_input", "request_user_input_async"})
@@ -20,56 +18,6 @@ class CodexTaskRegistry(TaskRegistry):
         super().__init__()
         self._waiting_calls: dict[str, str] = {}
         self._default_session = ""
-        self._token_totals = {}
-        self._token_baselines = {}
-        self._token_start_known = {}
-        self._token_anchor_trusted = {}
-
-    def _tokens(self, session, record, payload, now):
-        """Anchor session totals, but expose only proven cumulative current-turn deltas."""
-        current = self.task(session)
-        info = payload.get('info')
-        # Older Codex versions emitted metadata-only token heartbeats.
-        if info is None:
-            if current and current.state in {'working', 'waiting'}:
-                return self._apply(session, current.state, record, now)
-            return False
-        total = parse_usage(info.get('total_token_usage')) if isinstance(info, dict) else None
-        stamp = parse_timestamp(record.get('timestamp'))
-        if total is None or stamp is None:
-            return False
-        previous = self._token_totals.get(session)
-        if previous and (stamp <= previous[0] or total == previous[1]):
-            return False
-        if current and stamp < current.updated_at:
-            return False
-        turn = payload.get('turn_id') or record.get('turn_id')
-        if turn and current and turn != current.turn_id:
-            return False
-        high_water = parse_timestamp(record.get('_token_anchor_high_water'))
-        self._token_totals[session] = (max(stamp, high_water) if high_water is not None else stamp, total)
-        self._token_anchor_trusted[session] = high_water is None or stamp > high_water
-        if not current or current.state not in {'working', 'waiting'}:
-            return False
-        baseline = self._token_baselines.get(session)
-        if previous and (total.input_tokens < previous[1].input_tokens or
-                         total.output_tokens < previous[1].output_tokens):
-            baseline = None
-            self._token_baselines[session] = None
-        if record.get('_token_history_uncertain') is True:
-            baseline = None
-            self._token_baselines[session] = None
-        if (baseline is None and previous is None and self._token_start_known.get(session)
-                and not record.get('_token_history_uncertain')):
-            last = parse_usage(info.get('last_token_usage'))
-            if last == total:
-                baseline = TokenUsage(0, 0)
-                self._token_baselines[session] = baseline
-        usage = None
-        if baseline is not None and total.input_tokens >= baseline.input_tokens and total.output_tokens >= baseline.output_tokens:
-            usage = TokenUsage(total.input_tokens-baseline.input_tokens, total.output_tokens-baseline.output_tokens)
-        self._tasks[session] = replace(current, token_usage=usage, updated_at=stamp)
-        return True
 
     def ingest(self, record: dict, now: float | None = None) -> bool:
         if not isinstance(record, dict):
@@ -103,8 +51,8 @@ class CodexTaskRegistry(TaskRegistry):
         current = self.task(session)
         state = record.get("state")
         kind = payload.get("type")
-        if record.get("type") == "event_msg" and kind == "token_count":
-            return self._tokens(session, record, payload, now)
+        if record.get("type") == "event_msg" and kind == "token_count" and isinstance(payload.get("info"), dict):
+            self.set_usage(session, parse_usage(payload["info"].get("total_token_usage")))
         if state is None and record.get("type") == "event_msg":
             state = {"task_started": "working", "task_complete": "done", "turn_aborted": "stopped", "error": "error"}.get(kind)
             if state is None and current and current.state in {"working", "waiting"} and kind in {"agent_message", "agent_reasoning", "token_count"}:
@@ -127,13 +75,6 @@ class CodexTaskRegistry(TaskRegistry):
                            started_at=started_at, default_source="codex"):
             return False
         turn = self.task(session).turn_id
-        if not current or current.turn_id != turn:
-            # Recovering a waiting call proves liveness, not where this turn
-            # began. Its preceding token record may already belong to the turn.
-            start_known = record.get('type') == 'event_msg' and kind == 'task_started'
-            self._token_start_known[session] = start_known
-            anchor = self._token_totals.get(session) if start_known and self._token_anchor_trusted.get(session) else None
-            self._token_baselines[session] = anchor[1] if anchor else None
         if state != "waiting" or (current and current.turn_id != turn):
             self._waiting_calls.pop(session, None)
         if state == "waiting" and kind == "function_call" and isinstance(payload.get("call_id"), str):
@@ -172,105 +113,38 @@ class RolloutWatcher:
                 and isinstance(name, str) and name.rsplit(".",1)[-1] in WAITING_TOOLS)
 
     @classmethod
-    def _bootstrap_records(cls, stream, before: int) -> list[bytes]:
-        """Find turn context once on boot, scanning backwards with bounded memory.
-
-        Only selected metadata records are replayed: latest start, its preceding
-        total, latest usage and latest lifecycle boundary. Earlier metadata is
-        scanned once to validate anchor ordering; no historical task replay or
-        record list is retained. Oversized response bodies are skipped.
-        """
-        position, buffer, skip_partial = before, b"", True
-        found = {}
-        selected = {}
-        history = {'later':None, 'uncertain':False, 'anchor':None, 'anchor_high_water':None, 'max_stamp':None}
-
-        def results():
-            if history['uncertain'] and history['anchor'] is None and 'usage' in found:
-                found['anchor'] = found['usage']
-                history['anchor_high_water'] = history['max_stamp']
-            if history['anchor_high_water'] is not None:
-                # Persist anchor uncertainty even if no current task exists yet;
-                # a task_started within the tail must not trust this stale total.
-                for key in {found['anchor'], found['usage']}:
-                    record = json.loads(selected[key])
-                    record['_token_anchor_high_water'] = history['anchor_high_water']
-                    selected[key] = json.dumps(record).encode()
-            if history['uncertain'] and 'usage' in found:
-                key = found['usage']
-                record = json.loads(selected[key])
-                record['_token_history_uncertain'] = True
-                selected[key] = json.dumps(record).encode()
-            return [selected[key] for key in sorted(selected)]
-
-        def consider(line, offset):
-            if len(line) > TAIL_BYTES:
-                return False
-            try:
-                record = json.loads(line)
-            except (ValueError, UnicodeDecodeError):
-                return False
-            if not isinstance(record, dict):
-                return False
-            stamp = parse_timestamp(record.get('timestamp'))
-            if stamp is not None:
-                history['max_stamp'] = max(stamp, history['max_stamp'] if history['max_stamp'] is not None else stamp)
-            payload = record.get('payload')
-            payload = payload if isinstance(payload, dict) else {}
-            token = (record.get('type') == 'event_msg' and payload.get('type') == 'token_count'
-                     and isinstance(payload.get('info'), dict)
-                     and parse_usage(payload['info'].get('total_token_usage')) is not None
-                     and parse_timestamp(record.get('timestamp')) is not None)
-            start = record.get('type') == 'event_msg' and payload.get('type') == 'task_started'
-            if history['anchor'] is not None:
-                stamp = parse_timestamp(record.get('timestamp'))
-                anchor_stamp = history['anchor'][0]
-                if stamp is not None and stamp >= anchor_stamp:
-                    # Any earlier activity with a conflicting ordering could
-                    # have made the physical anchor inadmissible in live replay.
-                    history['uncertain'] = True
-                    history['anchor_high_water'] = max(stamp, history['anchor_high_water'] or stamp)
-                return False
-            if token:
-                total = parse_usage(payload['info']['total_token_usage'])
-                stamp = parse_timestamp(record['timestamp'])
-                later = history['later']
-                if later and total != later[1]:
-                    if stamp >= later[0] or total.input_tokens > later[1].input_tokens or total.output_tokens > later[1].output_tokens:
-                        history['uncertain'] = True
-                history['later'] = (stamp, total)
-            if 'boundary' not in found and cls._is_boundary(record):
-                found['boundary'] = offset; selected[offset] = line
-            if 'usage' not in found and token:
-                found['usage'] = offset; selected[offset] = line
-            if 'start' not in found and start:
-                found['start'] = offset; selected[offset] = line
-            elif 'start' in found and token:
-                selected[offset] = line
-                found['anchor'] = offset
-                history['anchor'] = (stamp, total)
-            return False
-
+    def _last_boundary(cls, stream, before: int) -> bytes | None:
+        """Scan backwards in bounded chunks, skipping oversized non-lifecycle lines."""
+        position = before
+        buffer = b""
+        skip_partial = True
         while position:
             size = min(position, 65536)
             position -= size
             stream.seek(position)
             pieces = (stream.read(size) + buffer).split(b"\n")
             buffer = pieces[0]
-            offset = position + sum(len(piece) for piece in pieces) + len(pieces) - 1
             for line in reversed(pieces[1:]):
-                offset -= len(line) + 1
                 if skip_partial:
                     skip_partial = False
                     continue
-                if consider(line, offset):
-                    return results()
+                try:
+                    record = json.loads(line)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if isinstance(record, dict) and cls._is_boundary(record):
+                    return line
             if len(buffer) > TAIL_BYTES:
                 buffer = b""
                 skip_partial = True
         if buffer and not skip_partial:
-            consider(buffer, 0)
-        return results()
+            try:
+                record = json.loads(buffer)
+            except (ValueError, UnicodeDecodeError):
+                return None
+            if isinstance(record, dict) and cls._is_boundary(record):
+                return buffer
+        return None
 
     def _apply(self, line: bytes, info: dict, now: float, boot: bool) -> bool:
         try:
@@ -293,9 +167,7 @@ class RolloutWatcher:
         record["session_id"] = info["session"]
         if info["session"] in self.dot_thread_ids:
             record["source"] = "dots"
-        token_info = (record.get("type") == "event_msg" and payload.get("type") == "token_count"
-                      and isinstance(payload.get("info"), dict))
-        if boot and record.get("type") != "session_meta" and not self._is_boundary(record) and not token_info:
+        if boot and record.get("type") != "session_meta" and not self._is_boundary(record):
             timestamp = parse_timestamp(record.get("timestamp"))
             if timestamp is None:
                 timestamp = parse_timestamp(payload.get("started_at"))
@@ -333,8 +205,9 @@ class RolloutWatcher:
                             stream.readline()  # The first tail line begins inside JSON.
                         tail_start = stream.tell()
                         if not info["ignored"]:
-                            for context in self._bootstrap_records(stream, tail_start):
-                                count += bool(self._apply(context, info, now, True))
+                            boundary = self._last_boundary(stream, tail_start)
+                            if boundary:
+                                count += bool(self._apply(boundary, info, now, True))
                         stream.seek(tail_start)
                     else:
                         stream.seek(info["offset"])

@@ -50,10 +50,28 @@ class TaskRegistry:
         self._tasks: dict[str, Task] = {}
         self._metadata: dict[str, dict] = {}
         self._ignored: set[str] = set()
+        self._usage_refs: dict[str, tuple[str, str]] = {}
         self._seen_turns: dict[str, set[str]] = {}
 
     def task(self, session: str) -> Task | None:
         return self._tasks.get(session)
+
+    def set_usage(self, session: str, totals):
+        """Record cumulative session token totals without counting as activity."""
+        current = self._tasks.get(session)
+        if current and totals is not None:
+            self._tasks[session] = replace(current, token_usage=totals)
+
+    def refresh_usage(self, now: float):
+        """Ask each source's usage reader for current totals of live sessions."""
+        for session, (source, ref) in list(self._usage_refs.items()):
+            current = self._tasks.get(session)
+            if current is None or now - current.updated_at > STALE_SECONDS:
+                self._usage_refs.pop(session, None)
+                continue
+            reader = profiles.profile(source).usage_reader
+            if reader:
+                self.set_usage(session, reader(ref))
 
     def ignore(self, session: str):
         self._ignored.add(session)
@@ -110,7 +128,9 @@ class TaskRegistry:
         if started_at is not None:
             started = started_at
         self._tasks[session] = Task(session, turn, source, project, state, started, timestamp,
-                                    current.token_usage if current and current.turn_id == turn else None)
+                                    current.token_usage if current else None)
+        if isinstance(record.get("transcript"), str):
+            self._usage_refs[session] = (source, record["transcript"])
         self._seen_turns.setdefault(session, set()).add(turn)
         return True
 

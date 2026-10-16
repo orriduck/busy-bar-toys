@@ -17,7 +17,7 @@ The root [English](../../README.md#watch-the-use-cases) and
 | [Your dot](your-dot.mp4) | The five-point source icon and task states. | [Your dot](../../apps/src/busybar_apps/dots/README.md) |
 | [Claude Code](claude.mp4) | The orange source icon and task states. This app is optional. | [Claude Code](../../apps/src/busybar_apps/claude/README.md) |
 | [State colors](state-colors.mp4) | Running, input, error, stale update, and standby. The stale state is injected. | [Agent checker](../../agent-checker/README.md) |
-| [Clock and tokens](clock-tokens.mp4) | A minute change, digit rolls, and separate current-turn input/output counts. | [Agent checker](../../agent-checker/README.md) |
+| [Clock and tokens](clock-tokens.mp4) | A minute change, digit rolls, and separate input/output token rates. | [Agent checker](../../agent-checker/README.md) |
 | [Start/Pause](start-pause.mp4) | Scripted press: calendar until a new task turn starts. | [Button setup](../../README.md#enable-wi-fi-button-input) |
 | [Reduced motion](reduced-motion.mp4) | Static running, input, and standby states. | [Static mode](../../README.md#check-or-stop-the-service) |
 | [ADSBao](adsbao.mp4) | `ADSBAO` rolls to `JBU462`; only `A320` appears below; the current Codex view returns. | [ADSBao](../../apps/src/busybar_apps/adsbao/README.md) |
@@ -91,7 +91,7 @@ Do not replace synthetic values with credentials, account names, or private even
 - Your dot 和 Claude Code 短片展示各自的图标与状态。
   Claude Code 是可选 app；生成演示不会安装 hooks。
 - 状态短片展示蓝、黄、红、灰、白五种状态。灰色过期状态由脚本注入。
-- 时钟与 token 短片展示分钟变化、数字滚动，以及当前轮的输入／输出计数。
+- 时钟与 token 短片展示分钟变化、数字滚动，以及输入／输出的每秒 token 速率。
 - Start/Pause 短片模拟按键：先回日历，等新一轮任务开始再恢复。
 - ADSBao 短片保留完整入场和十秒显示，下行只显示机型。
   结束时恢复当前 Codex；没有活动任务时，服务恢复日历。

@@ -9,7 +9,7 @@ Each agent is an app that registers a source icon, a title, and a hook mapping.
 | [Your dot](../apps/src/busybar_apps/dots/README.md) | `dots` | Orbit identity and lifecycle commands. |
 | [Claude Code](../apps/src/busybar_apps/claude/README.md) | `claude` | Claude Code hooks. |
 
-The front display shows the source icon, a clock, and current-turn input/output token counts.
+The front display shows the source icon, a clock, and input/output tokens per second.
 The clock uses New York time and a 24-hour format.
 The layout matches the device calendar.
 
@@ -24,20 +24,20 @@ The layout matches the device calendar.
 | Thin white light | The display is in standby. |
 | Red light | A task reported an error. |
 | Gray light | No task update arrived for 30 minutes. |
-| Amber up arrow | Input tokens in this Codex turn. |
-| Cyan down arrow | Output tokens in this Codex turn. |
+| Amber up arrow | Input tokens per second. |
+| Cyan down arrow | Output tokens per second. |
 
 The source icon identifies the agent app of the task.
 
-The two numbers show reported input and output tokens for the current Codex turn.
-A new turn resets both counts. The program reads usage from local rollout records.
-Counts update when Codex reports usage. They are not a per-second rate.
-Cached input is part of input tokens. Reasoning output is part of output tokens.
-The program does not add either component again.
-The back display shows exact input and output counts.
+The two numbers show input and output tokens per second for the selected session.
+Each agent app reports cumulative session totals. The rate is the change over the last 10 seconds.
+A session with no new usage shows 0. A source without usage shows `--`.
+Input includes cached input. Output includes reasoning output.
+Codex totals come from local rollout records. Claude Code totals come from its local transcript, read through the hook's transcript path. Only usage fields are read, never message text.
+The back display shows exact rates.
 
 The front display uses decimal abbreviations: K means one thousand and M means one million.
-Each count has three characters. For example, `.1M` means 100,000 tokens.
+Each rate has three characters. For example, `.1M` means 100,000 tokens per second.
 Compact values are rounded down. Use the back display for exact counts.
 `--` means that usage is not available, including sources that do not report it.
 An unknown turn baseline or a reset in the source counter also shows `--`.

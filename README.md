@@ -68,7 +68,7 @@ See the [actual-device mock capture](docs/images/actual-staggered-intro.png) for
 
 | Component | Display | Apps |
 |---|---|---|
-| [Agent checker](agent-checker/README.md) | Task status, source icon, clock, and turn token counts. | Codex, Your dot, Claude Code |
+| [Agent checker](agent-checker/README.md) | Task status, source icon, clock, and token rates. | Codex, Your dot, Claude Code |
 | [Notifier](notifier/README.md) | Short alerts with staggered character rolls. | ADSBao, Datadog, GitHub, Jira, Metaflow, Terminal, Credentials, Calendar |
 
 See [all apps and their requirements](apps/README.md).
