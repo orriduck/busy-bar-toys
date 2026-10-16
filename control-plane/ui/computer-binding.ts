@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
+import type { Service, QueueItem } from "./api";
+import { resolveComputerBinding } from "./service-layout";
 /** Presentation preference only; not authentication or hardware proof. */
-export function useComputerBinding(deviceId: string) {
+export function useComputerBinding(
+  deviceId: string,
+  services: Service[],
+  items: QueueItem[],
+) {
   const key = `busybar.this-computer.${deviceId}`;
   const [binding, setBinding] = useState<{ key: string; id: string | null }>({
     key,
@@ -30,5 +36,10 @@ export function useComputerBinding(deviceId: string) {
     }
     setBinding({ key, id });
   };
-  return [binding.key === key ? binding.id : null, bind] as const;
+  const current = binding.key === key ? binding.id : null;
+  const resolved = resolveComputerBinding(current, services, items);
+  useEffect(() => {
+    if (resolved !== current) bind(resolved);
+  }, [resolved, current, key]);
+  return [resolved, bind] as const;
 }

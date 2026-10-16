@@ -329,11 +329,13 @@ function ServiceAccess({
 }
 
 export function Register({
+  services,
   revision,
   mutate,
   pending,
   onCreated,
 }: {
+  services: Service[];
   revision: number;
   mutate: Mutate;
   pending: boolean;
@@ -347,13 +349,14 @@ export function Register({
   const formId = useId();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
-  const [deviceName, setDeviceName] = useState("");
+  const [computerId, setComputerId] = useState("");
   const [template, setTemplate] = useState("agent");
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const result = await mutate("/services", {
       id,
-      name: deviceName.trim() ? `${deviceName.trim()} · ${name.trim()}` : name,
+      name: name.trim(),
+      ...(computerId ? { computerId } : {}),
       template,
       expectedRevision: revision,
       config: { priority: template === "agent" ? 10 : 50 },
@@ -380,25 +383,34 @@ export function Register({
         <CardContent>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor={`${formId}-device`}>Device name</FieldLabel>
-              <Input
+              <FieldLabel htmlFor={`${formId}-device`}>Computer</FieldLabel>
+              <NativeSelect
                 id={`${formId}-device`}
-                value={deviceName}
-                maxLength={40}
-                onChange={(event) => setDeviceName(event.target.value)}
-                placeholder="MacBook"
-              />
+                value={computerId}
+                onChange={(event) => setComputerId(event.target.value)}
+              >
+                <NativeSelectOption value="">
+                  New computer (generate ID)
+                </NativeSelectOption>
+                {[
+                  ...new Set(
+                    services
+                      .map((s) => s.computerId)
+                      .filter((id): id is string => !!id),
+                  ),
+                ].map((id) => (
+                  <NativeSelectOption key={id} value={id}>
+                    {id}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
             </Field>
             <Field>
               <FieldLabel htmlFor={`${formId}-field6`}>{"Name"}</FieldLabel>
               <Input
                 id={`${formId}-field6`}
                 required
-                maxLength={
-                  deviceName.trim()
-                    ? Math.max(1, 77 - deviceName.trim().length)
-                    : 80
-                }
+                maxLength={80}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="My Codex"

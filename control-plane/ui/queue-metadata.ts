@@ -29,6 +29,6 @@ export function queueMetadata(item: QueueItem, snapshot: Snapshot) {
         ? "Notifier"
         : service?.name || "Unknown app";
   const name = service ? serviceLabel(service) : item.serviceId;
-  const sender = `${item.instanceId} · ${name}`;
+  const sender = `${service?.computerId || item.instanceId} · ${name}`;
   return { app, appId, sender, receivedAt: item.receivedAt };
 }

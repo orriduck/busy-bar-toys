@@ -1,4 +1,5 @@
 import { StateStore } from "./store";
+import { migrateComputerIds } from "./computers";
 import { PreviewRelay } from "./preview";
 import { DurableObject } from "cloudflare:workers";
 import {
@@ -89,6 +90,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, revision INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL)",
     );
     const s = this.load();
+    if (s && migrateComputerIds(s)) this.save(s);
     if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
       tick(s, Date.now());

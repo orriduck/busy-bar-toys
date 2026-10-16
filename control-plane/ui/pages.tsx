@@ -69,7 +69,11 @@ export function ServicesPage({
   onCredential: (value: CredentialValue) => void;
 }) {
   const [register, setRegister] = useState(false);
-  const [thisComputer, bindComputer] = useComputerBinding(snapshot.deviceId);
+  const [thisComputer, bindComputer] = useComputerBinding(
+    snapshot.deviceId,
+    snapshot.services,
+    snapshot.items,
+  );
   return (
     <section className="management-page" aria-labelledby="services-title">
       <div className="page-heading">
@@ -81,6 +85,7 @@ export function ServicesPage({
       </div>
       {register && (
         <Register
+          services={snapshot.services}
           revision={snapshot.configRevision}
           mutate={mutate}
           pending={pending}
