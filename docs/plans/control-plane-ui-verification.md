@@ -100,3 +100,10 @@ Formal390×844 mobile view had no horizontal overflow and no Manage button. Loca
 Actual private screenshots: .local/ui/formal-services-dock.png and formal-mobile-dock.png, visually inspected and shown to the user. They are intentionally excluded from the public repository. Existing public documentation images remain synthetic and are not evidence of this formal device acceptance.
 
 Throughput is still a limitation. One20.718-second formal navigation window received402 frames and drew389 (about19.4 received/18.8 drawn fps); an earlier independent window measured about25fps. These are different network/capture windows and do not establish a controlled before/after performance comparison. The buffer does not increase source FPS. Stable actual30fps is not accepted or claimed. Source reconnects and bounded stale-frame handling remain expected behavior.
+
+
+### Default density follow-up — 2026-10-15
+
+At the user's request, application typography and geometry now use a90% root scale, with fixed layout dimensions expressed in rem so Tailwind/shadcn controls, spacing, logo and preview scale together. One-pixel outlines and conservative responsive cutoffs remain unchanged. Browser zoom stays100%; viewport-height calculations still fill the screen.
+
+Formal Worker0940a5c0-646f-423f-a917-c69b3773c3ab, CSS index-h2po1mKZ.css. At1159×1048, root font14.4px; logo72×23.4 at(21.6,31.5), workspace x295.2/y86.4, no horizontal overflow. Display→Services kept the actual pixel preview in the bottom-left dock; console errors/warnings empty. At390×844, no horizontal overflow and preview remained before forms. Private screenshot evidence is in /tmp/busy-bar-density-desktop.png and /tmp/busy-bar-density-mobile.png, excluded from Git. Typecheck, build, production dry-run and143 Worker/UI tests passed. This CSS-only change does not address the separately tracked producer throughput issue.
