@@ -27,7 +27,7 @@
   --border: oklch(1 0 0 / 8%);
   --input: #242424;
   --ring: oklch(0.6187 0.2067 259.23);
-  --brand: #ff0034;
+  --brand: #ed0018;
   --display-background: #000000;
   --success: #72ce9b;
   --warning: #e8bd6a;
@@ -207,7 +207,7 @@ a {
 }
 .sidebar nav {
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 .workspace {
   display: flex;

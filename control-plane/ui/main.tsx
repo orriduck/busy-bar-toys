@@ -19,6 +19,7 @@ import { Skeleton } from "./components/ui/skeleton";
 import { api, APIError, message } from "./api";
 import type { Snapshot, Mutate } from "./api";
 import { Brand, Icon } from "./common";
+import { cn } from "./lib/utils";
 import { SignIn, Credential } from "./auth";
 import { Queue } from "./queue";
 import {
@@ -322,7 +323,12 @@ function App() {
             <>
               {/* Keep this host and its keyed Preview in place across navigation. */}
               <section
-                className={`preview-host ${page === "display" ? "preview-host-full" : "preview-host-dock"}`}
+                className={cn(
+                  "preview-host",
+                  page === "display"
+                    ? "preview-host-full"
+                    : "preview-host-dock",
+                )}
                 aria-label="Live device preview"
               >
                 <div className="preview-caption">
