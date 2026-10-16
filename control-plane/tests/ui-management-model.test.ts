@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as model from "../src/model";
+import { reorderOwnedServices } from "../src/computers";
 
 const now = 1_800_000_000_000;
 function state() {
@@ -12,6 +13,13 @@ function state() {
       "epoch",
       now,
     );
+  s.computers.mac = {
+    id: "mac",
+    credentialHash: "hash",
+    createdAt: now,
+    serviceOrder: ["a", "b", "c"],
+  };
+  for (const service of Object.values(s.services)) service.computerId = "mac";
   return s;
 }
 function publish(
@@ -56,12 +64,8 @@ describe("atomic service ordering", () => {
     const s = state(),
       before = s.revision,
       config = s.configRevision;
-    model.reorderServices(s, ["c", "a", "b"], config, now);
-    expect([
-      s.services.c.config.priority,
-      s.services.a.config.priority,
-      s.services.b.config.priority,
-    ]).toEqual([1000, 999, 998]);
+    reorderOwnedServices(s, "mac", ["c", "a", "b"], config);
+    expect(s.computers.mac.serviceOrder).toEqual(["c", "a", "b"]);
     expect(s.revision).toBe(before + 1);
     expect(s.configRevision).toBe(config + 1);
   });
@@ -79,7 +83,7 @@ describe("atomic service ordering", () => {
   )("rejects invalid permutations without mutation: $ids", ({ ids }) => {
     const s = state(),
       before = structuredClone(s);
-    expect(() => model.reorderServices(s, ids, s.configRevision, now)).toThrow(
+    expect(() => reorderOwnedServices(s, "mac", ids, s.configRevision)).toThrow(
       "INVALID_SERVICE_ORDER",
     );
     expect(s).toEqual(before);
@@ -88,7 +92,7 @@ describe("atomic service ordering", () => {
     const s = state(),
       before = structuredClone(s);
     expect(() =>
-      model.reorderServices(s, ["b", "a", "c"], s.configRevision - 1, now),
+      reorderOwnedServices(s, "mac", ["b", "a", "c"], s.configRevision - 1),
     ).toThrow("CONFIG_CONFLICT");
     expect(s).toEqual(before);
   });
@@ -102,11 +106,12 @@ describe("atomic service ordering", () => {
       now,
     );
     const before = s.revision;
-    model.reorderServices(s, ["b", "a", "c"], s.configRevision, now);
+    reorderOwnedServices(s, "mac", ["b", "a", "c"], s.configRevision);
+    model.tick(s, now);
     expect(s.items[s.selected!].serviceId).toBe("b");
-    expect(s.revision).toBe(before + 1);
+    expect(s.revision).toBeGreaterThanOrEqual(before + 1);
     publish(s, "urgent", { level: "urgent" });
-    model.reorderServices(s, ["b", "c", "a"], s.configRevision, now);
+    reorderOwnedServices(s, "mac", ["b", "c", "a"], s.configRevision);
     expect(s.items[s.selected!].level).toBe("urgent");
   });
 });

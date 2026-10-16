@@ -91,7 +91,10 @@ describe("Worker/SQLite DO runtime", () => {
         Authorization: "Bearer " + result.credential,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ expectedRevision: 1, config: { priority: 99 } }),
+      body: JSON.stringify({
+        expectedRevision: 1,
+        config: { visibleMs: 9000 },
+      }),
     });
     expect(bad.status).toBe(403);
     expect(
@@ -202,7 +205,10 @@ it("rejects stale cross-tab expected-device binding before mutating or logging o
         "Content-Type": "application/json",
         ...(expected ? { "X-Busy-Device": expected } : {}),
       },
-      body: JSON.stringify({ expectedRevision: 1, config: { priority: 99 } }),
+      body: JSON.stringify({
+        expectedRevision: 1,
+        config: { visibleMs: 9000 },
+      }),
     });
   const stale = await write(a.deviceId);
   expect(stale.status).toBe(409);
@@ -212,10 +218,10 @@ it("rejects stale cross-tab expected-device binding before mutating or logging o
   expect(await missing.json()).toEqual({ error: "DEVICE_BINDING_REQUIRED" });
   const unchanged = (await (await api("/api/snapshot", b.cookie)).json()) as {
     configRevision: number;
-    services: { config: { priority: number } }[];
+    services: { config: { visibleMs: number } }[];
   };
   expect(unchanged.configRevision).toBe(1);
-  expect(unchanged.services[0].config.priority).toBe(50);
+  expect(unchanged.services[0].config.visibleMs).toBe(10000);
   const logout = await exports.default.fetch(origin + "/api/session", {
     method: "DELETE",
     headers: { cookie: b.cookie, Origin: origin, "X-Busy-Device": a.deviceId },

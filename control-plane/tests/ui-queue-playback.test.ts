@@ -62,7 +62,7 @@ describe("confirmed queue playback", () => {
     expect(result.current).toBe(true);
     expect(result.remainingMs).toBe(6_500);
     expect(result.progress).toBe(35);
-    expect(result.priority).toBe(90);
+    expect(result).not.toHaveProperty("priority");
   });
 
   it("keeps source and legacy unknown totals indeterminate without a countdown", () => {
@@ -100,7 +100,7 @@ describe("confirmed queue playback", () => {
     }
   });
 
-  it("resolves the active group member and its service priority over the representative", () => {
+  it("resolves the active group member over the representative", () => {
     const state = fixture();
     const representative = item("representative", "second");
     representative.playback.running = false;
@@ -112,11 +112,11 @@ describe("confirmed queue playback", () => {
       0,
     );
     expect(active.item.itemKey).toBe("owner");
-    expect(active.priority).toBe(90);
+
     expect(active.current).toBe(true);
     const waiting = queuePlayback(state, ["representative"], representative, 0);
     expect(waiting.item.itemKey).toBe("representative");
-    expect(waiting.priority).toBe(20);
+
     expect(waiting.current).toBe(false);
   });
 

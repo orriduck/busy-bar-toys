@@ -23,24 +23,24 @@
 
 ## 3. App registration and producer routing
 
-- [ ] Require an explicit owned service ID for computer-authenticated publication; retain single-service scope for legacy credentials. Message app labels remain controlled by the local computer.
-- [ ] Extend CLI/Keychain and registration metadata to one computer credential plus validated service IDs.
-- [ ] Build source-app routing to distinct Producer instances and durable outboxes; no generic fallback.
-- [ ] Cover two GitHub sources sharing one GitHub producer, independent Datadog, missing registration, actions/receipts and urgent fallback isolation.
-- [ ] Update preview/input selection to work with arbitrary registered local services.
+- [x] Require an explicit owned service ID for computer-authenticated publication; retain single-service scope for legacy credentials. Message app labels remain controlled by the local computer.
+- [x] Extend CLI/Keychain and registration metadata to one computer credential plus validated service IDs.
+- [x] Build source-app routing to distinct Producer instances and durable outboxes; no generic fallback.
+- [x] Cover two GitHub sources sharing one GitHub producer, independent Datadog, missing registration, actions/receipts and urgent fallback isolation.
+- [x] Update preview/input selection to work with arbitrary registered local services.
 
 ## 4. Ordering and configuration workspace
 
 - [x] User confirmed all computers visible, only own computer sortable/configurable; Notifier may publish to any owned registered service ID.
-- [ ] Convert legacy priority order once to the selected explicit order model; remove numeric service priority as an authority.
-- [ ] Replace multi-open collapsibles with a stable desktop list/detail layout and mobile list/detail navigation.
-- [ ] Preserve keyed drafts, revision conflict handling, focus, drag keyboard support and reduced motion. Read-only peers cannot mutate.
-- [ ] Remove priority controls/badges and obsolete registration payloads; retain compact Hold/Heartbeat controls and help.
-- [ ] Verify 320/390/760px plus desktop geometry in the real browser; do not infer visual success from a build.
+- [x] Convert legacy priority order once to the selected explicit order model; remove numeric service priority as an authority.
+- [x] Replace multi-open collapsibles with a stable desktop list/detail layout and mobile list/detail navigation.
+- [x] Preserve keyed drafts, revision conflict handling, focus, drag keyboard support and reduced motion. Read-only peers cannot mutate.
+- [x] Remove priority controls/badges and obsolete registration payloads; retain compact Hold/Heartbeat controls and help.
+- [x] Verify 320/390/760px plus desktop geometry in the real browser; do not infer visual success from a build.
 
 ## 5. Release and local handover
 
-- [ ] Full Python and Worker/UI tests, typecheck/build, independent security/UI review.
+- [x] Full Python and Worker/UI tests, typecheck/build, independent security/UI review.
 - [ ] Merge via reviewed PR, check all GitHub CI and native Cloudflare Builds, verify production assets and real authorization.
 - [ ] Enroll this computer with existing private credentials, register fresh Codex/ADSBao services, and store new credentials only in Keychain.
 - [ ] Preserve source encounter/seen/action/end receipts and fallback deadlines; prevent old mixed outbox replay.
@@ -50,4 +50,4 @@
 
 ## Checkpoint evidence
 
-The implemented identity foundation has 37 passing model/HTTP/SQLite tests and a clean typecheck. Independent security review found and verified fixes for code-expiry alarms, browser physical-button impersonation, enrollment capacity reservations, and response-loss credential recovery. This is not a release gate: existing runtime/preview fixtures still assume unrestricted device sessions and need migration; scheduler, Python client, UI and production handover remain incomplete. Do not merge/deploy this partial branch.
+354 Python tests and 287 Worker/UI tests passed. Typecheck, production UI build and Wrangler dry-run passed. Independent review verified ownership, migration of existing leases, overlay queue ETA, event handover and urgent fallback. Chrome acceptance covered unpaired read-only view, actual browser pairing, peer-read-only controls, keyed draft retention, saving and keyboard drag ordering. Desktop panes were equal width with one visible editor; 320/390/760px views had no document overflow. A peer badge caused internal mobile heading overflow; its grid placement was corrected. Release and local production handover are still pending; do not claim them from these local checks.

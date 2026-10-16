@@ -302,6 +302,7 @@ class State:
                 rec.pop('updateBody',None)
             rec['lastSourceAt']=int(self.clock()*1000)
             rec['sourceUnknown']=False
+            rec.pop('handoverPendingSource',None)
             self.save(); return copy.deepcopy(rec)
 
     def clear(self,key):
@@ -656,7 +657,7 @@ class Producer:
             with self.state.lock: self.state.data['ends'].pop(ident,None); self.state.save()
         for rec in records:
             if rec.get('tombstone'): continue
-            if rec.get('cleared') or rec.get('renderPending') or not isinstance(rec.get('scene'),dict) or rec['acked']>=rec['version']: continue
+            if rec.get('cleared') or rec.get('handoverPendingSource') or rec.get('renderPending') or not isinstance(rec.get('scene'),dict) or rec['acked']>=rec['version']: continue
             frozen=rec.get('publishBody')
             if frozen and frozen['validUntil']<=self.clock()*1000:
                 with self._snapshot_lock:

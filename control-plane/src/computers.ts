@@ -58,7 +58,11 @@ function liveSession(s: State, id: string, now: number) {
   return has(s.sessions, id) && s.sessions[id] > now;
 }
 export function activeComputer(s: State, id: string): Computer {
-  requireThat(has(s.computers, id), "COMPUTER_NOT_FOUND", 404);
+  requireThat(
+    has(s.computers, id) && !!s.computers[id].credentialHash,
+    "COMPUTER_NOT_FOUND",
+    404,
+  );
   const computer = s.computers[id];
   requireThat(computer.revokedAt === undefined, "COMPUTER_REVOKED", 403);
   return computer;
@@ -70,6 +74,7 @@ export function sessionComputer(s: State, id: string, now = Date.now()) {
   return computerId &&
     liveSession(s, id, now) &&
     has(s.computers, computerId) &&
+    !!s.computers[computerId].credentialHash &&
     s.computers[computerId].revokedAt === undefined
     ? computerId
     : null;
@@ -273,12 +278,17 @@ export function claimLegacy(
   );
   const computerId = s.services[publisherServiceId].computerId;
   requireThat(computerId, "COMPUTER_PROOF_REQUIRED", 403);
-  requireThat(!has(s.computers, computerId), "COMPUTER_ALREADY_ENROLLED", 409);
+  requireThat(
+    !s.computers[computerId]?.credentialHash,
+    "COMPUTER_ALREADY_ENROLLED",
+    409,
+  );
   const pending = Object.values(s.enrollments).filter(
     (e) => e.expiresAt > now && liveSession(s, e.sessionId, now),
   );
   requireThat(
-    Object.keys(s.computers).length + pending.length < 32,
+    Object.keys(s.computers).length + pending.length < 32 ||
+      has(s.computers, computerId),
     "COMPUTER_CAPACITY",
     413,
   );
@@ -301,12 +311,14 @@ export function claimLegacy(
     id: computerId,
     credentialHash,
     createdAt: now,
-    serviceOrder: services
-      .sort(
-        (a, b) =>
-          b.config.priority - a.config.priority || a.id.localeCompare(b.id),
-      )
-      .map((service) => service.id),
+    serviceOrder:
+      s.computers[computerId]?.serviceOrder ??
+      services
+        .sort(
+          (a, b) =>
+            b.config.priority - a.config.priority || a.id.localeCompare(b.id),
+        )
+        .map((service) => service.id),
   };
   s.computers[computerId] = computer;
   s.revision++;

@@ -163,3 +163,75 @@ class RegistrationTest(unittest.TestCase):
             with self.assertRaises(CloudError):registration.enroll(folder,'https://control.test',TICKET,store=store,transport=HTTP,secret_factory=lambda:SECRET)
             result=registration.enroll(folder,'https://control.test',TICKET,store=store,transport=HTTP,secret_factory=lambda:self.fail('must not rotate'))
             self.assertEqual(result['phase'],'active');self.assertEqual(events.count('store'),1)
+
+    def test_route_accepts_any_owned_service_id_and_rejects_peer_without_writes(self):
+        from busybar_shared.cloud import atomic_json
+        events=[];store=Store(events);store.value=CREDENTIAL
+        class HTTP:
+            def __init__(self,*_):pass
+            def request(self,*_):
+                return {'deviceId':DEVICE,'computerId':COMPUTER,'services':[
+                    {'id':'arbitrary-id','name':'Anything','template':'notifier','epoch':'epoch','computerId':COMPUTER},
+                    {'id':'peer-id','name':'Peer','template':'notifier','epoch':'e','computerId':'peer'}]}
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/registration.FILE
+            atomic_json(path,{'url':'https://control.test','deviceId':DEVICE,'computerId':COMPUTER,'instanceId':'mac','phase':'active','services':{},'routes':{}})
+            value=registration.route_service(folder,'my-source','arbitrary-id',store=store,transport=HTTP)
+            self.assertEqual(value['routes']['my-source'],'arbitrary-id')
+            value['services']['arbitrary-id'].update(pending=True,epoch='old')
+            atomic_json(path,value)
+            value=registration.route_service(folder,'second-source','arbitrary-id',store=store,transport=HTTP)
+            self.assertFalse(value['services']['arbitrary-id']['pending']);self.assertEqual(value['services']['arbitrary-id']['epoch'],'epoch')
+            rotated=dict(value);rotated['services']['arbitrary-id']['epoch']='stale';atomic_json(path,rotated)
+            with self.assertRaisesRegex(CloudError,'registration_epoch_changed'):
+                registration.route_service(folder,'new-source','arbitrary-id',store=store,transport=HTTP)
+            value['services']['arbitrary-id']['epoch']='epoch';atomic_json(path,value)
+
+            before=path.read_bytes()
+            with self.assertRaisesRegex(CloudError,'service_not_owned'):
+                registration.route_service(folder,'my-source','peer-id',store=store,transport=HTTP)
+            self.assertEqual(path.read_bytes(),before)
+
+    def test_handover_keeps_receipts_and_deadlines_but_removes_old_namespace_proofs(self):
+        import json
+        from busybar_shared.cloud import atomic_json
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            atomic_json(root/registration.FILE,{'url':'https://control.test','deviceId':DEVICE,'computerId':COMPUTER,'instanceId':'mac','phase':'active','services':{
+                'adsbao':{'serviceId':'new','name':'ADSBao','template':'notifier','epoch':'new-epoch','pending':False}},'routes':{'adsbao':'new'}})
+            atomic_json(root/'cloud-notifier.json',{'role':'notifier','url':'https://old.test','serviceId':'old','instanceId':'mac','epoch':'old-epoch'})
+            import time
+            before_ms=int(time.time()*1000)
+            old={'epoch':'old-epoch','actions':{},'assets':{},'inputs':{},'ends':{},'records':{
+                'adsbao:waiting':{'itemId':'waiting','kind':'event','level':'info','title':'Waiting','detail':'','firstRecognizedAt':123,'lastSourceAt':123,'version':2,'acked':2,'deadline':123,'scene':{'commands':[]},'publishBody':{'epoch':'old'},'proofUntil':999},
+                'adsbao:shown':{'itemId':'shown','kind':'event','version':1,'acked':1,'admitted':True,'deadline':101},
+                'adsbao:ended':{'itemId':'ended','kind':'event','version':1,'tombstone':'completed','deadline':100},
+                'adsbao:urgent':{'itemId':'urgent','kind':'condition','level':'urgent','version':1,'acked':1,'deadline':before_ms+70000,'proofUntil':before_ms+60000,'suppressed':True},
+                'other:record':{'itemId':'other','version':1}}}
+            atomic_json(root/'cloud-notifier-state.json',old)
+            before=(root/'cloud-notifier-state.json').read_bytes()
+            self.assertEqual(registration.migrate_outboxes(root),1)
+            path=root/'cloud-service-new-state.json';data=json.loads(path.read_text());rec=data['records']['adsbao:waiting']
+            self.assertEqual(rec['deadline'],123);self.assertEqual(rec['itemId'],'waiting');self.assertEqual(rec['acked'],0)
+            self.assertFalse(rec['renderPending']);self.assertTrue(rec['handoverPendingSource']);self.assertNotIn('publishBody',rec);self.assertNotIn('proofUntil',rec)
+            urgent=data['records']['adsbao:urgent']
+            self.assertLessEqual(urgent['deadline'],int(time.time()*1000)+10000);self.assertGreaterEqual(urgent['deadline'],before_ms)
+            self.assertFalse(urgent['suppressed'])
+            self.assertEqual(data['epoch'],'new-epoch');self.assertEqual(data['records']['adsbao:shown']['tombstone'],'migrated')
+            self.assertEqual(data['records']['adsbao:ended']['tombstone'],'completed');self.assertNotIn('other:record',data['records'])
+            from busybar_shared.cloud import Producer
+            from busybar_service.cloud_adapter import CloudQueue
+            class HTTP:
+                def __init__(self):self.published=[]
+                def request(self,method,path,body=None):
+                    if path=='/api/publish':self.published.append(body)
+                    return {}
+            http=HTTP();producer=Producer(root,{'role':'service-new','serviceId':'new','instanceId':'mac','epoch':'new-epoch'},http)
+            producer.flush();self.assertEqual(http.published,[])
+            # source_ok is what an empty successful cursor-based event poll calls.
+            CloudQueue(producer).source_ok('adsbao',10)
+            producer.flush();self.assertEqual([body['itemId'] for body in http.published],['waiting'])
+            self.assertEqual((root/'cloud-notifier-state.json').read_bytes(),before)
+            self.assertEqual(registration.migrate_outboxes(root),0)
+            old['actions']={'a':{'status':'unknown'}};atomic_json(root/'cloud-notifier-state.json',old)
+            with self.assertRaisesRegex(CloudError,'local_action_unresolved'):registration.migrate_outboxes(root)

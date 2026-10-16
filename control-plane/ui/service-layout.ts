@@ -1,4 +1,4 @@
-import type { Service, QueueItem } from "./api";
+import type { Snapshot, Service, QueueItem } from "./api";
 export function serviceLabel(service: Service) {
   const parts = service.name.split(" · ");
   return parts.length > 1 ? parts.slice(1).join(" · ") : service.name;
@@ -45,8 +45,25 @@ export function deviceGroups(services: Service[], items: QueueItem[] = []) {
   }
   return Array.from(groups, ([name, services]) => ({ name, services }));
 }
-export function priorityOrder(services: Service[]) {
-  return [...services].sort(
-    (a, b) => b.config.priority - a.config.priority || a.id.localeCompare(b.id),
-  );
+/** Authoritative server order; presentation never grants ownership. */
+export function orderedDeviceGroups(
+  snapshot: Pick<Snapshot, "services" | "items" | "computers">,
+) {
+  return deviceGroups(snapshot.services, snapshot.items)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((group) => {
+      const order =
+        snapshot.computers?.find((c) => c.id === group.name)?.serviceOrder ??
+        [];
+      const position = (id: string) => {
+        const index = order.indexOf(id);
+        return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+      };
+      return {
+        ...group,
+        services: [...group.services].sort(
+          (a, b) => position(a.id) - position(b.id) || a.id.localeCompare(b.id),
+        ),
+      };
+    });
 }

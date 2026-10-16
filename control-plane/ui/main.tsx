@@ -42,6 +42,7 @@ import { ThemeToggle, useTheme } from "./theme-control";
 import { OfflineNotice, registerAppWorker } from "./pwa";
 function App() {
   const appearance = useTheme();
+  const [ownerComputerId, setOwnerComputerId] = useState<string | null>(null);
   const [session, setSession] = useState<boolean | null>(null);
   const queryClient = useQueryClient();
   const [demo, setDemo] = useState<boolean | null>(null);
@@ -90,6 +91,7 @@ function App() {
       eventStream.current = null;
       clearSnapshotCache(queryClient);
       request.reset();
+      setOwnerComputerId(null);
       setSecret(null);
       setPage("display");
       setPreviewStats(null);
@@ -101,7 +103,11 @@ function App() {
     [queryClient, request.reset],
   );
   const beginSession = useCallback(
-    (deviceId: string, serverDemo: boolean | undefined) => {
+    (
+      deviceId: string,
+      serverDemo: boolean | undefined,
+      computerId: string | null = null,
+    ) => {
       if (!/^[a-f0-9]{64}$/.test(deviceId)) {
         clearSession(null);
         setSession(false);
@@ -109,6 +115,7 @@ function App() {
         return;
       }
       clearSession(deviceId);
+      setOwnerComputerId(computerId);
       setDemo(typeof serverDemo === "boolean" ? serverDemo : null);
       setError("");
       setSession(true);
@@ -159,9 +166,12 @@ function App() {
         setDemo(typeof v.demo === "boolean" ? v.demo : null);
       })
       .catch(() => {});
-    void api<{ deviceId: string; demo?: boolean }>("/session")
+    void api<{ deviceId: string; demo?: boolean; computerId?: string | null }>(
+      "/session",
+    )
       .then((v) => {
-        if (fence.current.current(generation)) beginSession(v.deviceId, v.demo);
+        if (fence.current.current(generation))
+          beginSession(v.deviceId, v.demo, v.computerId ?? null);
       })
       .catch(() => {
         if (fence.current.current(generation)) invalidate();
@@ -187,8 +197,17 @@ function App() {
       },
       onError: () => {
         setStream("Reconnecting");
-        void api<{ deviceId: string; demo?: boolean }>("/session")
+        void api<{
+          deviceId: string;
+          demo?: boolean;
+          computerId?: string | null;
+        }>("/session")
           .then((value) => {
+            if (
+              fence.current.current(generation) &&
+              value.deviceId === fence.current.deviceId
+            )
+              setOwnerComputerId(value.computerId ?? null);
             if (
               fence.current.current(generation) &&
               value.deviceId !== fence.current.deviceId
@@ -215,6 +234,31 @@ function App() {
       if (eventStream.current === stream) eventStream.current = null;
     };
   }, [session, sessionGeneration, refresh, apply, invalidate]);
+  useEffect(() => {
+    if (!session) return;
+    const check = () => {
+      const generation = fence.current.generation;
+      void api<{ deviceId: string; computerId: string | null }>("/session")
+        .then((value) => {
+          if (!fence.current.current(generation)) return;
+          if (value.deviceId !== fence.current.deviceId) {
+            invalidate();
+            return;
+          }
+          setOwnerComputerId(value.computerId ?? null);
+        })
+        .catch((e) => {
+          if (
+            fence.current.current(generation) &&
+            e instanceof APIError &&
+            e.status === 401
+          )
+            invalidate();
+        });
+    };
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
+  }, [session, sessionGeneration, invalidate]);
   const mutate: Mutate = async (path, body, method) => {
     const generation = fence.current.generation;
     const expectedDeviceId = fence.current.deviceId;
@@ -368,6 +412,7 @@ function App() {
               <MotionPage active={page === "display"}>
                 <section className="display-page" aria-label="Display">
                   <Queue
+                    ownerComputerId={ownerComputerId}
                     snapshot={snapshot}
                     mutate={mutate}
                     pending={pending}
@@ -383,6 +428,8 @@ function App() {
               </MotionPage>
               <MotionPage active={page === "services"}>
                 <ServicesPage
+                  ownerComputerId={ownerComputerId}
+                  onPaired={setOwnerComputerId}
                   snapshot={snapshot}
                   mutate={mutate}
                   pending={pending}
@@ -391,6 +438,8 @@ function App() {
               </MotionPage>
               <MotionPage active={page === "configuration"}>
                 <ConfigurationPage
+                  ownerComputerId={ownerComputerId}
+                  onPaired={setOwnerComputerId}
                   snapshot={snapshot}
                   mutate={mutate}
                   pending={pending}

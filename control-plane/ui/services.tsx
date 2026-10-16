@@ -55,9 +55,11 @@ export function ServiceEditor({
   pending,
   onCredential,
   mode = "policy",
+  readOnly = false,
 }: {
   service: Service;
   mode?: "policy" | "access";
+  readOnly?: boolean;
   configRevision: number;
   mutate: Mutate;
   pending: boolean;
@@ -75,7 +77,6 @@ export function ServiceEditor({
   const edits = useRef(0);
   const [resetVersion, setResetVersion] = useState(0);
   const remotePolicy = [
-    service.config.priority,
     service.config.visibleMs,
     service.config.snoozeMs,
     service.config.heartbeatMs,
@@ -100,15 +101,12 @@ export function ServiceEditor({
   };
   const save = async (event: FormEvent) => {
     event.preventDefault();
+    if (readOnly || pending) return;
     const submittedEdit = edits.current;
-    const {
-      enabled: _enabled,
-      allowInput: _input,
-      allowPreview: _preview,
-      exit: _exit,
-      snoozeMs: _snooze,
-      ...policy
-    } = config;
+    const policy = {
+      visibleMs: config.visibleMs,
+      heartbeatMs: config.heartbeatMs,
+    };
     const result = await mutate(
       `/services/${encodeURIComponent(service.id)}`,
       { expectedRevision: baseRevision, config: policy },
@@ -141,7 +139,7 @@ export function ServiceEditor({
         service={service}
         configRevision={configRevision}
         mutate={mutate}
-        pending={pending}
+        pending={pending || readOnly}
         onCredential={onCredential}
       />
     );
@@ -154,21 +152,17 @@ export function ServiceEditor({
       id={formId}
       onSubmit={(event) => void save(event)}
     >
-      <FieldGroup className="grid grid-cols-1 gap-x-4 gap-y-3 @xl/policy:grid-cols-2 @2xl/policy:grid-cols-3">
-        <PolicyField
-          key={`priority-${resetVersion}`}
-          field="priority"
-          value={config.priority}
-          onChange={(value) => edit("priority", value)}
-        />
+      <FieldGroup className="grid grid-cols-1 gap-x-4 gap-y-5 @xl/policy:grid-cols-2">
         <PolicyField
           key={`visibleMs-${resetVersion}`}
+          disabled={pending || readOnly}
           field="visibleMs"
           value={config.visibleMs}
           onChange={(value) => edit("visibleMs", value)}
         />
         <PolicyField
           key={`heartbeatMs-${resetVersion}`}
+          disabled={pending || readOnly}
           field="heartbeatMs"
           value={config.heartbeatMs}
           onChange={(value) => edit("heartbeatMs", value)}
@@ -181,7 +175,7 @@ export function ServiceEditor({
           </AlertDescription>
         </Alert>
       )}
-      {dirty && (
+      {dirty && !readOnly && (
         <>
           <Separator className="mt-3" />
           <MotionReveal className="policy-actions">
@@ -386,13 +380,13 @@ function ServiceAccess({
 }
 
 export function Register({
-  services,
+  computerId,
   revision,
   mutate,
   pending,
   onCreated,
 }: {
-  services: Service[];
+  computerId: string;
   revision: number;
   mutate: Mutate;
   pending: boolean;
@@ -406,7 +400,6 @@ export function Register({
   const formId = useId();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
-  const [computerId, setComputerId] = useState("");
   const [template, setTemplate] = useState("agent");
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -416,7 +409,6 @@ export function Register({
       ...(computerId ? { computerId } : {}),
       template,
       expectedRevision: revision,
-      config: { priority: template === "agent" ? 10 : 50 },
     });
     if (result)
       onCreated({
@@ -441,21 +433,12 @@ export function Register({
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor={`${formId}-device`}>Computer</FieldLabel>
-              <SettingsSelect
+              <p
                 id={`${formId}-device`}
-                value={computerId}
-                onChange={setComputerId}
-                options={[
-                  { value: "", label: "New computer (generate ID)" },
-                  ...[
-                    ...new Set(
-                      services
-                        .map((s) => s.computerId)
-                        .filter((id): id is string => !!id),
-                    ),
-                  ].map((id) => ({ value: id, label: id })),
-                ]}
-              />
+                className="break-all text-sm text-muted-foreground"
+              >
+                {computerId} · This computer
+              </p>
             </Field>
             <Field>
               <FieldLabel htmlFor={`${formId}-field6`}>{"Name"}</FieldLabel>

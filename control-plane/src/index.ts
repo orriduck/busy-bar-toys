@@ -1,3 +1,4 @@
+import { migrateServiceOrders } from "./ordering";
 import { StateStore } from "./store";
 import {
   activeComputer,
@@ -104,7 +105,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       "CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, revision INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL)",
     );
     const s = this.load();
-    if (s && migrateComputerIds(s)) this.save(s);
+    if (s) {
+      const identities = migrateComputerIds(s);
+      const orders = migrateServiceOrders(s, Date.now());
+      if (identities || orders) this.save(s);
+    }
     if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
       tick(s, Date.now());

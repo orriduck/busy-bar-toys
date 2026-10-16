@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import time
 import uuid
 
 from busybar_shared.cloud import CloudError, IDENTIFIER, Transport, atomic_json, base_url, keychain
@@ -274,3 +275,117 @@ def pairing_code(runtime, *, store=keychain, transport=Transport):
     if not isinstance(code, str) or not re.fullmatch(r'pair\.' + re.escape(config['deviceId']) + r'\.[A-Za-z0-9_-]{40,64}', code):
         raise CloudError('invalid_pairing_response')
     return code
+
+
+@_serialized
+def route_service(runtime, source, service_id, *, store=keychain, transport=Transport):
+    """Attach any owned registered ID to a local source; no cloud app taxonomy."""
+    if not valid_id(source) or not valid_id(service_id):
+        raise CloudError('invalid_service')
+    config = load_computer(runtime)
+    if config['phase'] != 'active':
+        raise CloudError('computer_enrollment_pending')
+    credential = _saved_credential(config, store)
+    remote = _verify(config, credential, transport)
+    service = next((s for s in remote.get('services', []) if s.get('id') == service_id), None)
+    if not service or service.get('computerId') != config['computerId']:
+        raise CloudError('service_not_owned')
+    alias = next((alias for alias, entry in config['services'].items() if entry['serviceId'] == service_id), None)
+    if service.get('template') not in ('agent', 'notifier', 'custom') or not isinstance(service.get('epoch'), str) or not service['epoch']:
+        raise CloudError('registration_identity_mismatch')
+    if alias is None:
+        if len(config['services']) >= 32:
+            raise CloudError('service_capacity')
+        alias = service_id
+        if alias in config['services']:
+            raise CloudError('service_alias_conflict')
+        config['services'][alias] = {'serviceId': service_id, 'name': service.get('name', service_id), 'template': service['template'], 'pending': True}
+    entry = config['services'][alias]
+    if entry['template'] != service['template']:
+        raise CloudError('registration_template_mismatch')
+    if not entry.get('pending') and entry.get('epoch') != service['epoch']:
+        raise CloudError('registration_epoch_changed')
+    entry.update(epoch=service['epoch'], epochExpiresAt=service.get('epochExpiresAt'), pending=False)
+    config['routes'][source] = service_id
+    atomic_json(Path(runtime) / FILE, config)
+    return config
+
+
+@_serialized
+def migrate_outboxes(runtime):
+    """Offline handover. Original ledgers stay private and untouched.
+
+    Keep occurrence IDs, ended receipts and fallback deadlines. Never carry an
+    old service's frozen HTTP body, cloud admission proof, or local action work
+    into a new service namespace. Source leases resume only after fresh sampling.
+    """
+    import copy
+    from busybar_shared.cloud import State, load_config
+    root = Path(runtime)
+    config = load_computer(root)
+    if config['phase'] != 'active':
+        raise CloudError('computer_enrollment_pending')
+    descriptor = os.open(root / 'watch.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'r+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise CloudError('observer_still_running') from None
+        plans = []
+        for role in ('agent', 'notifier'):
+            old_path = root / ('cloud-' + role + '-state.json')
+            if not old_path.exists():
+                continue
+            old_config = load_config(root, role)
+            old = State(old_path)
+            if any(action.get('status') in ('pending', 'running', 'unknown') for action in old.data.get('actions', {}).values()):
+                raise CloudError('local_action_unresolved')
+            for alias, entry in config['services'].items():
+                if entry.get('pending') or (entry['template'] == 'agent') != (role == 'agent'):
+                    continue
+                sources = [source for source, target in config['routes'].items() if target == entry['serviceId']]
+                records = {key: copy.deepcopy(record) for key, record in old.records.items()
+                           if role == 'agent' and key == 'agent' or role == 'notifier' and any(key.startswith(source + ':') for source in sources)}
+                marker = {'serviceId': old_config['serviceId'], 'epoch': old_config['epoch']}
+                path = root / ('cloud-service-' + entry['serviceId'] + '-state.json')
+                if path.exists():
+                    existing = State(path)
+                    if existing.data.get('migratedFrom') != marker:
+                        raise CloudError('outbox_already_exists')
+                    continue
+                effective_now = max(round(time.time()*1000), old.data.get('watchClock', {}).get('utc', 0))
+                fallback_ms = entry.get('fallbackSeconds', old_config.get('fallbackSeconds', 10)) * 1000
+                for record in records.values():
+                    if record.get('proofUntil', 0):
+                        record['deadline'] = min(record.get('deadline', effective_now + fallback_ms), effective_now + fallback_ms)
+                    record['suppressed'] = False
+                    for field in ('publishBody', 'updateBody', 'update', 'proofUntil', 'proofRevision', 'ending'):
+                        record.pop(field, None)
+                    record['acked'] = 0
+                    record['sourceUnknown'] = True
+                    record['handoverPendingSource'] = True
+                    record['renderPending'] = record.get('kind') != 'event' or not isinstance(record.get('scene'), dict)
+                    # An event may not be emitted again by a cursor-based collector.
+                    # Retain its complete scene; callbacks cannot be serialized.
+                    if record.get('kind') == 'event':
+                        record['actionKeys'] = []
+                    record.pop('localFingerprint', None)
+                    # A finite message already shown must not show a second time.
+                    if record.get('admitted') and record.get('kind') != 'agent' and record.get('level') != 'urgent':
+                        record['tombstone'] = record.get('tombstone', 'migrated')
+                    record['admitted'] = False
+                    if record.get('tombstone') or record.get('cleared'):
+                        State.compact(record, keep_fallback=bool(record.get('fallbackPending')))
+                data = {'records': records, 'assets': copy.deepcopy(old.data.get('assets', {})), 'actions': {}, 'inputs': {}, 'ends': {},
+                        'epoch': entry['epoch'], 'migratedFrom': marker}
+                for field in ('watchClock', 'notificationStatus', 'notificationResults'):
+                    if field in old.data:
+                        data[field] = copy.deepcopy(old.data[field])
+                if 'fallbackSeconds' not in entry and 'fallbackSeconds' in old_config:
+                    entry['fallbackSeconds'] = old_config['fallbackSeconds']
+                plans.append((path, data))
+        # Validate every source and destination before writing the first new file.
+        for path, data in plans:
+            atomic_json(path, data)
+        atomic_json(root / FILE, config)
+        return len(plans)

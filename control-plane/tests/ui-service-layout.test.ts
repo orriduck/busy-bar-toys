@@ -1,12 +1,11 @@
 import { expect, it } from "vitest";
 import {
   deviceGroups,
-  priorityOrder,
+  orderedDeviceGroups,
   serviceLabel,
 } from "../ui/service-layout";
 import type { Service } from "../ui/api";
-const service = (id: string, name: string, priority = 10) =>
-  ({ id, name, config: { priority } }) as Service;
+const service = (id: string, name: string) => ({ id, name }) as Service;
 it("groups by observed computer IDs and never treats This Mac as identity", () => {
   const a = {
     ...service("a", "This Mac · Codex"),
@@ -43,14 +42,25 @@ it("falls back to live item IDs and supports shared services on multiple compute
     "computer-b",
   ]);
 });
-it("sorts descending priority with stable deterministic ties without mutating the source", () => {
+it("shows all computers in server order without mutating services", () => {
   const values = [
-    service("b", "B", 50),
-    service("a", "A", 50),
-    service("c", "C", 100),
+    { ...service("b", "B"), computerId: "own" },
+    { ...service("a", "A"), computerId: "own" },
+    { ...service("c", "C"), computerId: "peer" },
   ];
-  expect(priorityOrder(values).map((v) => v.id)).toEqual(["c", "a", "b"]);
-  expect(values.map((v) => v.id)).toEqual(["b", "a", "c"]);
+  const groups = orderedDeviceGroups({
+    services: values,
+    items: [],
+    computers: [
+      { id: "own", serviceOrder: ["a", "b"], enrolled: true },
+      { id: "peer", serviceOrder: ["c"], enrolled: false },
+    ],
+  });
+  expect(groups.map((g) => [g.name, g.services.map((s) => s.id)])).toEqual([
+    ["own", ["a", "b"]],
+    ["peer", ["c"]],
+  ]);
+  expect(values.map((s) => s.id)).toEqual(["b", "a", "c"]);
 });
 
 it("uses managed IDs even if legacy publishers use different role IDs", () => {

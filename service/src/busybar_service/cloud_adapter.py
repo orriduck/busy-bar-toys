@@ -136,6 +136,7 @@ class CloudQueue:
                 if key.startswith(source+':') and not record.get('cleared'):
                     record['lastSourceAt']=now
                     record['sourceUnknown']=False
+                    if record.get('kind')=='event': record.pop('handoverPendingSource',None)
                     record['sourceFreshUntil']=now+round(max(60,min(float(every)+30,3600))*1000)
             self.producer.state.save()
 

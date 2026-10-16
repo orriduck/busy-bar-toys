@@ -28,6 +28,8 @@ export class StateStore {
     const header = JSON.parse(row.value) as State & { schemaVersion?: number };
     header.elementExpiries ??= {};
     header.nativeElements ??= {};
+    const needsLease = header.normalLeaseItem === undefined;
+    header.lastNormalComputer ??= null;
     header.computers ??= {};
     header.sessionComputers ??= {};
     header.enrollments ??= {};
@@ -56,6 +58,14 @@ export class StateStore {
             .map((v) => (v as { command: State["commands"][number] }).command);
         else Object.assign(header, { [name]: records });
       }
+    }
+    if (needsLease) {
+      const active = header.selected ? header.items[header.selected] : null;
+      header.normalLeaseItem =
+        active && active.level !== "urgent" ? active.itemKey : null;
+      if (active && active.level !== "urgent")
+        header.lastNormalComputer =
+          header.services[active.serviceId]?.computerId ?? active.serviceId;
     }
     return header;
   }

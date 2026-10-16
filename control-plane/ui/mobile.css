@@ -232,7 +232,7 @@
   }
   .device-group-heading {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 44px;
+    grid-template-columns: 20px minmax(0, 1fr);
     gap: 4px 8px;
     padding: 12px;
   }
@@ -244,7 +244,7 @@
     grid-column: 2;
     grid-row: 1;
   }
-  .device-group-heading .this-computer-badge {
+  .device-group-heading > [data-slot="badge"] {
     grid-column: 2;
     grid-row: 2;
     justify-self: start;

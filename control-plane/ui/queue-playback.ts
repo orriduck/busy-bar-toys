@@ -49,8 +49,6 @@ export function queuePlayback(
   return {
     item,
     current,
-    priority: snapshot.services.find((service) => service.id === item.serviceId)
-      ?.config.priority,
     remainingMs,
     progress:
       current && finite
