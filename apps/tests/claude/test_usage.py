@@ -139,5 +139,34 @@ class TranscriptUsageTest(unittest.TestCase):
             self.assertEqual(task_usage(registry.task("s")), TokenUsage(100, 0),
                              "Only the last 10 seconds count, though the task was never rendered")
 
+    def test_only_live_sessions_are_read_sampled_and_retained(self):
+        from unittest.mock import patch
+        from busybar_agents.events import FLASH_SECONDS
+        from busybar_agents.tokens import TokenRateMeter
+        clock = [0.0]
+        meter = TokenRateMeter(clock=lambda: clock[0])
+        reads = []
+        self.write(assistant("m1", out=1))
+        with patch("busybar_agents.tokens.METER", meter):
+            registry, profile = self.registry()
+            profile.return_value.usage_reader = lambda ref: reads.append(ref) or TokenUsage(5, 5)
+            for i in range(100):
+                registry.ingest({"session_id": f"done{i}", "turn_id": "t", "source": "chatgpt", "state": "done", "timestamp": 100}, 100)
+                registry.set_usage(f"done{i}", TokenUsage(1000, 100))
+            registry.ingest({"session_id": "busy", "turn_id": "t", "source": "chatgpt", "state": "working", "timestamp": 1990}, 1990)
+            registry.set_usage("busy", TokenUsage(10, 10))
+            registry.ingest({"session_id": "s", "turn_id": "t", "source": "claude", "state": "done",
+                             "timestamp": 1995, "transcript": str(self.path)}, 1995)
+            registry.refresh_usage(2000)
+            self.assertEqual(set(meter._samples), {"busy", "s"}, "Ended sessions are not sampled; off-screen and flashing ones are")
+            self.assertEqual(len(reads), 1)
+            clock[0] = 1
+            registry.refresh_usage(1995 + FLASH_SECONDS + 1)
+            self.assertEqual(set(meter._samples), {"busy"}, "The flash grace ends, so its samples are released")
+            self.assertEqual(len(reads), 1, "An ended session's reader is no longer polled")
+            self.assertEqual(sum(len(v) for v in meter._samples.values()), 2)
+        self.assertIsNotNone(registry.task("done0"), "Turn history is kept")
+        self.assertIn(("done0", "t"), registry.known_turns())
+
 if __name__ == "__main__":
     unittest.main()

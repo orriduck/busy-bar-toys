@@ -65,4 +65,3 @@ class TokenTests(unittest.TestCase):
         self.assertEqual((meter.rate('a'),meter.rate('b')),(TokenUsage(100,10),TokenUsage(0,0)))
         meter.retain({'b'})
         self.assertIsNone(meter.rate('a'))
-

@@ -70,10 +70,15 @@ class TaskRegistry:
             self._tasks[session] = replace(current, token_usage=None)
 
     def refresh_usage(self, now: float):
-        """Read source totals for live sessions, then sample every session's rate."""
+        """Read source totals for live sessions, then sample every live session's rate.
+
+        Live means visible to the agent view, including off-screen sessions and
+        the post-completion flash. Ended sessions stay in _tasks for turn fencing,
+        but stop being read, sampled or retained by the rate meter.
+        """
+        live = {task.session_id for task in self.visible_tasks(now)}
         for session, (source, ref) in list(self._usage_refs.items()):
-            current = self._tasks.get(session)
-            if current is None or now - current.updated_at > STALE_SECONDS:
+            if session not in live:
                 self._usage_refs.pop(session, None)
                 continue
             reader = profiles.profile(source).usage_reader
@@ -87,9 +92,9 @@ class TaskRegistry:
                 self.invalidate_usage(session)
             else:
                 self.set_usage(session, totals)
-        for session, task in self._tasks.items():
-            tokens.METER.observe(session, task.token_usage)
-        tokens.METER.retain(self._tasks)
+        for session in live:
+            tokens.METER.observe(session, self._tasks[session].token_usage)
+        tokens.METER.retain(live)
 
     def ignore(self, session: str):
         self._ignored.add(session)
