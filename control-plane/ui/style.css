@@ -185,12 +185,6 @@ a {
   padding: 0 1.5rem;
   background: var(--background);
 }
-.brand,
-.brand img {
-  display: block;
-  width: 5rem;
-  height: 1.625rem;
-}
 .sidebar {
   position: sticky;
   top: var(--header-bottom);

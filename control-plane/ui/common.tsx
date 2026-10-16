@@ -58,8 +58,17 @@ export function Icon({
 
 export function Brand() {
   return (
-    <div className="brand" aria-label="BUSY Bar">
-      <img src="/busy-logo.svg" width="80" height="26" alt="BUSY" />
+    <div
+      className="brand block h-[2.4rem] w-[22rem] max-w-full overflow-hidden"
+      aria-label="BUSY Traffic Control"
+    >
+      <img
+        src="/busy-traffic-control.png"
+        width="2142"
+        height="734"
+        alt="BUSY Traffic Control"
+        className="block size-full object-cover object-[50%_47.5%]"
+      />
     </div>
   );
 }

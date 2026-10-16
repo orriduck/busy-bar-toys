@@ -32,3 +32,11 @@ export function queueMetadata(item: QueueItem, snapshot: Snapshot) {
   const sender = `${service?.computerId || item.instanceId} · ${name}`;
   return { app, appId, sender, receivedAt: item.receivedAt };
 }
+
+/** Compact table label; detailed provenance and the source identity stay intact. */
+export function compactSender(sender: string) {
+  const separator = sender.indexOf(" · ");
+  return separator < 0
+    ? sender
+    : sender.slice(0, separator).slice(0, 8) + sender.slice(separator);
+}
