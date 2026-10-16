@@ -15,6 +15,7 @@ class AgentProfile:
     new_turn_events: frozenset = frozenset()
     aliases: frozenset = frozenset()
     accent: tuple | None = None
+    usage_reader: Callable[[str], object] | None = None
 
 
 _PROFILES: dict[str, AgentProfile] = {}

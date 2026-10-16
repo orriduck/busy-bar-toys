@@ -2,7 +2,7 @@
 
 The motion controller uses five reusable effects.
 The clock and source icon retain the calendar-like alignment.
-The lower row now shows separate current-turn input/output token counts (2026-10-16).
+The lower row shows separate input/output tokens per second (2026-10-16).
 
 | Trigger | Effect | Native playback time |
 |---|---|---|

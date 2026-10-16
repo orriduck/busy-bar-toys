@@ -108,15 +108,14 @@ class DisplayTests(unittest.TestCase):
             render(self.task(),100,1,TokenUsage(123456,654321))
         back_draw=drawing.return_value
         drawn=[str(call.args[1]) for call in back_draw.text.call_args_list]
-        self.assertIn('IN 123456',drawn)
-        self.assertIn('OUT 654321',drawn)
-        self.assertFalse(any('/s' in value for value in drawn))
+        self.assertIn('IN 123456/s',drawn)
+        self.assertIn('OUT 654321/s',drawn)
 
     def test_usage_is_derived_from_selected_task_and_missing_is_unknown(self):
         from unittest.mock import patch
         from busybar_agents.display import tiny_text
-        task=self.task(); task.token_usage=TokenUsage(0,27)
-        for selected,expected in [(task,['0','27']),(self.task(),['--','--']),(None,['--','--'])]:
+        task=self.task(); task.session_id='display-first-sample'; task.token_usage=TokenUsage(0,27)
+        for selected,expected in [(task,['--','--']),(self.task(),['--','--']),(None,['--','--'])]:
             with patch('busybar_agents.display.tiny_text',wraps=tiny_text) as text:
                 render(selected,100)
             self.assertEqual([call.args[2] for call in text.call_args_list if call.args[2] not in ('↑','↓')],expected)

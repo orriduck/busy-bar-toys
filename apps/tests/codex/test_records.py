@@ -16,6 +16,42 @@ def hook(session="s", turn="t", state="working", timestamp=100, **kwargs):
 
 
 class RegistryTests(unittest.TestCase):
+    def test_rejected_token_records_leave_usage_untouched(self):
+        from busybar_agents.tokens import TokenUsage
+        def count(stamp, used, out, turn=None):
+            record = {"session_id": "s", "type": "event_msg", "timestamp": stamp,
+                      "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": used, "output_tokens": out}}}}
+            if turn: record["turn_id"] = turn
+            return record
+        r = TaskRegistry()
+        r.ingest(hook(turn="old", timestamp=10), now=10)
+        r.ingest(hook(timestamp=20), now=20)
+        self.assertTrue(r.ingest(count("1970-01-01T00:00:21Z", 1000, 100), now=21))
+        self.assertEqual(r.task("s").token_usage, TokenUsage(1000, 100))
+        self.assertFalse(r.ingest(count("1970-01-01T00:00:19Z", 999999, 9999), now=22))
+        self.assertFalse(r.ingest(count("1970-01-01T00:00:22Z", 5, 5, turn="old"), now=22))
+        self.assertEqual((r.task("s").token_usage, r.task("s").updated_at), (TokenUsage(1000, 100), 21))
+        r.ingest({"session_id": "s", "type": "event_msg", "timestamp": "1970-01-01T00:00:23Z",
+                  "payload": {"type": "token_count", "info": {"total_token_usage": "bad"}}}, now=23)
+        self.assertEqual(r.task("s").token_usage, TokenUsage(1000, 100), "Malformed counters keep the last total")
+
+    def test_token_count_records_cumulative_session_totals_across_turns(self):
+        from busybar_agents.tokens import TokenUsage
+        def count(stamp, used, out, **info):
+            return {"session_id": "s", "type": "event_msg", "timestamp": stamp,
+                    "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": used, "output_tokens": out}, **info}}}
+        r = TaskRegistry()
+        r.ingest(hook(timestamp=100), now=100)
+        r.ingest(count("1970-01-01T00:01:41Z", 5000, 200), now=101)
+        self.assertEqual(r.task("s").token_usage, TokenUsage(5000, 200))
+        r.ingest(count("1970-01-01T00:01:42Z", 5000, 200, total_token_usage="bad"), now=102)
+        self.assertEqual(r.task("s").token_usage, TokenUsage(5000, 200), "Malformed counts keep the last total")
+        r.ingest(hook(turn="t2", timestamp=103), now=103)
+        self.assertEqual(r.task("s").token_usage, TokenUsage(5000, 200), "A new turn keeps the session total")
+        r.ingest({"session_id": "other", "type": "event_msg", "timestamp": "1970-01-01T00:01:44Z",
+                  "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 1, "output_tokens": 1}}}}, now=104)
+        self.assertIsNone(r.task("other"), "Usage alone does not create a task")
+
     def test_normalized_hook_and_priority(self):
         r = TaskRegistry()
         r.ingest(hook(), now=100)
@@ -170,107 +206,6 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(r.select(102).updated_at,100)
 
 
-
-class TokenUsageTests(unittest.TestCase):
-    def event(self, stamp, kind='token_count', session='s', turn=None, total=None, last=None):
-        payload={'type':kind}
-        if turn is not None: payload['turn_id']=turn
-        if total is not None:
-            payload['info']={'total_token_usage':dict(input_tokens=total[0],output_tokens=total[1]),
-                             'last_token_usage':dict(input_tokens=last[0],output_tokens=last[1]) if last else {}}
-        return dict(session_id=session,timestamp=stamp,type='event_msg',payload=payload)
-
-    def test_current_turn_deltas_include_cached_and_reasoning_once(self):
-        from busybar_agents.tokens import TokenUsage
-        r=TaskRegistry()
-        r.ingest(self.event(1,total=(800000000,900000),last=(330000,200)))
-        self.assertIsNone(r.task('s'))
-        r.ingest(self.event(2,'task_started',turn='one'))
-        record=self.event(3,total=(800330000,900300),last=(330000,300))
-        record['payload']['info']['total_token_usage'].update(cached_input_tokens=100000,reasoning_output_tokens=100)
-        r.ingest(record)
-        r.ingest(self.event(4,total=(800660000,900800),last=(330000,500)))
-        self.assertEqual(r.task('s').token_usage,TokenUsage(660000,800))
-        r.ingest(self.event(5,'task_complete',turn='one'))
-        r.ingest(self.event(6,total=(800700000,900900)))
-        self.assertEqual(r.task('s').state,'done')
-        r.ingest(self.event(7,'task_started',turn='two'))
-        self.assertIsNone(r.task('s').token_usage)
-        r.ingest(self.event(8,total=(800700123,900945)))
-        self.assertEqual(r.task('s').token_usage,TokenUsage(123,45))
-
-    def test_duplicates_out_of_order_and_malformed_never_corrupt_usage(self):
-        from busybar_agents.tokens import TokenUsage
-        r=TaskRegistry()
-        for event in [self.event(1,total=(100,20)),self.event(2,'task_started',turn='a'),
-                      self.event(4,total=(200,40)),self.event(4,total=(200,40)),
-                      self.event(3,total=(250,50)),self.event(5,total=(True,99)),
-                      self.event(6,total=(-1,40)),self.event(7,total=(200.5,40))]: r.ingest(event)
-        self.assertEqual(r.task('s').token_usage,TokenUsage(100,20))
-        self.assertEqual(r.task('s').updated_at,4)
-
-    def test_reset_and_missing_baseline_stay_unknown_until_new_turn(self):
-        from busybar_agents.tokens import TokenUsage
-        r=TaskRegistry()
-        r.ingest(self.event(1,'task_started',turn='a'))
-        r.ingest(self.event(2,total=(1000000,200),last=(100,20)))
-        self.assertIsNone(r.task('s').token_usage)
-        r.ingest(self.event(3,'task_started',turn='b'))
-        r.ingest(self.event(4,total=(1000100,220)))
-        self.assertEqual(r.task('s').token_usage,TokenUsage(100,20))
-        r.ingest(self.event(5,total=(10,2)))
-        r.ingest(self.event(6,total=(20,4)))
-        self.assertIsNone(r.task('s').token_usage)
-        r.ingest(self.event(7,'task_started',turn='c'))
-        r.ingest(self.event(8,total=(30,6)))
-        self.assertEqual(r.task('s').token_usage,TokenUsage(10,2))
-
-    def test_recovered_waiting_does_not_prove_pre_turn_baseline(self):
-        r=TaskRegistry()
-        r.ingest(self.event(1,total=(1000,100)))
-        r.ingest({'session_id':'s','timestamp':2,'type':'response_item',
-                  'payload':{'type':'function_call','name':'request_user_input',
-                             'turn_id':'current','call_id':'waiting'}})
-        r.ingest(self.event(3,total=(1500,150)))
-        self.assertEqual(r.task('s').state,'waiting')
-        self.assertIsNone(r.task('s').token_usage)
-        r.ingest({'session_id':'s','timestamp':4,'type':'response_item',
-                  'payload':{'type':'function_call_output','call_id':'waiting'}})
-        r.ingest(self.event(5,total=(2000,200)))
-        self.assertEqual(r.task('s').state,'working')
-        self.assertIsNone(r.task('s').token_usage)
-        r.ingest(self.event(6,'task_started',turn='next'))
-        r.ingest(self.event(7,total=(2010,202)))
-        from busybar_agents.tokens import TokenUsage
-        self.assertEqual(r.task('s').token_usage,TokenUsage(10,2))
-
-    def test_recovered_waiting_without_anchor_cannot_infer_a_known_start(self):
-        r=TaskRegistry()
-        r.ingest({'session_id':'s','timestamp':1,'type':'response_item',
-                  'payload':{'type':'function_call','name':'request_user_input','turn_id':'current'}})
-        r.ingest(self.event(2,total=(1000,100),last=(1000,100)))
-        self.assertIsNone(r.task('s').token_usage)
-
-    def test_first_session_total_equal_last_is_a_proven_zero_baseline(self):
-        from busybar_agents.tokens import TokenUsage
-        r=TaskRegistry();r.ingest(self.event(1,'task_started',turn='a'))
-        r.ingest(self.event(2,total=(123,4),last=(123,4)))
-        self.assertEqual(r.task('s').token_usage,TokenUsage(123,4))
-        self.assertFalse(r.ingest(self.event(3,total=(123,4),last=(123,4))))
-        self.assertEqual(r.task('s').updated_at,2)
-        r.ingest(self.event(4,total=(200,10),last=(77,6)))
-        self.assertEqual(r.task('s').token_usage,TokenUsage(200,10))
-
-    def test_sessions_have_independent_anchors(self):
-        from busybar_agents.tokens import TokenUsage
-        r=TaskRegistry()
-        for session,base in [('s',100),('other',900)]:
-            r.ingest(self.event(1,session=session,total=(base,20)))
-            r.ingest(self.event(2,'task_started',session=session,turn='a'))
-            r.ingest(self.event(3,session=session,total=(base+7,23)))
-        self.assertEqual(r.task('s').token_usage,TokenUsage(7,3))
-        self.assertEqual(r.task('other').token_usage,TokenUsage(7,3))
-
 class WatcherTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -411,82 +346,6 @@ class WatcherTests(unittest.TestCase):
         RolloutWatcher(self.root,r).poll(5000)
         self.assertIsNotNone(r.select(5000))
         self.assertEqual(r.select(5000).turn_id,"long")
-
-    def test_boot_restores_pre_turn_anchor_and_latest_usage_before_tail(self):
-        from busybar_agents.tokens import TokenUsage
-        event=TokenUsageTests().event
-        self.write([{'type':'session_meta','payload':{'id':'s'}},
-                    event(1,total=(800000000,50000)),
-                    event(2,'task_started',turn='a'),
-                    event(3,total=(800330000,50200)),
-                    event(4,'task_complete',turn='a'),
-                    event(5,'task_started',turn='b'),
-                    event(6,total=(800660000,50700))])
-        with self.path.open('a') as stream:
-            stream.write('x'*(1024*1024+100)+'\n')
-            stream.write(json.dumps(event(4999,'agent_reasoning'))+'\n')
-        os.utime(self.path,(5000,5000))
-        r=TaskRegistry(); watcher=RolloutWatcher(self.root,r)
-        watcher.poll(5000)
-        self.assertEqual(r.select(5000).turn_id,'b')
-        self.assertEqual(r.select(5000).token_usage,TokenUsage(330000,500))
-        self.assertEqual(watcher.poll(5001),0)
-
-    def test_boot_anchor_before_tail_start_is_not_previous_turn_usage(self):
-        from busybar_agents.tokens import TokenUsage
-        event=TokenUsageTests().event
-        self.write([{'type':'session_meta','payload':{'id':'s'}},event(1,total=(900000000,90000))])
-        with self.path.open('a') as stream:
-            stream.write('x'*(1024*1024+100)+'\n')
-            stream.write(json.dumps(event(4997,'task_started',turn='new'))+'\n')
-            stream.write(json.dumps(event(4999,total=(900000123,90004)))+'\n')
-        os.utime(self.path,(5000,5000))
-        r=TaskRegistry(); RolloutWatcher(self.root,r).poll(5000)
-        self.assertEqual(r.select(5000).token_usage,TokenUsage(123,4))
-
-    def test_boot_rejects_stale_pre_start_anchor_on_both_sides_of_tail(self):
-        event=TokenUsageTests().event
-        for start_in_tail in (False, True):
-            with self.subTest(start_in_tail=start_in_tail):
-                prefix=[{'type':'session_meta','payload':{'id':'s'}},
-                        event(10,total=(100,10)),event(9,total=(359,16))]
-                suffix=[event(20,'task_started',turn='a'),event(21,total=(427,28))]
-                self.write(prefix if start_in_tail else prefix+suffix)
-                with self.path.open('a') as stream:
-                    stream.write('x'*(1024*1024+100)+'\n')
-                    if start_in_tail:
-                        for record in suffix: stream.write(json.dumps(record)+'\n')
-                    stream.write(json.dumps(event(4999,'agent_reasoning'))+'\n')
-                os.utime(self.path,(5000,5000))
-                r=TaskRegistry();watcher=RolloutWatcher(self.root,r);watcher.poll(5000)
-                self.assertIsNotNone(r.select(5000))
-                self.assertIsNone(r.select(5000).token_usage)
-                self.assertEqual(watcher.poll(5001),0)
-                r.ingest(event(5002,total=(500,30)))
-                self.assertIsNone(r.task('s').token_usage)
-
-    def test_boot_reset_hidden_before_tail_never_claims_full_unknown_history(self):
-        event=TokenUsageTests().event
-        self.write([event(1,total=(100,20)),event(2,'task_started',turn='a'),
-                    event(3,total=(500,50)),event(4,total=(200,25)),event(5,total=(900,90))])
-        with self.path.open('a') as stream:
-            stream.write('x'*(1024*1024+100)+'\n')
-            stream.write(json.dumps(event(4999,'agent_reasoning'))+'\n')
-        os.utime(self.path,(5000,5000))
-        r=TaskRegistry(); RolloutWatcher(self.root,r).poll(5000)
-        self.assertIsNotNone(r.select(5000))
-        self.assertIsNone(r.select(5000).token_usage)
-
-    def test_old_usage_bootstrap_cannot_revive_complete_or_stale_turn(self):
-        event=TokenUsageTests().event
-        for terminal in (True,False):
-            records=[event(1,total=(100,20)),event(2,'task_started',turn='a'),event(3,total=(200,40))]
-            if terminal: records.append(event(4,'task_complete',turn='a'))
-            self.write(records)
-            with self.path.open('a') as stream: stream.write('x'*(1024*1024+100)+'\n')
-            os.utime(self.path,(5000,5000))
-            r=TaskRegistry(); RolloutWatcher(self.root,r).poll(5000)
-            self.assertIsNone(r.select(5000))
 
     def test_boot_ignores_malformed_unhashable_state(self):
         self.write([{"timestamp":100,"state":[],"session_id":"s"}])

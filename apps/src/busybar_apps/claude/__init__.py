@@ -4,6 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageChops
 
 from busybar_agents.profiles import AgentProfile, register
+from .usage import TRANSCRIPTS
 
 ASSETS = Path(__file__).parent / "assets"
 ORANGE = (217, 119, 87)
@@ -38,5 +39,6 @@ def claude_icon(size=16):
 
 
 PROFILE = AgentProfile("claude", "Claude", claude_icon, HOOK_STATES,
-                       new_turn_events=frozenset({"UserPromptSubmit"}), accent=ORANGE)
+                       new_turn_events=frozenset({"UserPromptSubmit"}), accent=ORANGE,
+                       usage_reader=TRANSCRIPTS)
 register(PROFILE)

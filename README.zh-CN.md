@@ -64,7 +64,7 @@ Codex 短片保留完整的十秒待机。
 
 | 组件 | 显示内容 | App |
 |---|---|---|
-| [Agent checker](agent-checker/README.md) | 任务状态、来源图标、时钟、当前轮 token 数。 | Codex、Your dot、Claude Code |
+| [Agent checker](agent-checker/README.md) | 任务状态、来源图标、时钟、每秒 token 速率。 | Codex、Your dot、Claude Code |
 | [Notifier](notifier/README.md) | 带逐字滚动入场动画的简短通知。 | ADSBao、Datadog、GitHub、Jira、Metaflow、Terminal、Credentials、Calendar |
 
 见[全部 app 及其要求](apps/README.md)。
@@ -74,9 +74,9 @@ Codex 短片保留完整的十秒待机。
 在已配置的 agent app 中开始一个任务，即可显示状态界面。
 时钟使用纽约时区和 24 小时制。
 琥珀色 ↑ 数字表示输入 token，青色 ↓ 数字表示输出 token。
-数字累计当前这轮 Codex 任务的用量，下一轮开始时归零。
-Codex 上报用量时才会更新；`--` 表示暂时没有可用数据。
-正面显示缩写，背面显示精确计数。
+两个数字都是每秒 token 数，按最近 10 秒上报的用量计算。
+Codex 和 Claude Code 都会上报用量；`--` 表示速率未知，例如刚开始的第一秒，或来源没有上报用量。
+正面显示缩写，背面显示完整的每秒 token 数。
 
 | 光条 | 状态 |
 |---|---|

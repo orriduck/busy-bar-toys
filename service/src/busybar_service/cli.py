@@ -192,6 +192,7 @@ def watch(args):
                 last_dot_refresh = now
             if now - last_scan >= 1:
                 watcher.poll(now)
+                registry.refresh_usage(now)
                 last_scan = now
             for event in read_spool(now=now):
                 key = event.get("session_id", "")

@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from . import profiles
+from . import tokens
 from .tokens import TokenUsage
 
 STALE_SECONDS = 1800
@@ -50,10 +51,50 @@ class TaskRegistry:
         self._tasks: dict[str, Task] = {}
         self._metadata: dict[str, dict] = {}
         self._ignored: set[str] = set()
+        self._usage_refs: dict[str, tuple[str, str]] = {}
         self._seen_turns: dict[str, set[str]] = {}
 
     def task(self, session: str) -> Task | None:
         return self._tasks.get(session)
+
+    def set_usage(self, session: str, totals):
+        """Record cumulative session token totals without counting as activity."""
+        current = self._tasks.get(session)
+        if current and totals is not None:
+            self._tasks[session] = replace(current, token_usage=totals)
+
+    def invalidate_usage(self, session: str):
+        """Mark usage unavailable, so the display shows unknown instead of idle."""
+        current = self._tasks.get(session)
+        if current and current.token_usage is not None:
+            self._tasks[session] = replace(current, token_usage=None)
+
+    def refresh_usage(self, now: float):
+        """Read source totals for live sessions, then sample every live session's rate.
+
+        Live means visible to the agent view, including off-screen sessions and
+        the post-completion flash. Ended sessions stay in _tasks for turn fencing,
+        but stop being read, sampled or retained by the rate meter.
+        """
+        live = {task.session_id for task in self.visible_tasks(now)}
+        for session, (source, ref) in list(self._usage_refs.items()):
+            if session not in live:
+                self._usage_refs.pop(session, None)
+                continue
+            reader = profiles.profile(source).usage_reader
+            if not reader:
+                continue
+            try:
+                totals = reader(ref)
+            except Exception:
+                totals = None
+            if totals is None:
+                self.invalidate_usage(session)
+            else:
+                self.set_usage(session, totals)
+        for session in live:
+            tokens.METER.observe(session, self._tasks[session].token_usage)
+        tokens.METER.retain(live)
 
     def ignore(self, session: str):
         self._ignored.add(session)
@@ -110,7 +151,9 @@ class TaskRegistry:
         if started_at is not None:
             started = started_at
         self._tasks[session] = Task(session, turn, source, project, state, started, timestamp,
-                                    current.token_usage if current and current.turn_id == turn else None)
+                                    current.token_usage if current else None)
+        if isinstance(record.get("transcript"), str):
+            self._usage_refs[session] = (source, record["transcript"])
         self._seen_turns.setdefault(session, set()).add(turn)
         return True
 
