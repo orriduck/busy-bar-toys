@@ -3,11 +3,7 @@ import { SettingNumber } from "./setting-number";
 import { cn } from "./lib/utils";
 import { CircleHelp } from "lucide-react";
 import { Field, FieldContent, FieldLabel } from "./components/ui/field";
-import {
-  InputGroup,
-  InputGroupInput,
-  InputGroupAddon,
-} from "./components/ui/input-group";
+import { InputGroup, InputGroupInput } from "./components/ui/input-group";
 import { Button } from "./components/ui/button";
 import { Slider } from "./components/ui/slider";
 import {
@@ -88,6 +84,9 @@ export function PolicyField({
     definition = policyFields[field];
   const [editing, setEditing] = useState(false);
   const scaled = value / definition.scale;
+  const currentPreset = definition.presets.find(
+    (preset) => preset.value === value,
+  );
   const detents = definition.presets.map((p) => p.value / definition.scale);
   const meaning =
     field === "priority"
@@ -122,22 +121,40 @@ export function PolicyField({
       : `var(--slider-${meaning})`;
   return (
     <Field
-      className={cn(
-        "grid min-w-0 grid-cols-[minmax(0,1fr)_9.5rem] items-center gap-x-2 gap-y-0",
-        className,
-      )}
+      className={cn("min-w-0 gap-0", className)}
+      style={{ "--slider-accent": accent } as CSSProperties}
     >
-      <div className="order-1 flex min-w-0 items-center gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1">
         <FieldLabel id={`${id}-label`}>{definition.label}</FieldLabel>
         <HelpTip label={definition.label}>{definition.help}</HelpTip>
-      </div>
-      <InputGroup size="xs" variant="quiet" className="order-2">
-        <div className="relative h-full min-w-0 flex-1">
+        <InputGroup
+          title={
+            currentPreset
+              ? `${currentPreset.label} · ${scaled} ${definition.unit}`.trim()
+              : undefined
+          }
+          size="xs"
+          variant="quiet"
+          className="ml-auto w-auto min-w-12 max-w-full shrink-0 justify-center px-1"
+        >
+          <Badge
+            variant="outline"
+            aria-hidden="true"
+            className={cn("policy-value-badge", editing && "invisible")}
+          >
+            <SettingNumber
+              value={scaled}
+              decimals={field === "priority" ? 0 : 6}
+            />
+            {definition.unit}
+          </Badge>
           <InputGroupInput
+            className="absolute inset-0 h-full w-full [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             data-readout={!editing}
             onFocus={() => setEditing(true)}
             onBlur={() => setEditing(false)}
             aria-label={`${definition.label} value`}
+            aria-describedby={definition.unit ? `${id}-unit` : undefined}
             type="number"
             required
             min={definition.min}
@@ -150,24 +167,14 @@ export function PolicyField({
               )
             }
           />
-          <span
-            aria-hidden="true"
-            data-hidden={editing || undefined}
-            className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-sm tabular-nums data-[hidden]:hidden"
-          >
-            <SettingNumber
-              value={scaled}
-              decimals={field === "priority" ? 0 : 6}
-            />
-          </span>
-        </div>
+        </InputGroup>
         {definition.unit && (
-          <InputGroupAddon align="inline-end">
-            {definition.unit}
-          </InputGroupAddon>
+          <span id={`${id}-unit`} className="sr-only">
+            {definition.unit === "min" ? "Minutes" : "Seconds"}
+          </span>
         )}
-      </InputGroup>
-      <FieldContent className="order-3 col-span-2 min-w-0">
+      </div>
+      <FieldContent className="min-w-0">
         <div className="policy-slider">
           <Slider
             variant="pill"
@@ -178,7 +185,11 @@ export function PolicyField({
             )}
             aria-label={`${definition.label} slider`}
             thumbLabel={`${definition.label} slider`}
-            valueText={`${scaled} ${definition.unit}`.trim()}
+            valueText={
+              currentPreset
+                ? `${currentPreset.label}, ${scaled} ${definition.unit}`.trim()
+                : `${scaled} ${definition.unit}`.trim()
+            }
             value={[sliderPosition(scaled, definition.stops)]}
             min={0}
             max={100}

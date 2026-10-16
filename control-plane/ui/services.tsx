@@ -149,7 +149,7 @@ export function ServiceEditor({
       id={formId}
       onSubmit={(event) => void save(event)}
     >
-      <FieldGroup className="grid grid-cols-1 gap-x-6 gap-y-3 @2xl/policy:grid-cols-2">
+      <FieldGroup className="grid grid-cols-1 gap-x-4 gap-y-3 @xl/policy:grid-cols-2 @3xl/policy:grid-cols-4">
         <PolicyField
           key={`priority-${resetVersion}`}
           field="priority"
@@ -174,7 +174,7 @@ export function ServiceEditor({
           value={config.heartbeatMs}
           onChange={(value) => edit("heartbeatMs", value)}
         />
-        <Field className="grid min-w-0 items-center gap-2 @2xl/policy:col-span-2 @2xl/policy:grid-cols-[7rem_minmax(0,1fr)]">
+        <Field className="grid min-w-0 items-center gap-2 col-span-full @2xl/policy:grid-cols-[7rem_minmax(0,1fr)]">
           <div className="flex h-10 items-center">
             <FieldLabel id={`${formId}-exit-label`} htmlFor={`${formId}-exit`}>
               Exit

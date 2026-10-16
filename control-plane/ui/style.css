@@ -1019,3 +1019,9 @@ a {
   .device-group-heading h2 { flex: 1; }
   .device-service-count { display: none; }
 }
+
+.policy-value-badge { color: var(--slider-accent); border-color: color-mix(in oklch, var(--slider-accent) 25%, transparent); }
+@container policy (min-width: 48rem) {
+  .policy-slider { padding-bottom: 0.25rem; }
+  .slider-stops { display: none; }
+}

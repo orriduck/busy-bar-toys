@@ -49,7 +49,7 @@ Shared Input, InputGroup, and Select must use one control surface definition. In
 
 ## Compact policy layout
 
-Priority, Hold, Later, and Heartbeat each have one always-visible Slider and an exact InputGroup value. No dropdown duplicates the slider. Desktop uses a 2×2 grid of numeric controls, with Exit spanning a separate bottom row. Exit uses shadcn Tabs on wide panels and Select on narrow panels; both share one controlled value. Small screens put label/value above each slider. Shared small controls are 40px high before the approved 90% density. Exact values use the shared quiet InputGroup variant; embedded inputs have no second control surface. Save/Discard appears only for a changed draft.
+Priority, Hold, Later, and Heartbeat each have one always-visible Slider and an exact InputGroup value. No dropdown duplicates the slider. Desktop uses one row of four numeric controls, with Exit spanning a separate bottom row. Narrow panels fall back to two or one column. Exit uses shadcn Tabs on wide panels and Select on narrow panels; both share one controlled value. Small screens put label/value above each slider. Shared small controls are 40px high before the approved 90% density. Exact values appear in the existing Badge component with NumberFlow. A labelled native InputGroupInput overlays the badge; on focus the badge becomes invisible without changing its footprint, and native text appears for exact editing. Embedded inputs have no second control surface. Save/Discard appears only for a changed draft.
 
 ## Verification
 
@@ -59,7 +59,7 @@ Check consistent computed materials within shared default/small control sizes; d
 
 - 200 tests across 19 files passed; TypeScript and the production build passed.
 - Browser: pointer drag within 2% of Normal returns exactly 50; outside the snap zone can reach intermediate values. ArrowRight from 50 advances to 54. Discard resets the form.
-- Desktop: four sliders in a compact 2×2 grid, Exit on its own row. At 390px: label/value above each slider, document width375px, no horizontal overflow. No browser console warnings/errors observed.
+- Desktop: four sliders in one compact row, Exit on its own row. At 390px: label/value above each slider, document width375px, no horizontal overflow. No browser console warnings/errors observed.
 - Use the Slider default center alignment and padding for the pill thumb: the previous edge prehydration mode could leave thumbs/indicators hidden when loaded inside a collapsed, keep-mounted panel. Visible sliders and their range inputs were verified after opening the panel.
 - Existing library Select keyboard behavior, draft preservation, revoke Cancel/Escape focus restoration, finite/unknown Progress, and keyboard DnD save were checked with local synthetic services.
 
@@ -72,4 +72,6 @@ Check consistent computed materials within shared default/small control sizes; d
 - Semantic motion uses scoped `useGSAP`: Priority interpolates its named severity colors and floats bubbles; Hold slows and settles a highlight; Later sends delayed marks right; Heartbeat pulses. Animation changes only decoration, never a setting or playback timer. Beams/marks use transforms and opacity. IntersectionObserver and document visibility pause offscreen/hidden panels; matchMedia and cleanup remove timelines/listeners under reduced motion or unmount. Actual hidden-panel style snapshots stayed identical across checks; reduced-motion decoration opacity was zero with no transforms.
 - Exit desktop Tabs use the shared large size (48px before90% density), with increased horizontal padding. Mobile retains Select. Final390px check had375px document width and no console warnings/errors.
 
-- Latest compact sizing supersedes the initial large-pill trial: actual track18px, thumb21.6px at approved90% density, matching12px source padding for endpoint overhang; quiet values use shared xs InputGroup. Four controls remain2×2, Exit stays a separate large-tabs row. Actual pristine settings form height190.8px in the desktop browser.
+- Compact sizing supersedes the initial large-pill trial: actual track18px, thumb21.6px at approved90% density, matching12px source padding for endpoint overhang; quiet values use shared xs InputGroup. The initial compact trial retained2×2 and measured190.8px. The final layout below supersedes that arrangement.
+
+- Final compact layout: four numeric fields in one desktop row (label, editable value Badge and slider), Exit on row2. Container thresholds fall back to2/1 columns. Wide preset text is hidden to avoid collisions, while detent dots, title and aria-valuetext retain preset information. Actual pristine form height104.4px. Browser verified Badge editing84→keyboard88, full-range fractional timing without document overflow, Discard, and390px single-column/375px document width. Independent review passed.
