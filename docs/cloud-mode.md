@@ -116,7 +116,11 @@ The preview targets 30 fresh captures per second. It reads the actual 72 by 16 f
 
 Capture starts while an authenticated management page is visible. **Display** shows the large preview. The other three pages keep a compact live preview at the lower left. These views share one connection. Hiding the tab, signing out, or closing the browser stops demand. A lost close signal expires within six seconds. Closing the browser does not stop cloud scheduling. Without an available Mac bridge, the page says that preview is unavailable; the cloud can still control the Bar.
 
-The bridge keeps private counters in `~/Library/Application Support/BusyBarAI/preview-status.json`. Capture and send rates in that file are runtime averages. The file contains no pixels, local address, or credentials. Frames stay in memory and do not enter durable cloud storage. Disable the preview bridge to stop capture without disabling that service's notifications or device-button input.
+Temporary LAN read failures retry locally with a 100 ms to 2 s backoff. They do not close the cloud publisher socket or change its stream ID. Authentication, device identity, and protocol errors still stop capture. Old pixels expire after two seconds; an offline device does not leave a frozen image presented as live.
+
+Preview viewers renew a six-second presence lease. A healthy viewer has no separate 55-second lifetime; its real login session still limits access. Idle SSE connections send a comment every two seconds. A permanently closed browser transport retries with a bounded 1 to 30 s backoff. Disconnects caused by deployment or a real network outage can still occur.
+
+The bridge keeps private counters in `~/Library/Application Support/BusyBarAI/preview-status.json`. Capture and send rates in that file are runtime averages. Connection starts, disconnects and local capture retries are separate counters. The file contains no pixels, local address, or credentials. Frames stay in memory and do not enter durable cloud storage. Disable the preview bridge to stop capture without disabling that service's notifications or device-button input.
 
 ## Input and local actions
 

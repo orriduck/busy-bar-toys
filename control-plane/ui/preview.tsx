@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "./api";
 import { PreviewFence, FramePacer, frameIsFresh } from "./preview-session";
 import { PreviewPlayout } from "./preview-playout";
+import { startEventStream } from "./event-stream";
 import type { PreviewFrame, PreviewStatus } from "./preview-session";
 export interface PreviewStats {
   deviceId: string;
@@ -64,7 +65,7 @@ export function Preview({
     let raf = 0,
       restarting: ReturnType<typeof setTimeout> | undefined;
     setMessage("Waiting for preview");
-    const events = new EventSource(`/api/preview/frames/${deviceId}`);
+    let currentEvents: EventSource | null = null;
     const closeLease = () => {
       const id = viewerId;
       viewerId = null;
@@ -109,14 +110,14 @@ export function Preview({
           onSessionEnd();
       }
     };
-    events.addEventListener("preview", (event) => {
-      if (!live) return;
+    const receiveStatus = (data: string) => {
+      if (!live) return false;
       try {
-        const value: unknown = JSON.parse((event as MessageEvent<string>).data);
+        const value: unknown = JSON.parse(data);
         if (!fence.status(value)) {
           blank("Device session changed");
           onSessionEnd();
-          return;
+          return false;
         }
         const stream = value.connected ? value.streamId : null;
         if (stream !== announcedStream) {
@@ -129,11 +130,13 @@ export function Preview({
         )
           viewerId = value.viewerId;
         if (!value.connected) blank("Preview bridge unavailable");
+        return true;
       } catch {
         blank("Preview could not be read");
+        return false;
       }
-    });
-    events.addEventListener("frame", (event) => {
+    };
+    const receiveFrame = (event: Event) => {
       if (!live) return;
       try {
         const frame = fence.frame(
@@ -148,14 +151,27 @@ export function Preview({
       } catch {
         blank("Preview could not be read");
       }
-    });
-    events.onerror = () => {
-      if (!live) return;
-      closeLease();
-      fence = new PreviewFence(deviceId);
-      blank("Reconnecting preview…");
-      void verifySession();
     };
+    const connection = startEventStream({
+      eventName: "preview",
+      isCurrent: () => live,
+      createSource: () => {
+        const events = new EventSource(`/api/preview/frames/${deviceId}`);
+        currentEvents = events;
+        events.addEventListener("frame", (event) => {
+          if (currentEvents === events) receiveFrame(event);
+        });
+        return events;
+      },
+      onOpen: () => {},
+      onSnapshot: receiveStatus,
+      onError: () => {
+        closeLease();
+        fence = new PreviewFence(deviceId);
+        blank("Reconnecting preview…");
+        void verifySession();
+      },
+    });
     const renewal = setInterval(() => {
       const id = viewerId;
       if (!id || !live) return;
@@ -174,7 +190,8 @@ export function Preview({
           onSessionEnd();
         } else if (error instanceof APIError && error.status === 404) {
           closeLease();
-          events.close();
+          currentEvents = null;
+          connection.close();
           blank("Reconnecting preview…");
           if (!restarting)
             restarting = setTimeout(() => {
@@ -250,13 +267,13 @@ export function Preview({
       live = false;
       cancelAnimationFrame(raf);
       closeLease();
-      events.close();
+      connection.close();
     };
     window.addEventListener("pagehide", leave);
     return () => {
       live = false;
       closeLease();
-      events.close();
+      connection.close();
       clearInterval(renewal);
       clearTimeout(restarting);
       cancelAnimationFrame(raf);

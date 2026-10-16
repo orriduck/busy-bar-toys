@@ -377,7 +377,7 @@ class PreviewProtocolTest(unittest.IsolatedAsyncioTestCase):
                     task.cancel()
                     with self.assertRaises(asyncio.CancelledError): await task
 
-    async def test_transient_identity_transport_failure_retries_without_rereading_credentials(self):
+    async def test_transient_identity_transport_failure_retries_without_reconnecting_cloud(self):
         from websockets.asyncio.server import serve
         device=FakeDevice(); attempts=[]; frames=[]; created=[]
         def verify(device_id):
@@ -397,8 +397,8 @@ class PreviewProtocolTest(unittest.IsolatedAsyncioTestCase):
             task=asyncio.create_task(bridge.run())
             try:
                 await self.wait_until(lambda:bool(frames))
-                self.assertEqual(len(attempts),2)
-                self.assertGreaterEqual(attempts[1]-attempts[0],.9)
+                self.assertEqual(len(attempts),1)
+                self.assertEqual(device.verified,[DEVICE,DEVICE])
                 self.assertEqual(created,[True])
             finally:
                 task.cancel()
@@ -540,7 +540,49 @@ class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
 class PreviewReviewRegressionTest(unittest.IsolatedAsyncioTestCase):
     wait_until=PreviewBridgeTest.wait_until
 
-    async def test_frame_transport_failure_stops_capture_and_uses_supervisor_backoff(self):
+    async def test_isolated_frame_timeout_does_not_disconnect_the_publisher(self):
+        from websockets.asyncio.server import serve
+        device=FakeDevice(); sockets=[]; frames=[]
+        original=device.frame; attempts=[0]
+        def one_timeout(slot):
+            attempts[0]+=1
+            if attempts[0]==1: raise preview.PreviewError('timeout')
+            return original(slot)
+        device.frame=one_timeout
+        async def handler(ws):
+            sockets.append(ws)
+            await ws.send(json.dumps({'type':'demand','enabled':True,'targetFps':30,'streamId':'s1','deviceId':DEVICE}))
+            try:
+                async for raw in ws:
+                    value=json.loads(raw)
+                    if value['type']=='frame': frames.append(value)
+            except WebSocketException: pass
+        async with serve(handler,'127.0.0.1',0) as server:
+            url='http://127.0.0.1:'+str(server.sockets[0].getsockname()[1])
+            bridge=preview.PreviewBridge('.',{'agent':client_for(url)},status_path=None,device_factory=lambda _:device)
+            task=asyncio.create_task(bridge.run())
+            try:
+                await self.wait_until(lambda:len(frames)>=3)
+                self.assertEqual(len(sockets),1)
+                self.assertTrue(bridge.diagnostics()['connected'])
+                self.assertEqual(bridge.diagnostics()['captureErrors'],1)
+                self.assertEqual(device.verified,[DEVICE])
+            finally:
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError): await task
+
+    async def test_lan_retry_is_capped_without_invalidating_generation(self):
+        client=client_for('http://localhost:1234')
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        bridge._client=client; bridge._demand=True
+        for expected in (.1,.2,.4,.8,1.6,2,2,2):
+            with patch.object(preview.time,'monotonic',return_value=100):
+                bridge._capture_failed(client,0,preview.PreviewError('timeout'))
+            self.assertAlmostEqual(bridge._capture_retry_at,100+expected)
+            self.assertEqual(bridge._generation,0)
+            self.assertTrue(bridge._demand)
+
+    async def test_frame_transport_failure_backs_off_lan_reads_without_reconnecting_cloud(self):
         from websockets.asyncio.server import serve
         device=FakeDevice(); sockets=[]
         def unavailable(slot):
@@ -557,13 +599,13 @@ class PreviewReviewRegressionTest(unittest.IsolatedAsyncioTestCase):
             task=asyncio.create_task(bridge.run())
             try:
                 await self.wait_until(lambda:bool(device.calls))
-                await asyncio.sleep(.45)
-                self.assertEqual(len(device.calls),1)
-                self.assertFalse(bridge.diagnostics()['demand'])
+                await self.wait_until(lambda:len(device.calls)>=3)
+                self.assertTrue(bridge.diagnostics()['demand'])
+                self.assertTrue(bridge.diagnostics()['connected'])
                 self.assertEqual(len(sockets),1)
-                await self.wait_until(lambda:len(device.calls)==2)
-                self.assertGreaterEqual(device.calls[1]-device.calls[0],.9)
-                self.assertEqual(len(sockets),2)
+                self.assertGreaterEqual(device.calls[1]-device.calls[0],.09)
+                self.assertGreaterEqual(device.calls[2]-device.calls[1],.19)
+                self.assertEqual(len(sockets),1)
             finally:
                 task.cancel()
                 with self.assertRaises(asyncio.CancelledError): await task

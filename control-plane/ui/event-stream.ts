@@ -4,6 +4,7 @@ type EventStreamSource = Pick<
 >;
 
 type EventStreamOptions = {
+  eventName?: string;
   createSource: () => EventStreamSource;
   isCurrent: () => boolean;
   onOpen: () => void;
@@ -11,7 +12,7 @@ type EventStreamOptions = {
   onError: () => void;
 };
 
-/** Own the authenticated snapshot stream for one mounted session. */
+/** Own one authenticated named-event stream with bounded CLOSED recovery. */
 export function startEventStream(options: EventStreamOptions) {
   let source: EventStreamSource | null = null;
   let recovery: ReturnType<typeof setTimeout> | undefined;
@@ -34,7 +35,7 @@ export function startEventStream(options: EventStreamOptions) {
       reset();
       options.onOpen();
     };
-    events.addEventListener("snapshot", (event) => {
+    events.addEventListener(options.eventName ?? "snapshot", (event) => {
       if (!active()) return;
       if (options.onSnapshot((event as MessageEvent<string>).data)) reset();
     });
