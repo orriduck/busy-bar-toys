@@ -21,6 +21,7 @@ import {
   ChevronRight,
   GripVertical,
   LockKeyhole,
+  Laptop,
   MoreHorizontal,
 } from "lucide-react";
 import type { Snapshot, Mutate, Service, CredentialValue } from "./api";
@@ -36,10 +37,11 @@ import {
   DropdownMenuLabel,
 } from "./components/ui/dropdown-menu";
 import { Empty, EmptyHeader, EmptyTitle } from "./components/ui/empty";
+import { HelpTip } from "./policy-field";
 import { ServiceDetails } from "./service-details";
 import { ServiceEditor } from "./services";
 import { SettingNumber } from "./setting-number";
-import { serviceLabel } from "./service-layout";
+import { deviceGroups, serviceLabel } from "./service-layout";
 import { useListMotion } from "./motion";
 import {
   PRIORITY_GROUPS,
@@ -121,11 +123,13 @@ function PrioritySection({
         <div className="configuration-group-heading">
           <span className="priority-group-dot" aria-hidden="true" />
           <h3>{priorityGroupLabels[group]}</h3>
+          <HelpTip label={priorityGroupLabels[group]}>
+            {priorityGroupDescriptions[group]}
+          </HelpTip>
           <span className="configuration-group-count">
             <SettingNumber value={count} />
           </span>
         </div>
-        <p>{priorityGroupDescriptions[group]}</p>
         {!count && (
           <Empty className="configuration-group-empty">
             <EmptyHeader>
@@ -193,21 +197,17 @@ function ConfigurationRow({
             <GripVertical />
           </Button>
         ) : (
-          <LockKeyhole className="configuration-lock" aria-label="Read only" />
+          <span className="configuration-handle-space" aria-hidden="true" />
         )}
         <Button
           type="button"
-          variant="ghost"
+          variant="disclosure"
           className="configuration-select"
           aria-pressed={selected}
           onClick={onSelect}
         >
           <span className="configuration-service-label">
-            <span>{serviceLabel(service)}</span>
-            <small title={service.computerId ?? "Unassigned computer"}>
-              {service.computerId?.slice(0, 8) ?? "Unassigned"}
-              {editable ? " · This computer" : " · Read only"}
-            </small>
+            <span title={serviceLabel(service)}>{serviceLabel(service)}</span>
           </span>
           {!service.config.enabled && <Badge variant="secondary">Off</Badge>}
           <ChevronRight />
@@ -427,7 +427,7 @@ export function ConfigurationList({
     <div className="configuration-workspace" data-detail={mobileDetail}>
       <div className="configuration-order-pane">
         <p className="configuration-status">
-          Services within a group are equal. Drag to change group.
+          Drag your services between groups.
         </p>
         <DndContext
           modifiers={orderModifiers}
@@ -488,34 +488,56 @@ export function ConfigurationList({
                   count={group.services.length}
                   pending={blocked}
                 >
-                  {group.services.map((service) => {
-                    return (
-                      <ConfigurationRow
-                        key={service.id}
-                        service={service}
-                        group={group.id}
-                        editable={
-                          !!ownerComputerId &&
-                          service.computerId === ownerComputerId
-                        }
-                        selected={service.id === visibleId}
-                        pending={blocked}
-                        onSelect={() => {
-                          setSelected(service.id);
-                          setMobileDetail(true);
-                        }}
-                        onMove={(target) =>
-                          void persist(
-                            moveOwnedService(ownGroups, service.id, target),
-                            ownGroups,
-                            snapshot.configRevision,
-                            ownerComputerId,
-                            { serviceId: service.id, target: "menu" },
-                          )
-                        }
-                      />
-                    );
-                  })}
+                  {deviceGroups(group.services).map((computer) => (
+                    <div className="configuration-computer" key={computer.name}>
+                      <div className="configuration-computer-heading">
+                        {computer.name === ownerComputerId ? (
+                          <Laptop aria-hidden="true" />
+                        ) : (
+                          <LockKeyhole aria-hidden="true" />
+                        )}
+                        <span
+                          className="configuration-computer-id"
+                          title={computer.name}
+                        >
+                          {computer.name.startsWith("service:")
+                            ? "Unassigned"
+                            : computer.name.slice(0, 8)}
+                        </span>
+                        <Badge variant="secondary">
+                          {computer.name === ownerComputerId
+                            ? "This computer"
+                            : "Read only"}
+                        </Badge>
+                      </div>
+                      {computer.services.map((service) => (
+                        <ConfigurationRow
+                          key={service.id}
+                          service={service}
+                          group={group.id}
+                          editable={
+                            !!ownerComputerId &&
+                            service.computerId === ownerComputerId
+                          }
+                          selected={service.id === visibleId}
+                          pending={blocked}
+                          onSelect={() => {
+                            setSelected(service.id);
+                            setMobileDetail(true);
+                          }}
+                          onMove={(target) =>
+                            void persist(
+                              moveOwnedService(ownGroups, service.id, target),
+                              ownGroups,
+                              snapshot.configRevision,
+                              ownerComputerId,
+                              { serviceId: service.id, target: "menu" },
+                            )
+                          }
+                        />
+                      ))}
+                    </div>
+                  ))}
                 </PrioritySection>
               );
             })}
