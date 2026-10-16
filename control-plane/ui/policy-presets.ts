@@ -17,7 +17,7 @@ export const policyFields = {
     max: 1000,
     help: "Higher priority plays first within the same urgency. Urgent messages still take precedence over every preset.",
     presets: priorityPresets,
-    stops: [0, 10, 50, 100, 250, 500, 750, 1000],
+    stops: [0, 10, 50, 100, 1000],
   },
   visibleMs: {
     label: "Hold",
@@ -31,7 +31,7 @@ export const policyFields = {
       label: value === 60 ? "1 min" : `${value} s`,
       value: value * 1000,
     })),
-    stops: [1, 5, 10, 30, 60, 300, 900, 3600, 21600, 86400],
+    stops: [1, 5, 10, 30, 60, 86400],
   },
   snoozeMs: {
     label: "Later",
@@ -45,7 +45,7 @@ export const policyFields = {
       label: value === 60 ? "1 hour" : `${value} min`,
       value: value * 60000,
     })),
-    stops: [1 / 60, 1, 5, 15, 30, 60, 180, 360, 720, 1440],
+    stops: [1 / 60, 5, 15, 30, 60, 1440],
   },
   heartbeatMs: {
     label: "Heartbeat",
@@ -59,7 +59,7 @@ export const policyFields = {
       label: `${value} s`,
       value: value * 1000,
     })),
-    stops: [5, 15, 30, 60, 90, 120, 180, 240, 300],
+    stops: [5, 30, 60, 90, 180, 300],
   },
 } as const;
 /** Piecewise scale gives short timings usable space while retaining full bounds. */
@@ -77,12 +77,35 @@ export function sliderValue(
   position: number,
   stops: readonly number[],
   scale = 1,
+  detents: readonly number[] = stops,
 ) {
   const raw = (Math.max(0, Math.min(100, position)) / 100) * (stops.length - 1);
-  const nearest = Math.round(raw);
-  if (Math.abs(raw - nearest) < 0.12) return Math.round(stops[nearest] * scale);
+  const clamped = Math.max(0, Math.min(100, position));
+  const snap = detents.find(
+    (stop) => Math.abs(sliderPosition(stop, stops) - clamped) <= 0.8,
+  );
+  if (snap !== undefined) return Math.round(snap * scale);
   const index = Math.min(stops.length - 2, Math.floor(raw));
   const value =
     stops[index] + (stops[index + 1] - stops[index]) * (raw - index);
   return Math.round(value * scale);
+}
+
+/** Two-percent key movement must also leave integer rounding plateaus. */
+export function sliderNudge(
+  value: number,
+  direction: 1 | -1,
+  stops: readonly number[],
+  scale: number,
+  detents: readonly number[],
+) {
+  const position = sliderPosition(value / scale, stops);
+  const next = sliderValue(position + direction * 2, stops, scale, detents);
+  return Math.max(
+    Math.round(stops[0] * scale),
+    Math.min(
+      Math.round(stops.at(-1)! * scale),
+      next === value ? value + direction : next,
+    ),
+  );
 }
