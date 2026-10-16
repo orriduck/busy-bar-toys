@@ -1,8 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  skipToken,
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  cacheSnapshot,
+  clearSnapshotCache,
+  snapshotKey,
+} from "./snapshot-cache";
+import { Button } from "./components/ui/button";
+import { Alert, AlertAction, AlertDescription } from "./components/ui/alert";
+import { Skeleton } from "./components/ui/skeleton";
 import { api, APIError, message } from "./api";
 import type { Snapshot, Mutate } from "./api";
 import { Brand, Icon } from "./common";
+import { cn } from "./lib/utils";
 import { SignIn, Credential } from "./auth";
 import { Queue } from "./queue";
 import {
@@ -19,7 +36,7 @@ import { startEventStream } from "./event-stream";
 import "./style.css";
 function App() {
   const [session, setSession] = useState<boolean | null>(null);
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const queryClient = useQueryClient();
   const [demo, setDemo] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [stream, setStream] = useState("Connecting");
@@ -35,21 +52,47 @@ function App() {
   } | null>(null);
   const fence = useRef(new SessionFence());
   const [sessionGeneration, setSessionGeneration] = useState(0);
+  const { data: snapshot } = useQuery<Snapshot>({
+    queryKey: snapshotKey(fence.current.deviceId, sessionGeneration),
+    queryFn: skipToken,
+    staleTime: Infinity,
+    gcTime: 0,
+    // Only fenced SSE/refresh acceptance may populate this subscription.
+  });
+  const request = useMutation({
+    mutationFn: ({
+      path,
+      body,
+      method,
+      deviceId,
+    }: {
+      path: string;
+      body?: unknown;
+      method?: string;
+      deviceId?: string;
+    }) => api<Record<string, unknown>>(path, body, method, deviceId),
+    retry: false,
+    gcTime: 0,
+  });
   const eventStream = useRef<ReturnType<typeof startEventStream> | null>(null);
-  const clearSession = useCallback((deviceId: string | null) => {
-    const generation = fence.current.reset(deviceId);
-    setSessionGeneration(generation);
-    eventStream.current?.close();
-    eventStream.current = null;
-    setSnapshot(null);
-    setSecret(null);
-    setPage("display");
-    setPreviewStats(null);
-    setPending(false);
-    setLastSync(undefined);
-    setStream("Connecting");
-    return generation;
-  }, []);
+  const clearSession = useCallback(
+    (deviceId: string | null) => {
+      const generation = fence.current.reset(deviceId);
+      setSessionGeneration(generation);
+      eventStream.current?.close();
+      eventStream.current = null;
+      clearSnapshotCache(queryClient);
+      request.reset();
+      setSecret(null);
+      setPage("display");
+      setPreviewStats(null);
+      setPending(false);
+      setLastSync(undefined);
+      setStream("Connecting");
+      return generation;
+    },
+    [queryClient, request.reset],
+  );
   const beginSession = useCallback(
     (deviceId: string, serverDemo: boolean | undefined) => {
       if (!/^[a-f0-9]{64}$/.test(deviceId)) {
@@ -84,13 +127,12 @@ function App() {
         setError("The device session changed in another page. Sign in again.");
         return false;
       }
-      if (!fence.current.accept(value.deviceId, value.revision, generation))
+      if (!cacheSnapshot(queryClient, fence.current, value, generation))
         return false;
-      setSnapshot(value);
       setLastSync(Date.now());
       return true;
     },
-    [invalidate],
+    [invalidate, queryClient],
   );
   const refresh = useCallback(async () => {
     const generation = fence.current.generation;
@@ -173,12 +215,12 @@ function App() {
     setPending(true);
     setError("");
     try {
-      const result = await api<Record<string, unknown>>(
+      const result = await request.mutateAsync({
         path,
         body,
         method,
-        expectedDeviceId,
-      );
+        deviceId: expectedDeviceId,
+      });
       if (!fence.current.current(generation)) return null;
       if (result.snapshot) apply(result.snapshot as Snapshot, generation);
       else await refresh();
@@ -199,6 +241,7 @@ function App() {
         await refresh();
       return null;
     } finally {
+      request.reset();
       if (fence.current.current(generation)) setPending(false);
     }
   };
@@ -208,10 +251,15 @@ function App() {
     setSession(null);
     setError("");
     try {
-      await api("/session", undefined, "DELETE", expectedDeviceId);
+      await request.mutateAsync({
+        path: "/session",
+        method: "DELETE",
+        deviceId: expectedDeviceId,
+      });
     } catch (e) {
       if (fence.current.current(generation)) setError(message(e));
     } finally {
+      request.reset();
       if (fence.current.current(generation)) setSession(false);
     }
   };
@@ -225,23 +273,37 @@ function App() {
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <div className="app-shell">
-        <aside className="sidebar">
+      <div
+        className="app-shell"
+        data-demo={demo || undefined}
+        data-docked={Boolean(session && snapshot && page !== "display")}
+      >
+        <header className="app-header">
           <Brand />
+        </header>
+        <aside className="sidebar">
           {session && <Navigation page={page} onPage={setPage} />}
         </aside>
-        <main className="workspace" id="main-content">
+        <main className="workspace" id="main-content" data-page={page}>
           {error && (
-            <div className="error" role="alert">
-              {error}
-              <button onClick={() => setError("")} aria-label="Dismiss error">
-                <Icon name="end" />
-              </button>
-            </div>
+            <Alert variant="destructive" className="error">
+              <AlertDescription>{error}</AlertDescription>
+              <AlertAction>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setError("")}
+                  aria-label="Dismiss error"
+                >
+                  <Icon name="end" />
+                </Button>
+              </AlertAction>
+            </Alert>
           )}
           {session === null ? (
             <section className="signin">
               <h1>Connecting…</h1>
+              <Skeleton className="h-12 w-64" />
             </section>
           ) : !session ? (
             <SignIn
@@ -252,28 +314,48 @@ function App() {
           ) : !snapshot ? (
             <section className="signin">
               <h1>Loading your device…</h1>
-              <button onClick={() => void refresh()}>Try again</button>
+              <Skeleton className="h-12 w-64" />
+              <Button variant="secondary" onClick={() => void refresh()}>
+                Try again
+              </Button>
             </section>
           ) : (
             <>
+              {/* Keep this host and its keyed Preview in place across navigation. */}
+              <section
+                className={cn(
+                  "preview-host",
+                  page === "display"
+                    ? "preview-host-full"
+                    : "preview-host-dock",
+                )}
+                aria-label="Live device preview"
+              >
+                <div className="preview-caption">
+                  <strong>BUSY Bar</strong>
+                  <span>Front display</span>
+                </div>
+                <Preview
+                  key={`${snapshot.deviceId}-${sessionGeneration}`}
+                  deviceId={snapshot.deviceId}
+                  active
+                  onSessionEnd={invalidate}
+                  onStats={setPreviewStats}
+                />
+              </section>
               <div className="page-slot" hidden={page !== "display"}>
                 <section className="display-page" aria-label="Display">
-                  <Preview
-                    key={`${snapshot.deviceId}-${sessionGeneration}`}
-                    deviceId={snapshot.deviceId}
-                    active={page === "display"}
-                    onSessionEnd={invalidate}
-                    onStats={setPreviewStats}
-                  />
                   <Queue
                     snapshot={snapshot}
                     mutate={mutate}
                     pending={pending}
                   />
                   {stream !== "Live" && (
-                    <p className="queue-warning" role="status">
-                      Queue updates are delayed.
-                    </p>
+                    <Alert className="queue-warning" role="status">
+                      <AlertDescription>
+                        Queue updates are delayed.
+                      </AlertDescription>
+                    </Alert>
                   )}
                 </section>
               </div>
@@ -322,4 +404,14 @@ function App() {
     </>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false },
+    mutations: { retry: false, gcTime: 0 },
+  },
+});
+createRoot(document.getElementById("root")!).render(
+  <QueryClientProvider client={queryClient}>
+    <App />
+  </QueryClientProvider>,
+);

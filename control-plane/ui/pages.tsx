@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { api, time } from "./api";
 import type { Mutate, Snapshot } from "./api";
 import { Icon, serviceName } from "./common";
+import { Button } from "./components/ui/button";
+import { Empty, EmptyHeader, EmptyDescription } from "./components/ui/empty";
+import { cn } from "./lib/utils";
 import type { IconName } from "./common";
 import { ServiceEditor, Register } from "./services";
 import type { PreviewStatus } from "./preview-session";
@@ -23,15 +26,16 @@ export function Navigation({
   return (
     <nav aria-label="Control plane">
       {pages.map((entry) => (
-        <button
+        <Button
           key={entry.id}
-          className={page === entry.id ? "selected" : ""}
+          variant="navigation"
+          className={cn("w-full", page === entry.id && "selected")}
           aria-current={page === entry.id ? "page" : undefined}
           onClick={() => onPage(entry.id)}
         >
-          <Icon name={entry.icon} />
+          <Icon name={entry.icon} data-icon="inline-start" />
           <span>{entry.label}</span>
-        </button>
+        </Button>
       ))}
     </nav>
   );
@@ -58,13 +62,10 @@ export function ServicesPage({
     <section className="management-page" aria-labelledby="services-title">
       <div className="page-heading">
         <h1 id="services-title">Services</h1>
-        <button
-          className="primary"
-          onClick={() => setRegister((value) => !value)}
-        >
-          <Icon name="plus" />
+        <Button onClick={() => setRegister((value) => !value)}>
+          <Icon name="plus" data-icon="inline-start" />
           {register ? "Cancel" : "Register"}
-        </button>
+        </Button>
       </div>
       {register && (
         <Register
@@ -91,9 +92,13 @@ export function ServicesPage({
         ))}
       </div>
       {!snapshot.services.length && (
-        <p className="empty-state">
-          Register a service to connect a local collector.
-        </p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyDescription>
+              Register a service to connect a local collector.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
     </section>
   );
@@ -115,9 +120,13 @@ export function ConfigurationPage({
         <h1 id="configuration-title">Configuration</h1>
       </div>
       {!snapshot.services.length && (
-        <p className="empty-state">
-          Add a service in Services to configure its display rules.
-        </p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyDescription>
+              Add a service in Services to configure its display rules.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
       <div className="service-list">
         {snapshot.services.map((service) => (
@@ -190,10 +199,10 @@ export function DevicePage({
     <section className="management-page" aria-labelledby="device-title">
       <div className="page-heading">
         <h1 id="device-title">Device</h1>
-        <button onClick={onRefresh}>
-          <Icon name="refresh" />
+        <Button variant="secondary" onClick={onRefresh}>
+          <Icon name="refresh" data-icon="inline-start" />
           Refresh
-        </button>
+        </Button>
       </div>
       <dl className="device-facts">
         <dt>Connection</dt>
@@ -249,12 +258,14 @@ export function DevicePage({
         </dd>
       </dl>
       <p className="field-hint">
-        Preview runs while Display is visible. A Mac must be online and able to
-        read the Bar over local Wi-Fi. Latency uses the Mac and browser clocks.
+        Preview runs on every visible management page: above the queue on
+        Display and in the preview dock elsewhere. A Mac must be online and able
+        to read the Bar over local Wi-Fi. Latency includes the 150 ms playback
+        buffer and uses the Mac and browser clocks.
       </p>
-      <button className="text-button signout" onClick={onLogout}>
+      <Button variant="ghost" className="signout" onClick={onLogout}>
         Sign out
-      </button>
+      </Button>
     </section>
   );
 }

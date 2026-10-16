@@ -67,3 +67,10 @@ Design: `docs/superpowers/specs/2026-10-15-control-plane-ui-design.md`.
 - [ ] Measure real native-animation capture -> cloud -> browser fresh frames, rate/jitter/latency and stalls. Verify independent framebuffer/canvas content. Tune acquisition to approximately 30fps on the healthy real network; do not label repeated draws as new captured frames.
 - [ ] Verify leaving all Display viewers stops LAN reads, session expiry hides old pixels, and cloud scheduling remains functional after the browser closes.
 - [ ] Update issue #13 with implementation and measured acceptance evidence; sync canonical memory only with verified facts. Keep the goal active if any requirement remains unverified.
+
+## Follow-up: user-approved150ms finite playout
+
+- [ ] Add and test a bounded browser buffer for verified real frames: maximum6 frames, approximately150ms startup/playout target, finite pending age, no synthetic/repeated draws, safe clock reanchor.
+- [ ] Integrate buffer with existing stream/session/device fencing and immediate clearing; preserve actual receive/draw statistics and measure latency at draw.
+- [ ] Complete independent specification and quality reviews, tests/typecheck/build, deploy to formal URL, and compare actual receive versus drawn rates through native animation and reconnection.
+- [ ] Update acceptance evidence, CI/main/stable-service state and canonical memory. Keep30fps explicitly unverified unless measured.

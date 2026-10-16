@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "./api";
 import { PreviewFence, FramePacer, frameIsFresh } from "./preview-session";
+import { PreviewPlayout } from "./preview-playout";
 import type { PreviewFrame, PreviewStatus } from "./preview-session";
 export interface PreviewStats {
   deviceId: string;
@@ -47,11 +48,11 @@ export function Preview({
     let live = true,
       fence = new PreviewFence(deviceId),
       viewerId: string | null = null;
-    let pending: PreviewFrame | null = null,
-      shownFrame: PreviewFrame | null = null,
+    let shownFrame: PreviewFrame | null = null,
       announcedStream: string | null = null,
       shown = false;
     const pacer = new FramePacer();
+    const playout = new PreviewPlayout();
     surface.dataset.receivedFrames = "0";
     surface.dataset.drawnFrames = "0";
     let received = 0,
@@ -79,12 +80,16 @@ export function Preview({
           body: JSON.stringify({ viewerId: id, operation: "close" }),
         }).catch(() => {});
     };
-    const blank = (text: string) => {
-      pending = null;
+    const clearSurface = (text: string) => {
       shown = false;
       shownFrame = null;
+      latency = null;
       ctx.clearRect(0, 0, surface.width, surface.height);
       if (live) setMessage(text);
+    };
+    const blank = (text: string) => {
+      playout.clear();
+      clearSurface(text);
     };
     const verifySession = async () => {
       try {
@@ -135,9 +140,8 @@ export function Preview({
           JSON.parse((event as MessageEvent<string>).data),
         );
         if (!frame) return;
-        pending = frame;
+        playout.push(frame, performance.now());
         received++;
-        latency = Math.max(0, Date.now() - frame.capturedAt);
         surface.dataset.receivedFrames = String(received);
         surface.dataset.sequence = String(frame.sequence);
         surface.dataset.streamId = frame.streamId;
@@ -182,20 +186,23 @@ export function Preview({
     const paint = (t: number) => {
       if (!live) return;
       const now = Date.now();
-      if (
-        (pending && !frameIsFresh(pending, now)) ||
-        (shownFrame && !frameIsFresh(shownFrame, now))
-      ) {
-        // Never paint an expired frame after a stalled main thread.
-        if (pending && frameIsFresh(pending, now)) {
-          ctx.clearRect(0, 0, surface.width, surface.height);
-          shownFrame = null;
-          shown = false;
-        } else blank("Preview delayed");
+      // RAF's timestamp precedes callback execution. Use the same monotonic
+      // clock as enqueue, so a newly arrived frame is never considered future.
+      const playoutNow = performance.now();
+      const ready = playout.ready(playoutNow, now);
+      if (shownFrame && !frameIsFresh(shownFrame, now)) {
+        // Expire displayed pixels without discarding fresh arrivals waiting
+        // for their reanchored startup gate after a stalled main thread.
+        clearSurface("Preview delayed");
       }
-      if (pending && pacer.allow(t)) {
-        const frame = pending;
-        pending = null;
+      const frame =
+        ready && pacer.allow(t) ? playout.take(playoutNow, now) : null;
+      if (
+        frame &&
+        frame.deviceId === deviceId &&
+        frame.streamId === announcedStream &&
+        frameIsFresh(frame, Date.now())
+      ) {
         shownFrame = frame;
         const raw = atob(frame.pixels);
         ctx.clearRect(0, 0, 720, 160);
@@ -212,6 +219,7 @@ export function Preview({
             ctx.fill();
           }
         drawn++;
+        latency = Math.max(0, Date.now() - frame.capturedAt);
         surface.dataset.drawnFrames = String(drawn);
         surface.dataset.drawnSequence = String(frame.sequence);
         if (!shown) {
@@ -238,9 +246,11 @@ export function Preview({
     };
     raf = requestAnimationFrame(paint);
     const leave = () => {
+      blank("Preview paused");
+      live = false;
+      cancelAnimationFrame(raf);
       closeLease();
       events.close();
-      blank("Preview paused");
     };
     window.addEventListener("pagehide", leave);
     return () => {
@@ -251,6 +261,7 @@ export function Preview({
       clearTimeout(restarting);
       cancelAnimationFrame(raf);
       window.removeEventListener("pagehide", leave);
+      playout.clear();
       ctx.clearRect(0, 0, surface.width, surface.height);
     };
   }, [deviceId, active, visible, attempt, onSessionEnd, onStats]);
@@ -258,10 +269,10 @@ export function Preview({
     <div className="bar-preview" aria-label="Actual BUSY Bar front display">
       <img
         className="bar-shell"
-        src="/busy-bar-shell.png"
+        src="/busy-device-shell.webp"
         alt=""
-        width="1983"
-        height="793"
+        width="1024"
+        height="330"
       />
       <canvas
         ref={canvas}

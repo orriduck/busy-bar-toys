@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, SVGProps } from "react";
 import type { Snapshot } from "./api";
 export type IconName =
   | "chevron"
@@ -15,7 +15,10 @@ export type IconName =
   | "plane"
   | "github"
   | "terminal";
-export function Icon({ name }: { name: IconName }) {
+export function Icon({
+  name,
+  ...props
+}: { name: IconName } & SVGProps<SVGSVGElement>) {
   const paths: Record<IconName, string> = {
     chevron: "m6 9 6 6 6-6",
     plus: "M12 5v14M5 12h14",
@@ -36,7 +39,7 @@ export function Icon({ name }: { name: IconName }) {
     terminal: "m4 6 6 6-6 6M13 18h7",
   };
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
+    <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
       <path
         d={paths[name]}
         fill="none"
@@ -50,14 +53,8 @@ export function Icon({ name }: { name: IconName }) {
 }
 export function Brand() {
   return (
-    <div className="brand" aria-label="BUSY Bar Toys">
-      <span className="busy-mark">
-        <svg viewBox="0 0 12 18" aria-hidden="true">
-          <path d="M0 0v18l12-9Z" fill="currentColor" />
-        </svg>
-        BUSY
-      </span>
-      <span className="brand-toys">TOYS</span>
+    <div className="brand" aria-label="BUSY Bar">
+      <img src="/busy-logo.svg" width="80" height="26" alt="BUSY" />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 [English](README.md) · [协议](PROTOCOL.md) · [已确认的设计](../docs/plans/control-plane-v5.md)
 
-在浏览器中管理 BUSY Bar。注册显示服务，调整优先级、退出规则和开关。查看当前控制者，以及每一条等待显示的通知。页面通过 SSE 接收完整状态。
+在浏览器中管理 BUSY Bar。注册显示服务，调整优先级、退出规则和开关。查看当前控制者，以及每一条等待显示的通知。页面通过 SSE 接收完整状态。界面使用 React、Vite、Tailwind 和 shadcn/ui；TanStack Query 管理当前设备与会话的服务端状态，TanStack Table 管理队列表格。
 
 Cloudflare 后端负责调度和写屏。Mac 负责采集 Codex、Your dot 与通知，向后端发送完整画面。关闭浏览器后，云端仍可继续调度。
 
@@ -59,7 +59,7 @@ Setup 只保存连接信息，不替换正在运行的独立观察服务。准�
 
 Sender 是注册服务名，必要时附上 instance，不代表来源通知的作者。Received 是首次收到该 occurrence 的服务端时间，更新后保留。展开行可查看每位成员的来源和完整时间。
 
-在 Configuration 中，仅为指定 Mac 的一个服务打开 **Live display preview bridge**。更新该 Mac，并保留现有本地 Wi-Fi 输入配置。预览桥先核对设备身份，再读取真实正面 framebuffer；仅在登录后的 Display 页可见时发送像素。采集以 30 fps 为目标，Device 显示实际速率。预览桥不可用不影响云端调度。参见[预览接入与限制](../docs/cloud-mode.zh-CN.md#管理页面和实时画面)。
+在 Configuration 中，仅为指定 Mac 的一个服务打开 **Live display preview bridge**。更新该 Mac，并保留现有本地 Wi-Fi 输入配置。预览桥先核对设备身份，再读取真实正面 framebuffer；在登录后的任意管理页面可见时发送像素。Display 展示大预览；其它页面在左下角保留同一个实时预览，不显示 Manage 按钮。采集以 30 fps 为目标，Device 显示实际速率。浏览器使用约 150 ms 的有限播放缓冲，最多保留六个待播放帧。预览桥不可用不影响云端调度。参见[预览接入与限制](../docs/cloud-mode.zh-CN.md#管理页面和实时画面)。
 
 **Trusted device button bridge** 是独立能力，只授权给本地按键监听器。它允许设备级 Start/Pause 操作；普通发布服务不能清除其它服务。Primary 动作由原 Mac 执行，失败或未知结果不会结束通知。
 
