@@ -1,3 +1,4 @@
+import { PRIORITY_GROUPS, priorityGroupOf } from "./priority-groups";
 import type { State, Item } from "./model";
 
 /** Legacy numbers seed an explicit order once. Empty hashes are unclaimed groups,
@@ -42,17 +43,41 @@ export function computerOf(s: State, item: Item) {
 }
 /** A turn belongs to a service, not a message or publisher instance. */
 export function prepareTurns(s: State) {
-  s.serviceTurns ??= {};
   s.turnSeq ??= 0;
+  s.priorityComputerTurns ??= {};
+  s.priorityLeases ??= {};
+  const eligible = Object.values(s.items)
+    .filter((i) => i.state !== "paused" && i.state !== "snoozed")
+    .sort((a, b) => a.enqueueSeq - b.enqueueSeq);
+  const liveComputers = new Set(eligible.map((i) => computerKey(s, i)));
+  for (const key of Object.keys(s.priorityComputerTurns))
+    if (!liveComputers.has(key)) delete s.priorityComputerTurns[key];
+  for (const group of PRIORITY_GROUPS) {
+    const lease = s.priorityLeases[group];
+    if (
+      lease &&
+      !eligible.some(
+        (i) =>
+          i.itemKey === lease &&
+          priorityGroupOf(s.services[i.serviceId]) === group,
+      )
+    )
+      delete s.priorityLeases[group];
+  }
+  for (const i of eligible) {
+    const key = computerKey(s, i);
+    s.priorityComputerTurns[key] ??= ++s.turnSeq;
+  }
+  s.serviceTurns ??= {};
   const live = new Set(
     Object.values(s.items)
-      .filter((i) => i.level !== "urgent")
+      .filter((i) => priorityGroupOf(s.services[i.serviceId]) === "dispensable")
       .map((i) => i.serviceId),
   );
   for (const id of Object.keys(s.serviceTurns))
     if (!live.has(id)) delete s.serviceTurns[id];
   const items = Object.values(s.items)
-    .filter((i) => i.level !== "urgent")
+    .filter((i) => priorityGroupOf(s.services[i.serviceId]) === "dispensable")
     .sort((a, b) => a.enqueueSeq - b.enqueueSeq);
   for (const item of items)
     if (!s.serviceTurns[item.serviceId]) {
@@ -66,14 +91,13 @@ export function prepareTurns(s: State) {
 }
 export function hasTurnPeer(s: State, item: Item) {
   return (
-    item.level !== "urgent" &&
+    priorityGroupOf(s.services[item.serviceId]) === "dispensable" &&
     Object.values(s.items).some(
       (i) =>
-        i.serviceId !== item.serviceId &&
-        i.level !== "urgent" &&
+        computerOf(s, i) !== computerOf(s, item) &&
+        priorityGroupOf(s.services[i.serviceId]) === "dispensable" &&
         i.state !== "paused" &&
-        i.state !== "snoozed" &&
-        servicePosition(s, i.serviceId) === servicePosition(s, item.serviceId),
+        i.state !== "snoozed",
     )
   );
 }
@@ -82,44 +106,63 @@ export function yieldTurn(s: State, id: string) {
   s.serviceTurns[id] = { totalMs, remainingMs: totalMs, ticket: ++s.turnSeq };
   s.revision++;
 }
-/** Position is a global tier; equal-tier services rotate by persisted FIFO turn. */
+const computerKey = (s: State, item: Item) =>
+  JSON.stringify([
+    priorityGroupOf(s.services[item.serviceId]),
+    computerOf(s, item),
+  ]);
+export function yieldComputer(s: State, item: Item) {
+  s.priorityComputerTurns ??= {};
+  s.priorityLeases ??= {};
+  s.priorityComputerTurns[computerKey(s, item)] = ++s.turnSeq;
+  delete s.priorityLeases[priorityGroupOf(s.services[item.serviceId])];
+  s.revision++;
+}
+/** Global group, fair computer, that computer's ordered service head. The two
+ * completion groups retain their occurrence lease across higher interruptions. */
 export function normalOrder<T extends { representative: Item }>(
   s: State,
   groups: T[],
-) {
-  const by = new Map<string, T[]>();
-  const active = s.selected ? s.items[s.selected] : null;
-  const activeGroup = (i: Item) =>
-    !!active &&
-    i.serviceId === active.serviceId &&
-    (i.groupKey !== undefined
-      ? i.groupKey === active.groupKey
-      : i.itemKey === active.itemKey);
-  for (const g of groups)
-    by.set(g.representative.serviceId, [
-      ...(by.get(g.representative.serviceId) ?? []),
-      g,
-    ]);
-  const round = new Map<T, number>();
-  for (const own of by.values()) {
-    own.sort(
-      (a, b) =>
-        Number(activeGroup(b.representative)) -
-          Number(activeGroup(a.representative)) ||
-        a.representative.enqueueSeq - b.representative.enqueueSeq,
+): T[] {
+  const result: T[] = [];
+  for (const group of PRIORITY_GROUPS) {
+    const byComputer = new Map<string, T[]>();
+    const lease = s.priorityLeases[group];
+    for (const g of groups.filter(
+      (g) => priorityGroupOf(s.services[g.representative.serviceId]) === group,
+    )) {
+      const key = computerKey(s, g.representative);
+      byComputer.set(key, [...(byComputer.get(key) ?? []), g]);
+    }
+    for (const own of byComputer.values())
+      own.sort(
+        (a, b) =>
+          (group === "dispensable"
+            ? 0
+            : Number(b.representative.itemKey === lease) -
+              Number(a.representative.itemKey === lease)) ||
+          servicePosition(s, a.representative.serviceId) -
+            servicePosition(s, b.representative.serviceId) ||
+          Number(b.representative.itemKey === lease) -
+            Number(a.representative.itemKey === lease) ||
+          a.representative.enqueueSeq - b.representative.enqueueSeq,
+      );
+    const computers = [...byComputer].sort(
+      ([a, xs], [b, ys]) =>
+        (group === "dispensable"
+          ? 0
+          : Number(ys.some((g) => g.representative.itemKey === lease)) -
+            Number(xs.some((g) => g.representative.itemKey === lease))) ||
+        s.priorityComputerTurns[a] - s.priorityComputerTurns[b] ||
+        a.localeCompare(b),
     );
-    own.forEach((g, index) => round.set(g, index));
+    // One occurrence from each computer per round; later own messages cannot
+    // jump past that computer's service head on the next scheduling boundary.
+    while (computers.some(([, own]) => own.length))
+      for (const [, own] of computers) {
+        const next = own.shift();
+        if (next) result.push(next);
+      }
   }
-  return [...groups].sort((a, b) => {
-    const x = a.representative,
-      y = b.representative;
-    return (
-      servicePosition(s, x.serviceId) - servicePosition(s, y.serviceId) ||
-      round.get(a)! - round.get(b)! ||
-      (s.serviceTurns?.[x.serviceId]?.ticket ?? x.enqueueSeq) -
-        (s.serviceTurns?.[y.serviceId]?.ticket ?? y.enqueueSeq) ||
-      x.receivedAt - y.receivedAt ||
-      x.enqueueSeq - y.enqueueSeq
-    );
-  });
+  return result;
 }

@@ -96,7 +96,7 @@ describe("atomic service ordering", () => {
     ).toThrow("CONFIG_CONFLICT");
     expect(s).toEqual(before);
   });
-  it("reschedules using the new order while preserving urgent precedence and one revision", () => {
+  it("keeps current Follow queue work despite new own order and same-group urgency", () => {
     const s = state();
     const first = publish(s);
     model.publish(
@@ -108,11 +108,11 @@ describe("atomic service ordering", () => {
     const before = s.revision;
     reorderOwnedServices(s, "mac", ["b", "a", "c"], s.configRevision);
     model.tick(s, now);
-    expect(s.items[s.selected!].serviceId).toBe("b");
+    expect(s.items[s.selected!].serviceId).toBe("a");
     expect(s.revision).toBeGreaterThanOrEqual(before + 1);
     publish(s, "urgent", { level: "urgent" });
     reorderOwnedServices(s, "mac", ["b", "c", "a"], s.configRevision);
-    expect(s.items[s.selected!].level).toBe("urgent");
+    expect(s.items[s.selected!].itemKey).toBe(first.itemKey);
   });
 });
 
@@ -160,6 +160,8 @@ describe("confirmed playback metadata", () => {
       remainingMs: 9000,
       running: true,
     });
+    model.finishItem(s, finite.itemKey, "ended", finite.version, now);
+    model.tick(s, now);
     publish(s, "source", { kind: "agent", level: "urgent" });
     model.acceptDisplay(s, s.generation, now);
     expect(itemView(s, now + 2000).playback).toMatchObject({
@@ -329,7 +331,7 @@ it.each(["missing", "constructor", "__proto__"])(
 );
 
 describe("service runtime details", () => {
-  it("reports service-specific heartbeat, queue and global tier without borrowing device health", async () => {
+  it("reports service-specific heartbeat, queue and global priority group without borrowing device health", async () => {
     const { serviceRuntime } = await import("../ui/service-runtime");
     const m = await import("../src/model");
     const s = m.createState("d"),
@@ -364,13 +366,13 @@ describe("service runtime details", () => {
     let snap = m.snapshot(s, at + 1);
     expect(serviceRuntime(snap, snap.services[0])).toMatchObject({
       connection: "Online",
-      tier: 1,
+      priorityGroup: "dispensable",
       queued: 0,
       display: "Idle",
     });
     expect(serviceRuntime(snap, snap.services[1])).toMatchObject({
       connection: "Not reported",
-      tier: 2,
+      priorityGroup: "follow-queue",
     });
     snap = m.snapshot(s, at + 100000);
     expect(serviceRuntime(snap, snap.services[0]).connection).toBe("Offline");

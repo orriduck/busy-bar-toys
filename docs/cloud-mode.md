@@ -57,9 +57,15 @@ One computer credential can publish arbitrary app labels and content to any of i
 
 Paste the five-minute, one-use code into **Connect computer → Pairing code**. The server records the binding. A browser preference cannot grant access. Sign out before pairing a different computer. Sign out removes the browser binding; it does not stop local services.
 
-**Configuration** shows all computers; edit and reorder only your computer's services. Sort position is a global tier: A/1 outranks B/2. Higher-tier work interrupts lower-tier work, then the original message resumes with its remaining turn. Equal tiers alternate by each service's Hold. Only native-confirmed visible time after entrance consumes Hold. Source messages stay alive across turns; timed messages keep their original cumulative lifetime. Services and Configuration show source connectivity, last heartbeat, tier, display state and queue count. A source that has never checked in is not marked online.
+**Configuration** shows three global groups and every computer's services. Drag only your own services between groups or within your own group queue. Other computers remain visible and read only.
 
-The sender declares `exit: finite|source` for each occurrence. Hold sets a visible turn for equal-tier services and the cumulative lifetime of finite messages. The sender decides when to send a new occurrence.
+- **Interception** interrupts either lower group immediately. Use it for pages that need the screen now.
+- **Follow queue** plays queued work without interrupting the active message in that group. Each computer follows its own service order; computers alternate at completed-message boundaries. A source-ended message must be ended by its host before the queue advances.
+- **Dispensable** shows background status while the higher groups are empty. Eligible computers alternate by each service's Hold; each computer follows its own service order.
+
+A service's group is global. A row's position on one computer no longer creates a cross-computer priority tier. Higher groups preserve the interrupted occurrence and its remaining budget. Source urgency cannot promote a message above its registered group. Only native-confirmed visible time after entrance consumes Hold. Source messages stay alive across turns; timed messages keep their original cumulative lifetime. Services and Configuration show source connectivity, last heartbeat, group, display state and queue count. A source that has never checked in is not marked online.
+
+The sender declares `exit: finite|source` for each occurrence. Hold sets the Dispensable visible turn and the cumulative lifetime of finite messages. The sender decides when to send a new occurrence. Register an explicit `priorityGroup` through the API, or move the owned service in Configuration; agents initially default to Dispensable and other templates to Follow queue.
 
 ## Upgrade an existing Mac
 
@@ -107,6 +113,6 @@ Register a separate Notifier before starting an upgraded observer:
 .venv/bin/busy-bar cloud-register agent-notifier --template notifier --name "Agent requests" --source agent-notifier
 ```
 
-Place Agent requests before Agent status in Configuration. Rank ADSBao and other notifications as needed. Status and input requests use separate registrations. Each waiting task retains its own notification; the source removes it when input is resolved. Other computers must register and route their own Notifier; this command does not change them.
+Put Agent requests and ADSBao in Follow queue, and Agent status in Dispensable. Put a dedicated Page service in Interception when it must interrupt queued work. Order only your own services inside each group. Status and input requests use separate registrations. Each waiting task retains its own notification; the source removes it when input is resolved. Other computers must register and route their own Notifier; this command does not change them.
 
 To withdraw a notification, call `CloudQueue.withdraw(source, item_id)` or `RoutedCloudQueue.withdraw(source, item_id)`. The durable local outbox retries `POST /api/withdraw` until acknowledged. The HTTP body contains `instanceId`, `epoch`, `itemId`, `version`, authenticated for the matching owned service. Withdrawal retires that occurrence; a later notification needs a new occurrence.

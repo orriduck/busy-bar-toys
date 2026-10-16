@@ -8,6 +8,7 @@ import {
 } from "react";
 import { etaText, queueMetadata } from "./api";
 import { compactSender } from "./queue-metadata";
+import { PriorityGroupBadge } from "./priority-group-badge";
 import type { Snapshot, QueueItem, Mutate } from "./api";
 import { AppIcon, Icon } from "./common";
 import {
@@ -63,6 +64,9 @@ const columns = column.columns([
             <AppIcon app={meta.appId} />
             <span>{meta.app}</span>
           </Button>
+          {meta.priorityGroup && (
+            <PriorityGroupBadge group={meta.priorityGroup} />
+          )}
           {current && (
             <Badge variant="secondary" className="queue-playing">
               Playing
@@ -224,7 +228,7 @@ export function Queue({
           <Badge
             variant={item.level === "urgent" ? "destructive" : "secondary"}
           >
-            {item.level}
+            Source {item.level}
           </Badge>
         </div>
         <p className="muted">

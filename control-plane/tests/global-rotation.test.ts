@@ -55,9 +55,10 @@ function send(
 }
 const active = (s: m.State) =>
   s.selected ? s.items[s.selected]?.serviceId : null;
-describe("global tiers and confirmed visible-time turns", () => {
-  it("preempts another computer lower tier and resumes its exact occurrence", () => {
+describe("global priority groups and confirmed visible-time turns", () => {
+  it("preempts another computer lower group and resumes its exact occurrence", () => {
     const s = setup();
+    s.services.b.priorityGroup = "interception";
     const low = send(s, "low");
     m.acceptDisplay(s, s.generation, now);
     send(s, "b", now + 2000);
@@ -66,7 +67,7 @@ describe("global tiers and confirmed visible-time turns", () => {
     expect(s.selected).toBe(low.itemKey);
     expect(s.items[low.itemKey].remainingMs).toBeNull();
   });
-  it("alternates equal tiers using each Hold without ending their sources", () => {
+  it("alternates Dispensable computers using each Hold without ending their sources", () => {
     const s = setup();
     send(s, "low");
     m.acceptDisplay(s, s.generation, now);
@@ -80,8 +81,9 @@ describe("global tiers and confirmed visible-time turns", () => {
     m.tick(s, now + 12000);
     expect(active(s)).toBe("low");
   });
-  it("preserves a partial turn across a higher tier interruption", () => {
+  it("preserves a partial turn across a higher group interruption", () => {
     const s = setup();
+    s.services.b.priorityGroup = "interception";
     send(s, "low");
     m.acceptDisplay(s, s.generation, now);
     send(s, "peer");
@@ -135,7 +137,7 @@ describe("global tiers and confirmed visible-time turns", () => {
     expect(active(s)).toBe("peer");
     expect(Object.keys(s.items)).toHaveLength(2);
   });
-  it("exposes turn progress and an equal-tier ETA, but no lower-tier ETA past a source", () => {
+  it("exposes turn progress and an peer ETA, but no later own service ETA past a source", () => {
     const s = setup();
     send(s, "a");
     m.acceptDisplay(s, s.generation, now);
@@ -214,17 +216,13 @@ it("queues one turn per service before that service next independent message", (
   expect(active(s)).toBe("b");
 });
 
-it("does not promise a lower-tier ETA when a higher-tier finite item needs another turn", () => {
+it("does not promise a Follow queue ETA past a source-ended occurrence", () => {
   const s = setup();
+  s.services.a.priorityGroup = s.services.b.priorityGroup = "follow-queue";
   send(s, "a");
   m.acceptDisplay(s, s.generation, now);
-  m.tick(s, now + 4000);
-  send(s, "a", now + 4000, { itemId: "finite", kind: "event", exit: "finite" });
   send(s, "b", now + 4000, { kind: "event", exit: "finite" });
-  send(s, "low", now + 4000);
-  m.finishItem(s, s.selected!, "resolved", 1, now + 4000);
-  const view = m.snapshot(s, now + 4000);
-  expect(view.items.find((i) => i.serviceId === "low")?.eta.kind).toBe(
-    "await-resolution",
-  );
+  expect(
+    m.snapshot(s, now + 4000).items.find((i) => i.serviceId === "b")?.eta.kind,
+  ).toBe("await-resolution");
 });

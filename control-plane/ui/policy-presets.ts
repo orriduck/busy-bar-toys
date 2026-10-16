@@ -25,7 +25,7 @@ export const policyFields = {
     scale: 1000,
     min: 1,
     max: 86400,
-    help: "Visible time per turn when equal-tier services are ready. Timed messages end after this total visible time; source messages stay alive until their sender finishes.",
+    help: "Background turn length in Dispensable when other computers are ready. Timed messages end after this total visible time; source messages stay alive until their sender finishes.",
     presets: [5, 10, 30, 60].map((value) => ({
       id: String(value),
       label: value === 60 ? "1 min" : `${value} s`,

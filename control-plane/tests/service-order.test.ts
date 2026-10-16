@@ -75,6 +75,7 @@ describe("explicit per-computer service order", () => {
   });
   it("uses explicit own order and ignores changed legacy priorities", () => {
     const s = state();
+    s.services.a.priorityGroup = s.services.c.priorityGroup = "dispensable";
     send(s, "a");
     send(s, "c");
     expect(selected(s)).toBe("c");
@@ -85,7 +86,7 @@ describe("explicit per-computer service order", () => {
     model.tick(s, now + 2);
     expect(selected(s)).toBe("a");
   });
-  it("keeps FIFO turns within global tiers and advances on completion", () => {
+  it("keeps FIFO computer turns within a group and advances on completion", () => {
     const s = state();
     send(s, "c", "active", { kind: "agent", exit: "source" });
     model.acceptDisplay(s, s.generation, now);
@@ -105,8 +106,11 @@ describe("explicit per-computer service order", () => {
     model.finishItem(s, s.selected!, "resolved", 1, now + 2);
     expect(selected(s)).toBe("a");
   });
-  it("resumes a lower tier only after all higher-tier work clears", () => {
+  it("resumes a lower group only after all higher-group work clears", () => {
     const s = state();
+    s.services.a.priorityGroup = "dispensable";
+    s.services.b.priorityGroup = "follow-queue";
+    s.services.d.priorityGroup = "interception";
     const original = send(s, "a", "source", { kind: "agent", exit: "source" });
     model.acceptDisplay(s, s.generation, now);
     send(s, "b");
@@ -118,8 +122,9 @@ describe("explicit per-computer service order", () => {
     model.finishItem(s, s.selected!, "resolved", 1, now + 2);
     expect(s.selected).toBe(original.itemKey);
   });
-  it("preserves urgent precedence and current urgent ownership across computers", () => {
+  it("preserves Interception ownership across same-group urgent arrivals", () => {
     const s = state();
+    s.services.b.priorityGroup = s.services.c.priorityGroup = "interception";
     send(s, "a");
     send(s, "b", "urgent", { level: "urgent" });
     expect(selected(s)).toBe("b");

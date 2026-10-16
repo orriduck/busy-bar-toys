@@ -3,6 +3,7 @@ import { ChevronDown, LockKeyhole } from "lucide-react";
 import type { Snapshot, Service } from "./api";
 import { time } from "./api";
 import { serviceRuntime } from "./service-runtime";
+import { PriorityGroupBadge } from "./priority-group-badge";
 import { serviceLabel } from "./service-layout";
 import { cn } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -50,14 +51,7 @@ export function ServiceDetails({
                   ? "Notifier"
                   : "Custom publisher"}
             </span>
-            {status.tier !== null && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span title="Global priority tier. Smaller wins; equal tiers rotate by Hold.">
-                  Tier <SettingNumber value={status.tier} />
-                </span>
-              </>
-            )}
+            <PriorityGroupBadge group={status.priorityGroup} />
             {readOnly && (
               <>
                 <span aria-hidden="true">·</span>

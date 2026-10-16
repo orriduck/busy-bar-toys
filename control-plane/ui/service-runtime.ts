@@ -1,4 +1,5 @@
 import type { Snapshot, Service } from "./api";
+import { priorityGroupOf } from "./priority-groups";
 /** Source liveness is local to a registration; device health proves pixels only. */
 export function serviceRuntime(snapshot: Snapshot, service: Service) {
   const items = snapshot.items.filter((i) => i.serviceId === service.id);
@@ -12,15 +13,11 @@ export function serviceRuntime(snapshot: Snapshot, service: Service) {
       : lastHeartbeat + service.config.heartbeatMs > snapshot.serverNow
         ? "Online"
         : "Offline";
-  const index =
-    snapshot.computers
-      .find((c) => c.id === service.computerId)
-      ?.serviceOrder.indexOf(service.id) ?? -1;
   const current = items.find((i) => i.itemKey === snapshot.selected);
   return {
     connection,
     lastHeartbeat,
-    tier: index < 0 ? null : index + 1,
+    priorityGroup: priorityGroupOf(service),
     queued: items.filter(
       (i) =>
         i.itemKey !== snapshot.selected &&
