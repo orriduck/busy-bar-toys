@@ -1,4 +1,5 @@
 import { migrateServiceOrders } from "./ordering";
+import { retireApprovedLegacyRegistrations } from "./retirements";
 import { StateStore } from "./store";
 import {
   activeComputer,
@@ -109,7 +110,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     if (s) {
       const identities = migrateComputerIds(s);
       const orders = migrateServiceOrders(s, Date.now());
-      if (identities || orders) this.save(s);
+      const retirements = retireApprovedLegacyRegistrations(s);
+      if (identities || orders || retirements) this.save(s);
     }
     if (s) this.preview.update(s);
     if (s && s.commands.some((c) => c.status === "inflight")) {
