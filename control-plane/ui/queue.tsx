@@ -126,7 +126,8 @@ export function Queue({
     const owner = snapshot.items.find(
       (item) => item.itemKey === snapshot.displaying?.itemKey,
     );
-    if (!owner?.playback.running) return;
+    if (!owner?.playback?.running || !Number.isFinite(snapshot.serverNow))
+      return;
     const validUntil = Math.min(
       owner.playback.validUntil,
       snapshot.health.confirmedValidUntil,

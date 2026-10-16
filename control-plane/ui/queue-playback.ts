@@ -16,18 +16,35 @@ export function queuePlayback(
       : undefined;
   const current = !!(
     owner &&
+    Number.isFinite(snapshot.serverNow) &&
+    Number.isFinite(owner.playback?.startsAt) &&
     snapshot.health.status === "healthy" &&
     snapshot.health.confirmedValidUntil > now &&
     displaying?.generation === snapshot.generation &&
     displaying.confirmedValidUntil > now &&
-    owner.playback.running &&
+    owner.playback?.running &&
     owner.playback.validUntil > now
   );
   const item = current ? owner! : representative;
-  const { totalMs, remainingMs: remaining } = item.playback;
+  // Older deployed device instances can briefly omit the additive metadata.
+  const {
+    totalMs,
+    remainingMs: remaining,
+    startsAt,
+  } = item.playback ?? {
+    totalMs: null,
+    remainingMs: null,
+    startsAt: null,
+  };
   const finite = totalMs !== null && totalMs > 0 && remaining !== null;
+  // The server's remaining budget already includes playback before serverNow.
+  // A future startsAt reserves the entry animation before visible time begins.
+  const visibleElapsed =
+    startsAt === null
+      ? 0
+      : Math.max(0, now - Math.max(snapshot.serverNow, startsAt));
   const remainingMs = finite
-    ? Math.max(0, remaining - (current ? elapsed : 0))
+    ? Math.max(0, remaining - (current ? visibleElapsed : 0))
     : null;
   return {
     item,

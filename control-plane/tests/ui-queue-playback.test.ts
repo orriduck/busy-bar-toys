@@ -18,6 +18,7 @@ const item = (key: string, serviceId = "first"): QueueItem =>
       remainingMs: 8_000,
       running: true,
       validUntil: now + 5_000,
+      startsAt: now,
     },
   }) as QueueItem;
 const fixture = (): Snapshot => {
@@ -144,6 +145,44 @@ describe("confirmed queue playback", () => {
     expect(
       queuePlayback(state, ["owner"], state.items[0], 200).remainingMs,
     ).toBe(0);
+  });
+
+  it("waits for the entry animation before consuming the visible playback budget", () => {
+    const state = fixture();
+    state.items[0].playback.remainingMs = 10_000;
+    state.items[0].playback.startsAt = now + 1_000;
+    const entering = queuePlayback(state, ["owner"], state.items[0], 500);
+    expect(entering.current).toBe(true);
+    expect(entering.progress).toBe(0);
+    expect(entering.remainingMs).toBe(10_000);
+    const visible = queuePlayback(state, ["owner"], state.items[0], 1_500);
+    expect(visible.progress).toBe(5);
+    expect(visible.remainingMs).toBe(9_500);
+  });
+
+  it("only subtracts new elapsed time when the server already accounted for visible playback", () => {
+    const state = fixture();
+    state.items[0].playback.startsAt = now - 2_000;
+    const result = queuePlayback(state, ["owner"], state.items[0], 500);
+    expect(result.remainingMs).toBe(7_500);
+    expect(result.progress).toBe(25);
+  });
+
+  it("keeps older rollout snapshots usable without inventing playback", () => {
+    for (const missing of ["serverNow", "playback", "startsAt"] as const) {
+      const state = fixture();
+      const target =
+        missing === "serverNow"
+          ? state
+          : missing === "playback"
+            ? state.items[0]
+            : state.items[0].playback;
+      delete (target as unknown as Record<string, unknown>)[missing];
+      const result = queuePlayback(state, ["owner"], state.items[0], 500);
+      expect(result.current).toBe(false);
+      expect(result.progress).toBeNull();
+      expect(result.item.itemKey).toBe("owner");
+    }
   });
 });
 
