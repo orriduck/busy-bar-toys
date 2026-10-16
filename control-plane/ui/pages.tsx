@@ -7,6 +7,8 @@ import { Empty, EmptyHeader, EmptyDescription } from "./components/ui/empty";
 import { cn } from "./lib/utils";
 import type { IconName } from "./common";
 import { ServiceEditor, Register } from "./services";
+import { deviceGroups } from "./service-layout";
+import { ConfigurationList } from "./configuration";
 import type { PreviewStatus } from "./preview-session";
 import type { PreviewStats } from "./preview";
 export type Page = "display" | "services" | "configuration" | "device";
@@ -79,16 +81,31 @@ export function ServicesPage({
         />
       )}
       <div className="service-list">
-        {snapshot.services.map((service) => (
-          <ServiceEditor
-            mode="access"
-            key={service.id}
-            service={service}
-            configRevision={snapshot.configRevision}
-            mutate={mutate}
-            pending={pending}
-            onCredential={onCredential}
-          />
+        {deviceGroups(snapshot.services).map((group) => (
+          <section
+            className="device-service-group"
+            key={group.name}
+            aria-label={`${group.name} services`}
+          >
+            <header className="device-group-heading">
+              <Icon name="computer" />
+              <h2>{group.name}</h2>
+              <span>{group.services.length} services</span>
+            </header>
+            <div>
+              {group.services.map((service) => (
+                <ServiceEditor
+                  mode="access"
+                  key={service.id}
+                  service={service}
+                  configRevision={snapshot.configRevision}
+                  mutate={mutate}
+                  pending={pending}
+                  onCredential={onCredential}
+                />
+              ))}
+            </div>
+          </section>
         ))}
       </div>
       {!snapshot.services.length && (
@@ -128,18 +145,16 @@ export function ConfigurationPage({
           </EmptyHeader>
         </Empty>
       )}
-      <div className="service-list">
-        {snapshot.services.map((service) => (
-          <ServiceEditor
-            key={service.id}
-            service={service}
-            configRevision={snapshot.configRevision}
-            mutate={mutate}
-            pending={pending}
-            onCredential={onCredential}
-          />
-        ))}
-      </div>
+      <p className="configuration-hint">
+        Drag to set priority. Higher services play first within the same
+        urgency. Click a service for detailed settings.
+      </p>
+      <ConfigurationList
+        snapshot={snapshot}
+        mutate={mutate}
+        pending={pending}
+        onCredential={onCredential}
+      />
     </section>
   );
 }
@@ -263,7 +278,7 @@ export function DevicePage({
         to read the Bar over local Wi-Fi. Latency includes the 150 ms playback
         buffer and uses the Mac and browser clocks.
       </p>
-      <Button variant="ghost" className="signout" onClick={onLogout}>
+      <Button variant="destructive" className="signout" onClick={onLogout}>
         Sign out
       </Button>
     </section>
