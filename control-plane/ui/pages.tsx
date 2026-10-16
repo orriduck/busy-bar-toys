@@ -1,12 +1,18 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, time } from "./api";
 import type { Mutate, Snapshot, Service } from "./api";
 import { Icon, serviceName } from "./common";
 import { Button } from "./components/ui/button";
 import { Empty, EmptyHeader, EmptyDescription } from "./components/ui/empty";
 import { ServiceEditor, Register } from "./services";
-import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
-import { ItemGroup, ItemSeparator } from "./components/ui/item";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  CardDescription,
+} from "./components/ui/card";
+import { ItemGroup } from "./components/ui/item";
 import { Separator } from "./components/ui/separator";
 import { Badge } from "./components/ui/badge";
 import { ComputerAccess } from "./computer-access";
@@ -17,6 +23,15 @@ import type { PreviewStats } from "./preview";
 import { MotionFeedback, MotionReveal, useListMotion } from "./motion";
 import { SettingNumber } from "./setting-number";
 import { InstallApp } from "./pwa";
+import { Check, Copy, ChevronDown, Radio } from "lucide-react";
+import { Input } from "./components/ui/input";
+import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "./components/ui/collapsible";
+import { sourceRouteCommand } from "./service-setup";
 export { Navigation } from "./navigation";
 export type { Page } from "./navigation";
 export type CredentialValue = {
@@ -43,7 +58,21 @@ export function ServicesPage({
   const [register, setRegister] = useState(false);
   const [registeredId, setRegisteredId] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
-  const groups = orderedDeviceGroups(snapshot);
+  const groups = orderedDeviceGroups(snapshot).sort(
+    (a, b) =>
+      Number(b.name === ownerComputerId) - Number(a.name === ownerComputerId),
+  );
+  const own = snapshot.services.filter(
+    (service) => service.computerId === ownerComputerId,
+  );
+  const [guideOpen, setGuideOpen] = useState(true);
+  const addRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (register)
+      addRef.current
+        ?.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')
+        ?.focus({ preventScroll: true });
+  }, [register]);
   useListMotion(
     list,
     JSON.stringify(groups.map((group) => group.name)),
@@ -56,39 +85,100 @@ export function ServicesPage({
         <h1 id="services-title">Services</h1>
         <Button
           disabled={!ownerComputerId}
-          onClick={() => setRegister((value) => !value)}
+          onClick={() => {
+            if (!register) setRegisteredId(null);
+            setRegister((value) => !value);
+          }}
         >
-          <Icon name="plus" data-icon="inline-start" />
-          {register ? "Cancel" : "Register"}
+          <Icon name={register ? "end" : "plus"} data-icon="inline-start" />
+          {register ? "Cancel" : "Add service"}
         </Button>
       </div>
-      <ComputerAccess
-        ownerComputerId={ownerComputerId}
-        mutate={mutate}
-        pending={pending}
-        onPaired={onPaired}
-      />
+      <p className="services-lede">
+        Your apps, one small screen. Choose what gets a place on your Bar.
+      </p>
+      {!ownerComputerId && (
+        <ComputerAccess
+          ownerComputerId={ownerComputerId}
+          mutate={mutate}
+          pending={pending}
+          onPaired={onPaired}
+        />
+      )}
+      <Collapsible
+        open={guideOpen}
+        onOpenChange={setGuideOpen}
+        className="services-setup-guide"
+      >
+        <CollapsibleTrigger
+          render={<Button type="button" variant="disclosure" size="sm" />}
+        >
+          Getting started <ChevronDown data-icon="inline-end" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="motion-collapse">
+          <div className="setup-steps">
+            <div data-complete={!!ownerComputerId}>
+              <span>
+                {ownerComputerId ? <Check /> : <Icon name="computer" />}
+              </span>
+              <div>
+                <strong>Connect this computer</strong>
+                <p>
+                  {ownerComputerId
+                    ? "Paired. You can manage its services here."
+                    : "Use Connect computer above to pair this browser."}
+                </p>
+              </div>
+            </div>
+            <div data-complete={own.length > 0}>
+              <span>{own.length > 0 ? <Check /> : <Icon name="plus" />}</span>
+              <div>
+                <strong>Add something to display</strong>
+                <p>Agent status, notifications or your own app.</p>
+              </div>
+            </div>
+            <div
+              data-complete={own.some(
+                (service) =>
+                  service.lastHeartbeatAt !== null &&
+                  service.lastHeartbeatAt !== undefined,
+              )}
+            >
+              <span>
+                <Radio />
+              </span>
+              <div>
+                <strong>Connect its sender</strong>
+                <p>Route a local source. Its card shows when it checks in.</p>
+              </div>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
       {register && ownerComputerId && (
-        <MotionReveal>
-          <Register
-            computerId={ownerComputerId}
-            revision={snapshot.configRevision}
-            mutate={mutate}
-            pending={pending}
-            onCreated={(value) => {
-              setRegisteredId(value.id);
-              setRegister(false);
-            }}
-          />
-        </MotionReveal>
+        <div ref={addRef}>
+          <MotionReveal>
+            <Register
+              computerId={ownerComputerId}
+              revision={snapshot.configRevision}
+              mutate={mutate}
+              pending={pending}
+              onCreated={(value) => {
+                setRegisteredId(value.id);
+                setRegister(false);
+              }}
+            />
+          </MotionReveal>
+        </div>
       )}
       {registeredId && (
-        <p className="mb-4 rounded-xl border border-border p-3 text-sm text-muted-foreground">
-          Service registered. Route a local source to it:{" "}
-          <code className="break-all">
-            busy-bar cloud-route SOURCE {registeredId}
-          </code>
-        </p>
+        <SourceConnection
+          id={registeredId}
+          service={snapshot.services.find(
+            (service) => service.id === registeredId,
+          )}
+          onDismiss={() => setRegisteredId(null)}
+        />
       )}
       <div ref={list} className="service-list">
         {groups.map((group) => (
@@ -104,8 +194,8 @@ export function ServicesPage({
               <CardTitle className="min-w-0 flex-1">
                 <h2 title={group.name}>
                   {group.name.startsWith("service:")
-                    ? group.name.slice(8)
-                    : group.name}
+                    ? "Unassigned"
+                    : group.name.slice(0, 8)}
                 </h2>
               </CardTitle>
               {ownerComputerId === group.name && (
@@ -139,7 +229,7 @@ export function ServicesPage({
         <Empty>
           <EmptyHeader>
             <EmptyDescription>
-              Register a service to connect a local collector.
+              Add your first service, then connect the app that will send to it.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -165,25 +255,103 @@ function ServiceRows({
   const scope = useRef<HTMLDivElement>(null);
   useListMotion(scope, JSON.stringify(services.map((service) => service.id)));
   return (
-    <ItemGroup ref={scope} className="gap-0 has-data-[size=sm]:gap-0">
-      {services.map((service, index) => (
-        <Fragment key={service.id}>
-          {index > 0 && <ItemSeparator className="my-0" aria-hidden="true" />}
-          <ServiceEditor
-            readOnly={readOnly}
-            mode="access"
-            service={service}
-            snapshot={snapshot}
-            configRevision={snapshot.configRevision}
-            mutate={mutate}
-            pending={pending}
-            onCredential={onCredential}
-          />
-        </Fragment>
+    <ItemGroup ref={scope} className="service-card-grid">
+      {services.map((service) => (
+        <ServiceEditor
+          key={service.id}
+          readOnly={readOnly}
+          mode="access"
+          service={service}
+          snapshot={snapshot}
+          configRevision={snapshot.configRevision}
+          mutate={mutate}
+          pending={pending}
+          onCredential={onCredential}
+        />
       ))}
     </ItemGroup>
   );
 }
+function SourceConnection({
+  id,
+  service,
+  onDismiss,
+}: {
+  id: string;
+  service?: Service;
+  onDismiss: () => void;
+}) {
+  const [source, setSource] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const command = sourceRouteCommand(source, id);
+  const fieldId = `route-${id}`;
+  return (
+    <Card className="source-connect-card" size="sm">
+      <CardHeader>
+        <CardTitle>{service?.name ?? "Service"} added</CardTitle>
+        <CardDescription>
+          Run this on the computer that sends its updates. Use your local source
+          name, for example codex or github.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <FieldGroup>
+          <Field data-invalid={!!source && !command}>
+            <FieldLabel htmlFor={fieldId}>Local source name</FieldLabel>
+            <Input
+              id={fieldId}
+              autoFocus
+              maxLength={64}
+              aria-invalid={!!source && !command}
+              value={source}
+              onChange={(event) => {
+                setSource(event.target.value);
+                setCopied(false);
+                setCopyError(false);
+              }}
+              placeholder="e.g. codex"
+            />
+          </Field>
+        </FieldGroup>
+        {command && (
+          <div className="source-route-command">
+            <code>{command}</code>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Copy route command"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(command)
+                  .then(() => setCopied(true))
+                  .catch(() => setCopyError(true));
+              }}
+            >
+              {copied ? <Check /> : <Copy />}
+            </Button>
+          </div>
+        )}
+        <p className="source-route-status" role="status">
+          {source && !command
+            ? "Use 1–64 letters, numbers, underscores or hyphens. Reserved names are unavailable."
+            : copyError
+              ? "Copy is unavailable. Select the command to copy it."
+              : copied
+                ? "Copied. Run it in your terminal."
+                : service?.lastHeartbeatAt
+                  ? "The sender has checked in."
+                  : "The card below will show Online after its first heartbeat."}
+        </p>
+        <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
+          Done
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ConfigurationPage({
   snapshot,
   mutate,
@@ -220,8 +388,7 @@ export function ConfigurationPage({
         onPaired={onPaired}
       />
       <p className="configuration-hint">
-        Global priority groups. Move only your computer’s services; other
-        computers remain visible.
+        Three shared priorities. Drag your services to change groups.
       </p>
       <ConfigurationList
         ownerComputerId={ownerComputerId}

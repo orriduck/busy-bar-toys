@@ -3,7 +3,12 @@ import type { FormEvent } from "react";
 import type { Service, Mutate } from "./api";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { SettingsSelect } from "./settings-select";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "./components/ui/collapsible";
 import { Separator } from "./components/ui/separator";
 import {
   Item,
@@ -22,7 +27,15 @@ import {
   AlertDialogAction,
 } from "./components/ui/alert-dialog";
 import { Switch } from "./components/ui/switch";
-import { MoreHorizontal, KeyRound, Trash2 } from "lucide-react";
+import {
+  MoreHorizontal,
+  KeyRound,
+  Trash2,
+  Bot,
+  BellRing,
+  Code2,
+  ChevronDown,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -53,6 +66,7 @@ import {
 } from "./components/ui/card";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { MotionReveal, useSemanticMotion } from "./motion";
+import { validServiceIdentifier } from "./service-setup";
 export function ServiceEditor({
   service,
   configRevision,
@@ -160,7 +174,7 @@ export function ServiceEditor({
       id={formId}
       onSubmit={(event) => void save(event)}
     >
-      <FieldGroup className="grid grid-cols-1 gap-x-4 gap-y-5 @xl/policy:grid-cols-2">
+      <FieldGroup className="policy-grid grid grid-cols-1 gap-3 @xl/policy:grid-cols-2">
         <PolicyField
           key={`visibleMs-${resetVersion}`}
           disabled={pending || readOnly}
@@ -234,6 +248,13 @@ function ServiceAccess({
   }) => void;
 }) {
   const runtime = snapshot ? serviceRuntime(snapshot, service) : null;
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const TypeIcon =
+    service.template === "agent"
+      ? Bot
+      : service.template === "notifier"
+        ? BellRing
+        : Code2;
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const actionTrigger = useRef<HTMLButtonElement>(null);
   const [revokeError, setRevokeError] = useState(false);
@@ -272,14 +293,10 @@ function ServiceAccess({
       <ItemContent className="min-w-0">
         <div className="service-access-main">
           <ItemTitle className="service-identity">
-            <strong>{serviceLabel(service)}</strong>
-            <span>
-              {service.template === "agent"
-                ? "Agent"
-                : service.template === "notifier"
-                  ? "Notifications"
-                  : "Custom"}
+            <span className="service-type-icon">
+              <TypeIcon aria-hidden="true" />
             </span>
+            <strong>{serviceLabel(service)}</strong>
           </ItemTitle>
           <ItemActions>
             <Switch
@@ -327,39 +344,74 @@ function ServiceAccess({
           </ItemActions>
         </div>
         {runtime && (
-          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">{runtime.connection}</Badge>
-            <span>{runtime.display}</span>
-            <span>
-              · <SettingNumber value={runtime.queued} /> queued
+          <div className="service-card-status">
+            <span
+              className="service-connection"
+              data-online={runtime.connection === "Online"}
+            >
+              <i aria-hidden="true" />
+              {runtime.connection === "Not reported"
+                ? "Waiting for sender"
+                : runtime.connection}
             </span>
-            <PriorityGroupBadge group={runtime.priorityGroup} />
-            <span title="Last source heartbeat">
-              · {time(runtime.lastHeartbeat)}
-            </span>
+            {runtime.display !== "Idle" && (
+              <Badge variant="secondary">{runtime.display}</Badge>
+            )}
+            {runtime.queued > 0 && (
+              <span>
+                <SettingNumber value={runtime.queued} /> waiting
+              </span>
+            )}
           </div>
         )}
-        <div className="service-connections">
-          <label title="Let this service forward the Bar’s Start / Pause button.">
-            <span>Bar buttons</span>
-            <Switch
-              size="sm"
-              checked={service.config.allowInput}
-              disabled={pending}
-              aria-label={`Bar buttons for ${service.name}`}
-              onCheckedChange={(checked) => change("allowInput", checked)}
-            />
-          </label>
-          <label title="Let this service send the Bar’s actual screen to this page. Use one Mac with local access.">
-            <span>Live preview</span>
-            <Switch
-              size="sm"
-              checked={service.config.allowPreview}
-              disabled={pending}
-              aria-label={`Live preview for ${service.name}`}
-              onCheckedChange={(checked) => change("allowPreview", checked)}
-            />
-          </label>
+        <div className="service-card-footer">
+          <PriorityGroupBadge
+            group={
+              runtime?.priorityGroup ??
+              (service.template === "agent" ? "dispensable" : "follow-queue")
+            }
+          />
+          <Collapsible open={connectionOpen} onOpenChange={setConnectionOpen}>
+            <CollapsibleTrigger
+              render={<Button type="button" variant="disclosure" size="sm" />}
+            >
+              Connection <ChevronDown data-icon="inline-end" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="motion-collapse">
+              <div className="service-connections">
+                <label title="Forward Start / Pause from this computer to the Bar.">
+                  <span>Bar buttons</span>
+                  <Switch
+                    size="sm"
+                    checked={service.config.allowInput}
+                    disabled={pending}
+                    aria-label={`Bar buttons for ${service.name}`}
+                    onCheckedChange={(checked) => change("allowInput", checked)}
+                  />
+                </label>
+                <label title="Send the actual Bar screen through this computer. Choose one Mac with local access.">
+                  <span>Live preview</span>
+                  <Switch
+                    size="sm"
+                    checked={service.config.allowPreview}
+                    disabled={pending}
+                    aria-label={`Live preview for ${service.name}`}
+                    onCheckedChange={(checked) =>
+                      change("allowPreview", checked)
+                    }
+                  />
+                </label>
+              </div>
+              <dl className="service-connection-details">
+                <dt>Last heartbeat</dt>
+                <dd>{time(runtime?.lastHeartbeat)}</dd>
+                <dt>Service ID</dt>
+                <dd>
+                  <code>{service.id}</code>
+                </dd>
+              </dl>
+            </CollapsibleContent>
+          </Collapsible>
         </div>
       </ItemContent>
       <AlertDialog open={confirmRevoke} onOpenChange={setConfirmRevoke}>
@@ -422,11 +474,17 @@ export function Register({
   }) => void;
 }) {
   const formId = useId();
-  const [id, setId] = useState("");
+  const [id, setId] = useState<string>(() => crypto.randomUUID());
+  const [advanced, setAdvanced] = useState(false);
   const [name, setName] = useState("");
   const [template, setTemplate] = useState("agent");
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (pending || !name.trim() || !template) return;
+    if (!validServiceIdentifier(id)) {
+      setAdvanced(true);
+      return;
+    }
     const result = await mutate("/services", {
       id,
       name: name.trim(),
@@ -443,77 +501,109 @@ export function Register({
       });
   };
   return (
-    <Card className="register">
+    <Card className="register service-add-card">
       <CardHeader>
         <CardTitle role="heading" aria-level={3}>
-          Register a service
+          What would you like on your Bar?
         </CardTitle>
         <CardDescription>
-          Connect a local collector or custom publisher.
+          Pick a starting point. You can tune its display rules later.
         </CardDescription>
       </CardHeader>
       <form onSubmit={(event) => void submit(event)}>
         <CardContent>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor={`${formId}-device`}>Computer</FieldLabel>
-              <p
-                id={`${formId}-device`}
-                className="break-all text-sm text-muted-foreground"
+              <FieldLabel id={`${formId}-kind`}>Show</FieldLabel>
+              <ToggleGroup
+                className="service-kind-picker"
+                value={[template]}
+                onValueChange={(values) => {
+                  if (values.length) setTemplate(values[0]);
+                }}
+                aria-labelledby={`${formId}-kind`}
+                disabled={pending}
               >
-                {computerId} · This computer
-              </p>
+                <ToggleGroupItem value="agent">
+                  <Bot />
+                  <strong>Agent status</strong>
+                  <span>Codex, Claude and more</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem value="notifier">
+                  <BellRing />
+                  <strong>Notifications</strong>
+                  <span>Requests and updates</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem value="custom">
+                  <Code2 />
+                  <strong>Your own app</strong>
+                  <span>A custom publisher</span>
+                </ToggleGroupItem>
+              </ToggleGroup>
+              <FieldDescription>
+                {template === "agent"
+                  ? "Background status takes turns with other Dispensable services."
+                  : "Messages join Follow queue. Each sender decides when its message ends."}
+              </FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor={`${formId}-field6`}>{"Name"}</FieldLabel>
+              <FieldLabel htmlFor={`${formId}-name`}>Give it a name</FieldLabel>
               <Input
-                id={`${formId}-field6`}
+                id={`${formId}-name`}
                 required
                 maxLength={80}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="My Codex"
+                placeholder={
+                  template === "agent"
+                    ? "e.g. Codex"
+                    : template === "notifier"
+                      ? "e.g. GitHub updates"
+                      : "e.g. My dashboard"
+                }
+                disabled={pending}
               />
             </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-field7`}>
-                {"Service ID"}
-              </FieldLabel>
-              <Input
-                id={`${formId}-field7`}
-                required
-                pattern="[A-Za-z0-9_-]{1,64}"
-                maxLength={64}
-                value={id}
-                onChange={(event) => setId(event.target.value)}
-                placeholder="codex-mac"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${formId}-field8`}>{"Template"}</FieldLabel>
-              <SettingsSelect
-                id={`${formId}-field8`}
-                value={template}
-                onChange={setTemplate}
-                options={[
-                  { value: "agent", label: "Agent checker" },
-                  { value: "notifier", label: "Notifier" },
-                  { value: "custom", label: "Custom publisher" },
-                ]}
-              />
-              <FieldDescription>
-                Each message declares whether it ends with its source or after a
-                fixed time. Hold sets background turns in Dispensable and the
-                total lifetime of timed messages. Agents start in Dispensable;
-                other templates start in Follow queue.
-              </FieldDescription>
-            </Field>
+            <Collapsible open={advanced} onOpenChange={setAdvanced}>
+              <CollapsibleTrigger
+                render={<Button type="button" size="sm" variant="disclosure" />}
+              >
+                Advanced <ChevronDown data-icon="inline-end" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="motion-collapse">
+                <Field
+                  className="pt-3"
+                  data-invalid={!validServiceIdentifier(id)}
+                >
+                  <FieldLabel htmlFor={`${formId}-id`}>Service ID</FieldLabel>
+                  <Input
+                    id={`${formId}-id`}
+                    required
+                    pattern="[A-Za-z0-9_-]{1,64}"
+                    maxLength={64}
+                    value={id}
+                    aria-invalid={!validServiceIdentifier(id)}
+                    onInvalid={() => setAdvanced(true)}
+                    onChange={(event) => setId(event.target.value)}
+                    disabled={pending}
+                  />
+                  <FieldDescription>
+                    {validServiceIdentifier(id)
+                      ? "A unique ID is already filled in. Change it only if your sender needs a specific one."
+                      : "Use 1–64 letters, numbers, underscores or hyphens. Reserved names are unavailable."}
+                  </FieldDescription>
+                </Field>
+              </CollapsibleContent>
+            </Collapsible>
           </FieldGroup>
         </CardContent>
-        <CardFooter className="mt-5">
-          <Button type="submit" disabled={pending}>
-            Create service
+        <CardFooter className="mt-4 gap-3 flex-wrap">
+          <Button type="submit" disabled={pending || !name.trim()}>
+            Add service
           </Button>
+          <span className="text-xs text-muted-foreground" title={computerId}>
+            On this computer · {computerId.slice(0, 8)}
+          </span>
         </CardFooter>
       </form>
     </Card>

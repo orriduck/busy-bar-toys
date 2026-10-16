@@ -427,7 +427,7 @@ export function ConfigurationList({
     <div className="configuration-workspace" data-detail={mobileDetail}>
       <div className="configuration-order-pane">
         <p className="configuration-status">
-          Drag your services between groups.
+          Select a service to adjust Hold and Heartbeat.
         </p>
         <DndContext
           modifiers={orderModifiers}
