@@ -25,7 +25,7 @@ export const policyFields = {
     scale: 1000,
     min: 1,
     max: 86400,
-    help: "For fixed-time messages, how long content stays on screen after its entry animation. Source-controlled messages stay until their sender finishes.",
+    help: "Visible time per turn when equal-tier services are ready. Timed messages end after this total visible time; source messages stay alive until their sender finishes.",
     presets: [5, 10, 30, 60].map((value) => ({
       id: String(value),
       label: value === 60 ? "1 min" : `${value} s`,

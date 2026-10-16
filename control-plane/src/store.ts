@@ -28,6 +28,8 @@ export class StateStore {
     const header = JSON.parse(row.value) as State & { schemaVersion?: number };
     header.elementExpiries ??= {};
     header.nativeElements ??= {};
+    header.serviceTurns ??= {};
+    header.turnSeq ??= 0;
     const needsLease = header.normalLeaseItem === undefined;
     header.lastNormalComputer ??= null;
     header.computers ??= {};

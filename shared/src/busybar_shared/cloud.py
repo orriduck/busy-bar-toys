@@ -305,7 +305,7 @@ class State:
             rec.pop('handoverPendingSource',None)
             self.save(); return copy.deepcopy(rec)
 
-    def clear(self,key):
+    def clear(self,key,*,withdraw=False):
         with self.lock:
             rec=self.records.get(key)
             if rec and not rec.get('cleared'):
@@ -313,7 +313,7 @@ class State:
                     rec['cleared']=True; rec['fallbackPending']=False; self.compact(rec); self.save(); return
                 if len(self.data['ends'])>=LOCAL_RECORDS: raise CloudError('local_end_capacity')
                 rec['cleared']=True; rec['version']+=1
-                self.data['ends'][rec['itemId']]={'itemId':rec['itemId'],'version':rec['version']}
+                self.data['ends'][rec['itemId']]={'itemId':rec['itemId'],'version':rec['version'],**({'withdraw':True} if withdraw else {})}
                 self.compact(rec)
                 self.save()
 
@@ -653,7 +653,7 @@ class Producer:
             results=copy.deepcopy(self.state.data['actions']); inputs=copy.deepcopy(self.state.data['inputs'])
             ends=copy.deepcopy(self.state.data['ends'])
         for ident,body in ends.items():
-            self._response('POST','/api/end',{**identity,**body})
+            self._response('POST','/api/withdraw' if body.get('withdraw') else '/api/end',{**identity,**{k:v for k,v in body.items() if k!='withdraw'}})
             with self.state.lock: self.state.data['ends'].pop(ident,None); self.state.save()
         for rec in records:
             if rec.get('tombstone'): continue

@@ -1016,3 +1016,192 @@ it("binds an unchanged projected replacement to its still-pending native ACK wit
   expect(accepted?.items[0].coverageProof?.version).toBe(3);
   expect(calls.filter((c) => c.body)).toHaveLength(2);
 });
+
+describe("producer withdrawal", () => {
+  it("withdraws waiting and displaying occurrences idempotently, fences retries, and stays service scoped", async () => {
+    const { send, admin, epoch } = await setup();
+    const a = await send("/publish", presentation(epoch, "one"));
+    expect(a.status).toBe(200);
+    await displayed(admin);
+    await send("/publish", presentation(epoch, "two"));
+    const body = { epoch, instanceId: "mac", itemId: "two", version: 2 };
+    expect((await send("/withdraw", body)).status).toBe(200);
+    expect((await send("/withdraw", body)).status).toBe(200);
+    let view = (await (await send("/snapshot")).json()) as any;
+    expect(view.items.map((i: any) => i.itemId)).toEqual(["one"]);
+    expect(
+      view.tombstones.find((t: any) => t.itemKey.includes("two")).reason,
+    ).toBe("withdrawn");
+    expect(
+      (await send("/publish", { ...presentation(epoch, "two"), version: 3 }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await send("/withdraw", { ...body, serviceId: "foreign" })).status,
+    ).toBe(403);
+    expect((await send("/withdraw", { ...body, itemId: "one" })).status).toBe(
+      200,
+    );
+    view = await (await admin("/snapshot")).json();
+    expect(view.selected).toBeNull();
+    // Withdrawal arriving before publish fences delayed network retries too.
+    expect((await send("/withdraw", { ...body, itemId: "late" })).status).toBe(
+      200,
+    );
+    expect((await send("/publish", presentation(epoch, "late"))).status).toBe(
+      409,
+    );
+  });
+});
+
+it("rotates source turns on a durable alarm after eviction without a producer tick", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const { send, admin, epoch, deviceId } = await setup();
+  const stub = env.DEVICES.getByName(deviceId),
+    start = Date.now();
+  await runInDurableObject(stub, async (_instance, ctx) => {
+    const { registerService, publish } = await import("../src/model");
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    s.services.test.config.visibleMs = 5000;
+    s.computers[s.services.test.computerId!].serviceOrder = ["test"];
+    registerService(
+      s,
+      { id: "peer", name: "Peer", template: "agent" },
+      "other-hash",
+      "other-epoch",
+      start,
+    );
+    s.services.peer.computerId = "other";
+    s.services.peer.config.visibleMs = 7000;
+    s.computers.other = {
+      id: "other",
+      credentialHash: "other-hash",
+      createdAt: start,
+      serviceOrder: ["peer"],
+    };
+    // Publish own source first through its real producer route below.
+    store.save(s);
+  });
+  await send("/publish", {
+    ...presentation(epoch),
+    kind: "agent",
+    exit: "source",
+  });
+  await displayed(admin);
+  await runInDurableObject(stub, async (_instance, ctx) => {
+    const { publish } = await import("../src/model");
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    publish(
+      s,
+      "peer",
+      { ...presentation("other-epoch", "peer"), kind: "agent", exit: "source" },
+      start,
+    );
+    store.save(s);
+  });
+  await send("/heartbeat", {
+    epoch,
+    instanceId: "mac",
+    itemIds: ["one"],
+    validUntil: start + 60000,
+  });
+  expect(
+    await runInDurableObject(stub, (_i, ctx) => ctx.storage.getAlarm()),
+  ).toBe(start + 5000);
+  await evictDurableObject(stub);
+  vi.setSystemTime(start + 5000);
+  await runDurableObjectAlarm(stub);
+  await displayed(admin);
+  const view = (await (await admin("/snapshot")).json()) as any;
+  expect(
+    view.items.find((i: any) => i.itemKey === view.selected).serviceId,
+  ).toBe("peer");
+  expect(view.items).toHaveLength(2);
+  expect(view.tombstones).toHaveLength(0);
+  vi.setSystemTime(start + 12000);
+  await runDurableObjectAlarm(stub);
+  await displayed(admin);
+  const back = (await (await admin("/snapshot")).json()) as any;
+  expect(
+    back.items.find((i: any) => i.itemKey === back.selected).serviceId,
+  ).toBe("test");
+});
+
+it("does not charge a confirmation gap when renewal ACK precedes a late alarm", async () => {
+  const { send, admin, epoch, deviceId } = await setup();
+  const start = Date.now(),
+    stub = env.DEVICES.getByName(deviceId);
+  await send("/publish", {
+    ...presentation(epoch),
+    kind: "agent",
+    exit: "source",
+    validUntil: start + 200000,
+  });
+  await displayed(admin);
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const { registerService, publish, tick } = await import("../src/model");
+    const store = new StateStore(ctx.storage),
+      s = store.load()!;
+    registerService(
+      s,
+      { id: "peer", name: "Peer", template: "agent" },
+      "hash",
+      "peer-epoch",
+      start,
+    );
+    s.services.peer.computerId = "peer";
+    s.computers.peer = {
+      id: "peer",
+      credentialHash: "hash",
+      createdAt: start,
+      serviceOrder: ["peer"],
+    };
+    publish(
+      s,
+      "peer",
+      {
+        ...presentation("peer-epoch", "peer"),
+        kind: "agent",
+        exit: "source",
+        validUntil: start + 200000,
+      },
+      start,
+    );
+    s.serviceTurns.test.remainingMs = 5000;
+    s.visibleSince = start + 49000;
+    s.displaying!.confirmedValidUntil = start + 50000;
+    s.health.confirmedValidUntil = start + 50000;
+    // Native response arrives six seconds later. It establishes fresh element
+    // expiries, but cannot prove the old screen between seconds50 and55.
+    for (const expiry of Object.values(s.elementExpiries))
+      expiry.expiresAt = start + 109000;
+    s.commands = [];
+    (
+      instance as unknown as {
+        acknowledgeNativeContent: (
+          s: State,
+          c: State["commands"][number],
+          at: number,
+        ) => void;
+      }
+    ).acknowledgeNativeContent(
+      s,
+      {
+        id: 900,
+        generation: s.generation,
+        kind: "draw",
+        dueAt: start + 49000,
+        status: "inflight",
+        attempts: 1,
+        refresh: true,
+      },
+      start + 55000,
+    );
+    tick(s, start + 55000);
+    expect(s.items[s.selected!].serviceId).toBe("test");
+    expect(s.serviceTurns.test.remainingMs).toBe(4000);
+    expect(s.visibleSince).toBe(start + 55000);
+  });
+});

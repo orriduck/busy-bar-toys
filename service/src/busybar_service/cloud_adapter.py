@@ -9,7 +9,7 @@ from busybar_agents.motion import MotionDirector, visual_state
 from busybar_agents.motion_assets import REGIONS, FPS
 from busybar_notifier.presenter import NotificationPresenter
 from busybar_notifier.display import entrance_seconds
-from busybar_notifier.model import status_color
+from busybar_notifier.model import status_color, Notification
 from busybar_shared.cloud import CloudError
 
 
@@ -95,6 +95,7 @@ class CloudQueue:
         content={'app':item.app,'kind':kind,'level':item.level,'title':item.title[:256],'detail':item.detail[:2048],
                  'businessId':item.id[:256],'actionKeys':['primary'] if item.primary else []}
         if item.group: content['groupKey']=item.group[:128]
+        if item.exit is not None: content['exit']=item.exit
         # A source callback object can change without a visual change.
         fingerprint=json.dumps(content,sort_keys=True)
         if (existing and existing.get('localFingerprint')==fingerprint and not existing.get('cleared')
@@ -127,6 +128,12 @@ class CloudQueue:
     def push(self,notifications):
         with self._lock:
             for item in notifications: self._put(item,'event',item.source or item.app)
+            self._prune()
+
+    def withdraw(self,source,item_id):
+        """Retire this exact occurrence; a delayed publish cannot resurrect it."""
+        with self._lock:
+            self.producer.state.clear(source+':'+item_id,withdraw=True)
             self._prune()
 
     def source_ok(self,source,every):
@@ -174,6 +181,9 @@ class RoutedCloudQueue:
 
     def set_state(self, source, notifications):
         self._queue(source).set_state(source, notifications)
+
+    def withdraw(self, source, item_id):
+        self._queue(source).withdraw(source, item_id)
 
     def source_ok(self, source, every):
         self._queue(source).source_ok(source, every)
@@ -247,4 +257,50 @@ class AgentRenderer:
                 self.producer.state.save()
 
     def advance(self): self.motion.advance(); self._save()
-    def hide(self): self.producer.state.clear('agent'); self.motion.invalidate()
+    def hide(self):
+        self.producer.state.clear('agent'); self.motion.invalidate(); self._last_elements={}
+
+
+class AgentSignals:
+    """Status and requests for human input use independent registered services."""
+    SOURCE = 'agent-notifier'
+
+    def __init__(self, status, notifier):
+        self.status = status
+        self.notifier = notifier
+        self._waiting = False
+
+    @property
+    def due(self): return not self._waiting and self.status.due
+    @property
+    def pending(self): return not self._waiting and self.status.pending
+
+    def show(self, task, now, count=1, rates=None):
+        self.show_tasks([task] if task is not None else [], now, count, rates)
+
+    def show_tasks(self, tasks, now, count=1, rates=None):
+        from hashlib import sha256
+        waiting=[task for task in tasks if task.state == 'waiting']
+        notices=[]
+        for task in waiting:
+            app = getattr(task, 'source', None) or 'codex'
+            ident = sha256((task.session_id+'\0'+task.turn_id).encode()).hexdigest()[:32]
+            notices.append(Notification(ident, 'attention', app, app.upper(),
+                'Input required', getattr(task, 'project', '')[:2048],
+                source=self.SOURCE, exit='source'))
+        self.notifier.set_state(self.SOURCE, notices)
+        self.notifier.source_ok(self.SOURCE, 5)
+        status_tasks=[task for task in tasks if task.state != 'waiting']
+        priority={'working':4,'error':3,'unknown':2,'done':1,'stopped':1}
+        task=max(status_tasks,key=lambda t:(priority.get(t.state,0),t.updated_at),default=None)
+        self._waiting=bool(waiting) and task is None
+        if self._waiting: self.status.hide()
+        else: self.status.show(task,now,count,rates)
+
+    def advance(self):
+        if not self._waiting: self.status.advance()
+
+    def hide(self):
+        self._waiting = False
+        self.status.hide()
+        self.notifier.set_state(self.SOURCE, [])

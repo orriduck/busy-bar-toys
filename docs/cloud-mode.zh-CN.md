@@ -57,9 +57,9 @@ Notifier 是通用发送引擎。同一电脑凭据可以向本机名下任意�
 
 把五分钟有效的一次性代码粘贴到 **Connect computer → Pairing code**。绑定记录保存在服务端；浏览器偏好不能赋予权限。需要管理另一台电脑时，先退出登录。退出不会停止 Mac 上的采集服务。
 
-**Configuration** 展示全部电脑。本机服务可拖动排序、选择并编辑；其他电脑只读。同一时间只显示一个详情。设置保留 Hold、Heartbeat，不再使用数字优先级。普通消息在播放结束后轮转电脑。源端控制的消息会保留控制权，直到结束、过期或暂停。紧急消息可以打断它；本机排序更高的服务也可临时覆盖，结束后恢复原来源。持续运行的来源可能让其他电脑等待。
+**Configuration** 展示全部电脑，只能拖动及编辑本机服务。排序位置是全局层级：A 的第 1 位高于 B 的第 2 位。高层级临时打断低层级，结束后恢复原消息及剩余轮次；同层级按各服务的 Hold 交替。Hold 仅计入入场结束后经设备确认的可见时间。源状态轮转时不会结束，定时消息仍按原有累计时长结束。Services 和 Configuration 展示来源连接、最近心跳、层级、当前展示与排队数；未汇报过的来源不会显示成已连接。
 
-发送端逐条声明 `exit: finite|source`。Hold 只影响定时消息。何时产生下一次消息由发送端决定。
+发送端逐条声明 `exit: finite|source`。Hold 决定同级服务每轮可见时长，以及定时消息的累计可见时长。何时产生下一次消息由发送端决定。
 
 ## 升级已接入的 Mac
 
@@ -97,3 +97,16 @@ Notifier 是通用发送引擎。同一电脑凭据可以向本机名下任意�
 此命令替换现有的用户 launchd 启动项，不安装 Claude hook。Codex 继续由现有本地采集器观察。Start/Pause 和实时预览仍需要对应服务开关及局域网连接。
 
 本地开发使用隔离 mock 环境。不要向 mock 输入真实设备 key。模拟测试不能证明实体屏幕表现。
+
+
+## Agent status and input requests
+
+Register a separate Notifier before starting an upgraded observer:
+
+```sh
+.venv/bin/busy-bar cloud-register agent-notifier --template notifier --name "Agent requests" --source agent-notifier
+```
+
+在网页中把 Agent requests 排在 Agent 状态之前。ADSBao 等通知可按需要排序。日常状态与输入请求使用两个注册服务；每个等待任务都有独立消息。问题解决后源端撤下提示，工作状态继续。其他电脑也须单独注册和路由自己的 Notifier；此命令不改动其他电脑。
+
+撤回通知：调用 `CloudQueue.withdraw(source, item_id)` 或 `RoutedCloudQueue.withdraw(source, item_id)`。本地 outbox 持久重试 `POST /api/withdraw`，成功后才删除待发送记录。HTTP 字段为 `instanceId`、`epoch`、`itemId`、`version`，使用对应 owned service 的发布身份。撤回会终止当前 occurrence；下一次发送须创建新 occurrence。

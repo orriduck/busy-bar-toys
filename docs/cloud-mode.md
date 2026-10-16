@@ -57,9 +57,9 @@ One computer credential can publish arbitrary app labels and content to any of i
 
 Paste the five-minute, one-use code into **Connect computer → Pairing code**. The server records the binding. A browser preference cannot grant access. Sign out before pairing a different computer. Sign out removes the browser binding; it does not stop local services.
 
-**Configuration** shows all computers. Drag only your computer’s services. Select one service to edit Hold or Heartbeat. Other computers are read only. There is no service priority number. Normal work rotates between computers when playback ends. A source-controlled item keeps its lease until it ends, expires or is paused. Urgent work can interrupt it. A higher ordered service on the same computer can overlay it; the source resumes afterward. An indefinitely active source can keep peers waiting.
+**Configuration** shows all computers; edit and reorder only your computer's services. Sort position is a global tier: A/1 outranks B/2. Higher-tier work interrupts lower-tier work, then the original message resumes with its remaining turn. Equal tiers alternate by each service's Hold. Only native-confirmed visible time after entrance consumes Hold. Source messages stay alive across turns; timed messages keep their original cumulative lifetime. Services and Configuration show source connectivity, last heartbeat, tier, display state and queue count. A source that has never checked in is not marked online.
 
-The sender declares `exit: finite|source` for each occurrence. Hold applies to finite messages. The sender decides when to send a new occurrence.
+The sender declares `exit: finite|source` for each occurrence. Hold sets a visible turn for equal-tier services and the cumulative lifetime of finite messages. The sender decides when to send a new occurrence.
 
 ## Upgrade an existing Mac
 
@@ -97,3 +97,16 @@ To start at login:
 This replaces the existing per-user launchd command. It does not install Claude hooks. Local Codex observation continues through the existing collector. Start/Pause and live preview require their explicit service switches and the configured LAN connection.
 
 For isolated development, use the local mock origin. Never enter real device keys into the mock stack. Mock acceptance does not prove physical display behavior.
+
+
+## Agent status and input requests
+
+Register a separate Notifier before starting an upgraded observer:
+
+```sh
+.venv/bin/busy-bar cloud-register agent-notifier --template notifier --name "Agent requests" --source agent-notifier
+```
+
+Place Agent requests before Agent status in Configuration. Rank ADSBao and other notifications as needed. Status and input requests use separate registrations. Each waiting task retains its own notification; the source removes it when input is resolved. Other computers must register and route their own Notifier; this command does not change them.
+
+To withdraw a notification, call `CloudQueue.withdraw(source, item_id)` or `RoutedCloudQueue.withdraw(source, item_id)`. The durable local outbox retries `POST /api/withdraw` until acknowledged. The HTTP body contains `instanceId`, `epoch`, `itemId`, `version`, authenticated for the matching owned service. Withdrawal retires that occurrence; a later notification needs a new occurrence.

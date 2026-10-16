@@ -31,6 +31,10 @@ import {
   DropdownMenuGroup,
 } from "./components/ui/dropdown-menu";
 import { serviceLabel } from "./service-layout";
+import { serviceRuntime } from "./service-runtime";
+import { time, type Snapshot } from "./api";
+import { Badge } from "./components/ui/badge";
+import { SettingNumber } from "./setting-number";
 import { PolicyField } from "./policy-field";
 import {
   Field,
@@ -56,10 +60,12 @@ export function ServiceEditor({
   onCredential,
   mode = "policy",
   readOnly = false,
+  snapshot,
 }: {
   service: Service;
   mode?: "policy" | "access";
   readOnly?: boolean;
+  snapshot?: Snapshot;
   configRevision: number;
   mutate: Mutate;
   pending: boolean;
@@ -137,6 +143,7 @@ export function ServiceEditor({
     return (
       <ServiceAccess
         service={service}
+        snapshot={snapshot}
         configRevision={configRevision}
         mutate={mutate}
         pending={pending || readOnly}
@@ -207,12 +214,14 @@ export function ServiceEditor({
 }
 function ServiceAccess({
   service,
+  snapshot,
   configRevision,
   mutate,
   pending,
   onCredential,
 }: {
   service: Service;
+  snapshot?: Snapshot;
   configRevision: number;
   mutate: Mutate;
   pending: boolean;
@@ -223,6 +232,7 @@ function ServiceAccess({
     id: string;
   }) => void;
 }) {
+  const runtime = snapshot ? serviceRuntime(snapshot, service) : null;
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const actionTrigger = useRef<HTMLButtonElement>(null);
   const [revokeError, setRevokeError] = useState(false);
@@ -315,6 +325,23 @@ function ServiceAccess({
             </DropdownMenu>
           </ItemActions>
         </div>
+        {runtime && (
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">{runtime.connection}</Badge>
+            <span>{runtime.display}</span>
+            <span>
+              · <SettingNumber value={runtime.queued} /> queued
+            </span>
+            {runtime.tier !== null && (
+              <span>
+                · Tier <SettingNumber value={runtime.tier} />
+              </span>
+            )}
+            <span title="Last source heartbeat">
+              · {time(runtime.lastHeartbeat)}
+            </span>
+          </div>
+        )}
         <div className="service-connections">
           <label title="Let this service forward the Bar’s Start / Pause button.">
             <span>Bar buttons</span>
@@ -479,8 +506,9 @@ export function Register({
               />
               <FieldDescription>
                 Each message declares whether it ends with its source or after a
-                fixed time. Hold applies to timed messages. The publisher
-                decides when to send again.
+                fixed time. Hold sets a turn for equal-tier services and the
+                total lifetime of timed messages. The publisher decides when to
+                send again.
               </FieldDescription>
             </Field>
           </FieldGroup>
