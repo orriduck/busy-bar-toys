@@ -120,6 +120,8 @@
     pointer-events: none;
   }
   .sidebar .primary-navigation > button {
+    /* Icon-size buttons must fill their grid cell, just like destinations. */
+    width: 100%;
     position: relative;
     z-index: 1;
     min-width: 44px;
