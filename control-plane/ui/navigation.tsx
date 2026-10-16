@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import { Icon } from "./common";
 import type { IconName } from "./common";
 import { Button } from "./components/ui/button";
+import { ThemeToggle } from "./theme-control";
+import type { ThemeMode } from "./theme";
 import { cn } from "./lib/utils";
 
 export type Page = "display" | "services" | "configuration" | "device";
@@ -15,9 +17,11 @@ const pages: { id: Page; label: string; icon: IconName }[] = [
 export function Navigation({
   page,
   onPage,
+  appearance,
 }: {
   page: Page;
   onPage: (page: Page) => void;
+  appearance?: { mode: ThemeMode; cycle: () => void };
 }) {
   return (
     <nav
@@ -44,6 +48,13 @@ export function Navigation({
           <span className="navigation-label">{entry.label}</span>
         </Button>
       ))}
+      {appearance && (
+        <ThemeToggle
+          mode={appearance.mode}
+          onCycle={appearance.cycle}
+          className="theme-toggle-mobile"
+        />
+      )}
     </nav>
   );
 }

@@ -1,0 +1,72 @@
+/* Public appearance tokens. The physical BUSY display remains black. */
+:root {
+  --navigation-solid: #242426;
+  --navigation-glass: rgb(34 34 38 / 72%);
+  --navigation-foreground: #b9b9c0;
+  --navigation-active: #91bdff;
+  --navigation-contrast: #e4e4e8;
+  --navigation-selected: #ffffff12;
+  --navigation-edge: #ffffff24;
+  --navigation-outline: #ffffff12;
+  --navigation-high-contrast-border: #ffffff66;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f4f4f5;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --secondary: #e7e7e9;
+  --secondary-foreground: #27272a;
+  --muted: #eeeeef;
+  --muted-foreground: #626268;
+  --accent: #e8e8eb;
+  --accent-foreground: #18181b;
+  --destructive: #bc253e;
+  --border: oklch(0.2 0 0 / 12%);
+  --input: #f4f4f5;
+  --success: #187743;
+  --warning: #916211;
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--muted-foreground);
+  --sidebar-accent: #e8e8eb;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: var(--border);
+  --priority-low: #616975;
+  --priority-normal: #2061bb;
+  --priority-high: #946200;
+  --priority-critical: #b62b43;
+  --slider-hold: #2770d6;
+  --slider-heartbeat: #178671;
+  --navigation-solid: #f1f1f3;
+  --navigation-glass: rgb(248 248 250 / 78%);
+  --navigation-foreground: #626268;
+  --navigation-active: #165bc1;
+  --navigation-contrast: #27272a;
+  --navigation-selected: #0000000b;
+  --navigation-edge: #ffffffcc;
+  --navigation-outline: #00000012;
+  --navigation-high-contrast-border: #00000066;
+}
+.app-header {
+  gap: 16px;
+}
+.app-header .brand {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.theme-toggle-desktop {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.theme-toggle-mobile {
+  display: none;
+}
+.offline-notice {
+  margin-bottom: 16px;
+}
+.pwa-install {
+  margin-top: 24px;
+}

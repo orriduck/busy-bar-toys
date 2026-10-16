@@ -5,8 +5,9 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["@cloudflare/vitest-plugin/types"],
+    "types": ["@cloudflare/vitest-plugin/types", "node"],
     "skipLibCheck": true,
     "jsx": "react-jsx",
     "paths": {

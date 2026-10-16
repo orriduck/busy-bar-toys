@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "busy-bar-control-plane",
+  "main": "src/legacy.ts",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "preview_urls": false,
+  "services": [{ "binding": "BTC", "service": "btc" }],
+  "observability": { "enabled": true }
+}

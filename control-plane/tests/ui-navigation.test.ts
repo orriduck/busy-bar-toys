@@ -4,6 +4,20 @@ import { describe, expect, it } from "vitest";
 import { Navigation, type Page } from "../ui/navigation";
 
 describe("icon-only navigation semantics", () => {
+  it("adds one appearance control without marking it as a destination", () => {
+    const html = renderToStaticMarkup(
+      createElement(Navigation, {
+        page: "device",
+        onPage: () => {},
+        appearance: { mode: "auto", cycle: () => {} },
+      }),
+    );
+    expect([...html.matchAll(/<button\b/g)]).toHaveLength(5);
+    expect([...html.matchAll(/aria-current="page"/g)]).toHaveLength(1);
+    expect(html).toContain(
+      'aria-label="Appearance: Automatic. Switch to light."',
+    );
+  });
   it.each<Page>(["display", "services", "configuration", "device"])(
     "keeps every destination named and one current on %s",
     (page) => {

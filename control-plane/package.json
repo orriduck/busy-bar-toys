@@ -8,6 +8,7 @@
     "types": "wrangler types",
     "check": "npm test && npm run typecheck && wrangler deploy --dry-run",
     "build": "vite build",
+    "deploy": "node scripts/deploy.mjs",
     "dev:demo": "npm run build && wrangler dev --local -c wrangler.demo.jsonc -c mock/wrangler.jsonc",
     "dry-run": "npm run build && wrangler deploy --dry-run",
     "format": "prettier --write src tests mock *.jsonc *.json PROTOCOL.md"
@@ -15,6 +16,7 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.3",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
