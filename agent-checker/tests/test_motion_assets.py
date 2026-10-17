@@ -26,6 +26,19 @@ def decode(data):
 
 
 class MotionAssetTests(unittest.TestCase):
+    def test_finished_digit_roll_cannot_cover_a_later_base_frame(self):
+        # Cloud scenes keep native widgets longer than the standalone 1s
+        # timeout. A stopped roll must not freeze an old digit over new data.
+        for kind in ('clock','rate'):
+            h,sections,frames=decode(assets.digit_atlas(kind))
+            _,end,_,_=sections['3-8']
+            mode='RGBA' if h[4]==2 else 'RGB'
+            rawmode='BGRA' if mode=='RGBA' else 'BGR'
+            held=Image.frombytes(mode,(h[2],h[3]),frames[end][1],'raw',rawmode).convert('RGBA')
+            later=assets.digit_image(kind,'1').convert('RGBA')
+            self.assertEqual(Image.alpha_composite(later,held).tobytes(),later.tobytes(),
+                             f'{kind}: the completed overlay still covers later data')
+
     def test_masks_keep_alpha_endpoints_and_fit_firmware_limits(self):
         for reveal in (False,True):
             data=assets.fade_asset((72,16),reveal=reveal,frames=8)
@@ -42,14 +55,20 @@ class MotionAssetTests(unittest.TestCase):
             data=assets.digit_atlas(kind)
             h,sections,frames=decode(data)
             self.assertEqual(h[10],91)
+            self.assertEqual(h[4],2,'Numeric overlays need explicit alpha')
             for old,new in [('0','1'),('9','0'),('1','8')]:
                 start,end,offset,duration=sections[old+'-'+new]
                 self.assertEqual(offset,frames[start][0])
                 self.assertEqual(duration,1)
-                for index,char in [(start,old),(end,new)]:
+                for index,char in [(start,old),(end-1,new)]:
                     rgb=assets.digit_image(kind,char).tobytes()
-                    expected=b''.join(rgb[i:i+3][::-1] for i in range(0,len(rgb),3))
+                    expected=b''.join(rgb[i:i+3][::-1]+b'\xff' for i in range(0,len(rgb),3))
                     self.assertEqual(frames[index][1],expected)
+            for name,(start,end,offset,duration) in sections.items():
+                if name!='default':
+                    self.assertEqual(set(frames[end][1][3::4]),{0},name)
+                    self.assertTrue(all(set(raw[3::4])=={255}
+                                        for _,raw in frames[start:end]))
             self.assertLess(len(data),255*1024)
 
     def test_same_digit_has_no_redundant_animation_section(self):

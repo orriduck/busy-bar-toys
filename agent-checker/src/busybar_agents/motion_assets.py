@@ -24,16 +24,23 @@ def digit_image(kind, char):
     return image
 
 
-def digit_frames(kind, old, new, frames=15):
+def digit_frames(kind, old, new, frames=14):
     previous,target=digit_image(kind,old),digit_image(kind,new)
-    return [roll_frame(previous,target,n/(frames-1)) for n in range(frames)]
+    # A non-looping firmware animation holds its final frame. Cloud-managed
+    # widgets outlive the standalone timeout, so the settled base bitmap must
+    # own the final pixels. Keep opaque coverage during travel, then retire.
+    # Fourteen BGRA frames also keep the complete clock atlas below 255 KiB.
+    images=[roll_frame(previous,target,n/(frames-2)).convert('RGBA')
+            for n in range(frames-1)]
+    images.append(Image.new('RGBA',target.size,(0,0,0,0)))
+    return images
 
 
 @lru_cache(maxsize=2)
 def digit_atlas(kind):
     sections={old+'-'+new:digit_frames(kind,old,new)
               for old in '0123456789' for new in '0123456789' if old!=new}
-    return encode_sections(digit_image(kind,'0').size,sections)
+    return encode_sections(digit_image(kind,'0').size,sections,rgba=True)
 
 
 def fade_name(region, reveal):
