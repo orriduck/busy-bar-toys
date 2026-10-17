@@ -1,4 +1,5 @@
-import type { CSSProperties } from "react";
+import { useRef, type CSSProperties } from "react";
+import { useLiquidNavigation } from "./navigation-motion";
 import { Icon } from "./common";
 import type { IconName } from "./common";
 import { Button } from "./components/ui/button";
@@ -23,17 +24,23 @@ export function Navigation({
   onPage: (page: Page) => void;
   appearance?: { mode: ThemeMode; cycle: () => void };
 }) {
+  const navigation = useRef<HTMLElement>(null);
+  const selectedIndex = pages.findIndex((entry) => entry.id === page);
+  useLiquidNavigation(navigation, selectedIndex);
   return (
     <nav
+      ref={navigation}
       className="primary-navigation"
       aria-label="Control plane"
       style={
         {
-          "--navigation-index": pages.findIndex((entry) => entry.id === page),
+          "--navigation-index": selectedIndex,
         } as CSSProperties
       }
     >
-      <span className="navigation-selection" aria-hidden="true" />
+      <span className="navigation-selection" aria-hidden="true">
+        <span className="navigation-liquid" />
+      </span>
       {pages.map((entry) => (
         <Button
           key={entry.id}

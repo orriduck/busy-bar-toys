@@ -11,6 +11,10 @@
   --navigation-edge: #ffffff24;
   --navigation-outline: #ffffff12;
   --navigation-high-contrast-border: #ffffff66;
+  --navigation-liquid-highlight: #ffffff24;
+  --navigation-liquid-fill: #ffffff12;
+  --navigation-liquid-rim: #ffffff20;
+  --navigation-liquid-shadow: #00000024;
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -51,6 +55,10 @@
   --navigation-edge: #ffffffcc;
   --navigation-outline: #00000012;
   --navigation-high-contrast-border: #00000066;
+  --navigation-liquid-highlight: #ffffffee;
+  --navigation-liquid-fill: #ffffff88;
+  --navigation-liquid-rim: #ffffffdd;
+  --navigation-liquid-shadow: #00000012;
 }
 .app-header {
   gap: --spacing(4);
