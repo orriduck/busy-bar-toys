@@ -5,7 +5,12 @@ import {
   snapshot as makeSnapshot,
 } from "../src/model";
 import type { Snapshot, QueueItem } from "../ui/api";
-import { queueLayout, queuePresence, queueExitMs } from "../ui/queue-layout";
+import {
+  queueLayout,
+  queuePresence,
+  queueExitMs,
+  rotationServices,
+} from "../ui/queue-layout";
 import { sourceRouteCommand } from "../ui/service-setup";
 
 const now = 1_800_000_000_000;
@@ -110,6 +115,31 @@ describe("queue presentation preserves scheduling authority", () => {
     expect(rows[0].memberKeys).toEqual(["codex", "claude"]);
     expect(rows[0].item.itemKey).toBe("claude");
     expect(rows[1].item.itemKey).toBe("notify");
+  });
+  it("keeps a service's confirmed rotation indicator when it also has waiting messages", () => {
+    const state = fixture();
+    const waiting = {
+      ...state.items[1],
+      itemKey: "claude-waiting",
+      playback: { ...state.items[1].playback, running: false },
+    };
+    state.items.push(waiting);
+    state.groups.push({
+      ...state.groups[1],
+      groupId: waiting.itemKey,
+      representative: waiting.itemKey,
+      memberKeys: [waiting.itemKey],
+    });
+    const rows = queueLayout(state);
+    expect(rows).toHaveLength(4);
+    const services = rotationServices(rows);
+    expect(services).toHaveLength(2);
+    expect(
+      services.find((row) => row.item.serviceId === "claude")?.current,
+    ).toBe(true);
+    expect(
+      rotationServices(queueLayout(state, 5_000)).every((row) => !row.current),
+    ).toBe(true);
   });
   it("does not call a selected but unconfirmed owner playing or switching", () => {
     const state = fixture();

@@ -58,6 +58,15 @@ export function queueLayout(snapshot: Snapshot, elapsed = 0) {
 }
 
 export type QueueRow = ReturnType<typeof queueLayout>[number];
+/** queueLayout leads with the confirmed owner. Keep that occurrence when a
+ * service has several messages, rather than letting a waiting one replace it. */
+export function rotationServices(rows: QueueRow[]) {
+  const services = new Map<string, QueueRow>();
+  for (const row of rows)
+    if (row.rotating && !services.has(row.item.serviceId))
+      services.set(row.item.serviceId, row);
+  return [...services.values()];
+}
 export type PresenceEntry<T> = { id: string; value: T; until: number | null };
 export const queueExitMs = 240;
 

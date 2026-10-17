@@ -29,7 +29,7 @@ import {
 } from "./components/ui/empty";
 import { cn } from "./lib/utils";
 import { receivedTime } from "./queue-playback";
-import { queueLayout } from "./queue-layout";
+import { queueLayout, rotationServices } from "./queue-layout";
 import { useListMotion, useMotion, MotionFeedback } from "./motion";
 import { useQueuePresence, QueueDeparture } from "./queue-motion";
 import { MetadataTile } from "./metadata-tiles";
@@ -120,13 +120,7 @@ export function Queue({
       }),
     [snapshot],
   );
-  const rotating = [
-    ...new Map(
-      data
-        .filter((row) => row.rotating)
-        .map((row) => [row.item.serviceId, row]),
-    ).values(),
-  ];
+  const rotating = rotationServices(data);
   const playing = data.find((row) => row.current);
   const operate = (item: QueueItem, operation: string) =>
     void mutate("/items", {
