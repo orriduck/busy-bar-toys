@@ -34,7 +34,7 @@ Use normal flow, grid, or flex gap to align sections. Do not use a negative marg
 - Header, sidebar, preview dock, and mobile navigation use the same scale.
 - The mobile navigation has five equal columns. Its selected background uses the same inset as the navigation content.
 - The mobile workspace reserves space for the floating navigation and the safe area.
-- Help tooltips stay within the viewport with 12px clearance on each side. Long help text wraps.
+- Help tooltips cap their width at the viewport width minus `--spacing(6)`. Long help text wraps; the component positions the popup.
 - Compact Button variants use integer spacing steps for padding and content gaps.
 
 ## Deliberate exceptions
