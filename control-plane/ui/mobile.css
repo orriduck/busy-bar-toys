@@ -1,3 +1,5 @@
+@reference "./style.css";
+
 /* The same navigation DOM serves the sidebar and the floating phone bar. */
 .navigation-selection {
   display: none;
@@ -7,7 +9,7 @@
   flex-shrink: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.375rem;
+  gap: --spacing(2);
   max-width: 100%;
 }
 .configuration-name > span,
@@ -22,38 +24,38 @@
   (max-width: 1023px) and (hover: none) and (pointer: coarse) {
   :root {
     font-size: 100%;
-    --mobile-navigation-space: calc(88px + env(safe-area-inset-bottom, 0px));
+    --mobile-navigation-space: calc(--spacing(22) + env(safe-area-inset-bottom, 0));
   }
   html:has(.app-shell[data-navigation="true"]) {
     scroll-padding-block-end: var(--mobile-navigation-space);
   }
   .app-shell {
     --header-bottom: calc(
-      64px + var(--banner-height) + env(safe-area-inset-top, 0px)
+      --spacing(16) + var(--banner-height) + env(safe-area-inset-top, 0)
     );
-    --content-bottom-space: max(16px, env(safe-area-inset-bottom, 0px));
+    --content-bottom-space: max(--spacing(4), env(safe-area-inset-bottom, 0));
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: --spacing(3);
     padding-block: var(--header-bottom) var(--content-bottom-space);
-    padding-inline-start: max(12px, env(safe-area-inset-left, 0px));
-    padding-inline-end: max(12px, env(safe-area-inset-right, 0px));
+    padding-inline-start: max(--spacing(3), env(safe-area-inset-left, 0));
+    padding-inline-end: max(--spacing(3), env(safe-area-inset-right, 0));
   }
   .app-shell[data-navigation="true"] {
     --content-bottom-space: var(--mobile-navigation-space);
   }
   .app-header {
     height: calc(64px + env(safe-area-inset-top, 0px));
-    padding-block-start: env(safe-area-inset-top, 0px);
-    padding-inline-start: max(16px, env(safe-area-inset-left, 0px));
-    padding-inline-end: max(16px, env(safe-area-inset-right, 0px));
+    padding-block-start: env(safe-area-inset-top, 0);
+    padding-inline-start: max(--spacing(4), env(safe-area-inset-left, 0));
+    padding-inline-end: max(--spacing(4), env(safe-area-inset-right, 0));
   }
   .workspace {
     width: 100%;
     min-height: calc(
       100dvh - var(--header-bottom) - var(--content-bottom-space)
     );
-    padding: 20px 12px;
+    padding: --spacing(4);
   }
   .workspace[data-page="display"] > .page-slot:not([hidden]) {
     margin-bottom: 0;
@@ -75,9 +77,9 @@
   .app-shell[data-docked="true"] .sidebar {
     position: fixed;
     top: auto;
-    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-    left: max(12px, env(safe-area-inset-left, 0px));
-    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(--spacing(3) + env(safe-area-inset-bottom, 0));
+    left: max(--spacing(3), env(safe-area-inset-left, 0));
+    right: max(--spacing(3), env(safe-area-inset-right, 0));
     z-index: 20;
     display: flex;
     justify-content: center;
@@ -94,8 +96,8 @@
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0;
-    width: min(344px, 100%);
-    padding: 6px 8px;
+    width: min(--spacing(86), 100%);
+    padding: --spacing(2) --spacing(2);
     border-radius: 999px;
     background: var(--navigation-solid);
     box-shadow:
@@ -108,10 +110,10 @@
   .sidebar .primary-navigation .navigation-selection {
     position: absolute;
     display: block;
-    top: 6px;
-    bottom: 6px;
-    left: 8px;
-    width: calc((100% - 16px) / 5);
+    top: --spacing(2);
+    bottom: --spacing(2);
+    left: --spacing(2);
+    width: calc((100% - --spacing(4)) / 5);
     border-radius: 999px;
     background: var(--navigation-selected);
     box-shadow: inset 0 1px 0 var(--navigation-edge);
@@ -144,7 +146,7 @@
   }
   .sidebar .primary-navigation > button:focus-visible {
     outline: 2px solid var(--navigation-active);
-    outline-offset: -3px;
+    outline-offset: calc(-1 * --spacing(1));
   }
   .sidebar .primary-navigation > button svg {
     width: 24px;
@@ -193,11 +195,11 @@
     width: min(100%, 420px);
     align-self: center;
     padding: 0;
-    margin-bottom: 24px;
+    margin-bottom: --spacing(6);
     box-shadow: none;
   }
   .preview-host-full {
-    margin-top: 12px;
+    margin-top: --spacing(3);
   }
   .management-page,
   .service-list,
@@ -214,8 +216,8 @@
   }
   .page-heading {
     flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 20px;
+    gap: --spacing(3);
+    margin-bottom: --spacing(5);
   }
   .page-heading h1 {
     min-width: 0;
@@ -233,8 +235,8 @@
   .device-group-heading {
     display: grid;
     grid-template-columns: 20px minmax(0, 1fr);
-    gap: 4px 8px;
-    padding: 12px;
+    gap: --spacing(1) --spacing(2);
+    padding: --spacing(3);
   }
   .device-group-heading > svg {
     grid-column: 1;
@@ -259,21 +261,21 @@
     display: none;
   }
   .service-access-row {
-    padding: 12px;
+    padding: --spacing(3);
   }
   .service-access-main {
-    gap: 8px;
+    gap: --spacing(2);
   }
   .service-identity {
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
+    gap: --spacing(1);
   }
   .service-identity > span {
     overflow-wrap: anywhere;
   }
   .service-connections {
-    gap: 0 16px;
+    gap: 0 --spacing(4);
   }
   .service-connections label {
     min-height: 44px;
@@ -289,8 +291,8 @@
     transform: translate(-50%, -50%);
   }
   .configuration-summary {
-    gap: 6px;
-    padding: 8px;
+    gap: --spacing(2);
+    padding: --spacing(2);
   }
   .configuration-summary .drag-handle {
     align-self: start;
@@ -299,8 +301,8 @@
   .configuration-open {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 18px;
-    gap: 6px 8px;
-    padding: 4px;
+    gap: --spacing(2) --spacing(2);
+    padding: --spacing(1);
   }
   .configuration-name {
     grid-column: 1;
@@ -318,7 +320,7 @@
     height: 18px;
   }
   .configuration-detail {
-    padding: 16px 12px;
+    padding: --spacing(4) --spacing(3);
   }
   .queue-open,
   .sender {
@@ -333,21 +335,21 @@
     min-width: 0;
     max-width: 100%;
     font-size: 16px;
-    scroll-margin-block: 16px var(--mobile-navigation-space);
+    scroll-margin-block: --spacing(4) var(--mobile-navigation-space);
   }
   [data-slot="dialog-content"],
   [data-slot="alert-dialog-content"] {
     top: calc(
       (
-          100dvh + env(safe-area-inset-top, 0px) -
-            env(safe-area-inset-bottom, 0px)
+          100dvh + env(safe-area-inset-top, 0) -
+            env(safe-area-inset-bottom, 0)
         ) /
         2
     );
     left: calc(
       (
-          100% + env(safe-area-inset-left, 0px) -
-            env(safe-area-inset-right, 0px)
+          100% + env(safe-area-inset-left, 0) -
+            env(safe-area-inset-right, 0)
         ) /
         2
     );
