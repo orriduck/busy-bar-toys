@@ -6,6 +6,7 @@
 Cloudflare 后端选择内容并写屏。
 每台 Mac 采集本机事件，向自己的注册服务发送画面。
 关闭浏览器不会停止云端调度。
+管理页通过 SSE 同步状态。
 
 界面使用 React、Vite、Tailwind，以及基于 Base UI 的 shadcn/ui。
 TanStack Query 管理服务端状态。

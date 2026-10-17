@@ -6,6 +6,7 @@ Manage a BUSY Bar at [btc.orriduck.workers.dev](https://btc.orriduck.workers.dev
 The Cloudflare backend selects content and writes the display.
 Each Mac collects local events and sends scenes to its registered services.
 Closing the browser does not stop cloud scheduling.
+SSE sends state updates to open management pages.
 
 The interface uses React, Vite, Tailwind, and shadcn/ui with Base UI.
 TanStack Query manages server state.

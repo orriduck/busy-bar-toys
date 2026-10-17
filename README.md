@@ -13,6 +13,7 @@ Sign in with a BUSY device API token.
 The Cloudflare backend controls the Bar.
 Each Mac sends local status and notifications to its registered services.
 The backend continues to schedule content after you close the browser.
+SSE sends state updates to open management pages.
 
 | Page | Use |
 |---|---|
