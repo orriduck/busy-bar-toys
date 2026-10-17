@@ -56,10 +56,12 @@ export function QueueDeparture({ children }: { children: ReactNode }) {
   const scope = useRef<HTMLLIElement>(null);
   useGSAP(
     () => {
+      const parent = scope.current?.parentElement;
+      const gap = parent ? parseFloat(getComputedStyle(parent).rowGap) || 0 : 0;
       gsap.to(scope.current, {
         opacity: 0,
         height: 0,
-        marginBottom: 0,
+        marginBottom: -gap,
         duration: queueExitMs / 1000,
         ease: "power3.inOut",
         overflow: "hidden",

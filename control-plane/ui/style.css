@@ -1033,6 +1033,13 @@ a {
 }
 
 /* Bounded control tiles and spatial playback relationships. */
+.workspace[data-page="display"] { overflow-anchor:none; }
+@media (min-width:1024px), (min-width:761px) and (hover:hover) and (pointer:fine) {
+  /* Queue growth must not redistribute the stage's free-space auto margins. */
+  .workspace[data-page="display"] > .preview-host-full {
+    margin-top:clamp(0rem,calc((100dvh - var(--header-bottom) - 34rem) / 2),14rem);
+  }
+}
 .metadata-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-flow:dense; gap:.625rem; min-width:0; }
 .metadata-tile[data-slot=card] { min-width:0; gap:.5rem; border-radius:1rem; background:var(--muted); box-shadow:none; --card-spacing:.875rem; }
 .metadata-tile [data-slot=card-description] { font-size:.75rem; }

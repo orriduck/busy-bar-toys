@@ -18,6 +18,10 @@ without replacing the application's visual identity.
   Withdrawn entries become inert, noninteractive visual departures for at most
   240 ms. At most twelve departures survive a mass update. Reappearance cancels
   departure; hidden pages and reduced-motion preferences remove immediately.
+- The preview and queue heading have a stable viewport-based stage position.
+  Queue growth does not redistribute free-space auto margins. Departure also
+  collapses its inter-row gap, so removing an invisible exit cannot leave a
+  final snap. Browser scroll anchoring does not fight the row transitions.
 - Details retain grouped messages and their actions. Sender and receive time use
   bounded metadata tiles. Full provenance is available on demand. Actions remain
   computer-scoped; a primary device action also needs current playback proof.
