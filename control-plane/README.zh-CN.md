@@ -1,26 +1,173 @@
-# BUSY Bar control plane
+# BUSY Traffic Control
 
-[English](README.md) · [协议](PROTOCOL.md) · [已确认的设计](../docs/plans/control-plane-v5.md)
+[English](README.md) · [协议](PROTOCOL.md) · [Mac 接入](../docs/cloud-mode.zh-CN.md)
 
-在浏览器中管理 BUSY Bar。注册显示服务，调整优先级、Hold、Heartbeat 和开关。每条消息由发送端声明结束方式。查看当前控制者，以及每一条等待显示的通知。页面通过 SSE 接收完整状态。界面使用 React、Vite、Tailwind 和 shadcn/ui；TanStack Query 管理当前设备与会话的服务端状态，TanStack Table 管理队列表格。
+在 [btc.orriduck.workers.dev](https://btc.orriduck.workers.dev) 管理 BUSY Bar。
+Cloudflare 后端选择内容并写屏。
+每台 Mac 采集本机事件，向自己的注册服务发送画面。
+关闭浏览器不会停止云端调度。
 
-Cloudflare 后端负责调度和写屏。Mac 负责采集 Codex、Your dot 与通知，向后端发送完整画面。关闭浏览器后，云端仍可继续调度。
+界面使用 React、Vite、Tailwind，以及基于 Base UI 的 shadcn/ui。
+TanStack Query 管理服务端状态。
+GSAP 处理列表和页面过渡，Number Flow 处理数字变化。
 
-打开[正式管理页](https://busy-bar-control-plane.orriduck.workers.dev)，使用设备级 BUSY API token 登录。生产环境调用真实 BUSY cloud API，存储和 secret bindings 均与预览隔离。
+## 查看页面
 
-本地演示和共享云端预览使用模拟 BUSY API，不能控制真实设备。`demo-token` 仅用于预览。
+| 页面 | 用途 |
+|---|---|
+| **Display** | 真实正面像素、当前消息和等待队列。 |
+| **Services** | 服务卡片、来源接入、开关和连接详情。 |
+| **Configuration** | 三个全局组、Hold 和 Heartbeat。 |
+| **Device** | 设备连接、当前控制者、API 确认和预览诊断。 |
 
-![Display 页面：模拟设备像素与紧凑队列](../docs/images/control-plane-display.png)
+队列先显示已经确认播放的消息。
+其他行保持服务端顺序。
+细进度条标记当前消息。
+轮播条按服务显示，不因同一服务有多条消息而重复。
+新消息平滑进入，移除的消息淡出。
+展开一行，可查看正文、完整来源 ID、接收时间和可用操作。
 
-## 打开云端预览
+Sender 的短 ID 表示发送电脑。
+它不是通知中的业务作者。
+Received 精确到秒，消息更新后仍保留首次接收时间。
+被选中的消息不一定已在设备上显示。
+API 确认不能单独证明实体像素。
 
-打开[预览页面](https://busy-bar-control-plane-preview.orriduck.workers.dev)，输入 `demo-token`。这是共享的公开演示，仅使用模拟数据。请勿接入真实 Mac 采集器或来源凭据。公开演示的凭据弹窗不显示真实采集器接入命令。
+其他页面保留紧凑的实时预览。
+移动端使用悬浮的图标导航栏。
+主题按钮依次切换 Automatic、Light 和 Dark。
+可以把 BTC 作为 PWA 添加到主屏幕。
+PWA 仍需联网才能控制设备和读取实时数据。
 
-预览使用独立的 SQLite namespace 和新生成的 secret bindings。模拟 BUSY Worker 没有公开路由，也不会对外发送请求。生产配置不包含模拟 upstream binding。
+<details>
+<summary>当前界面：本地模拟数据</summary>
 
-## 启动本地演示
+这些截图使用模拟服务和模拟设备。
+它们不证明真实设备已经连接。
 
-使用 Node 26 和 npm。从仓库根目录运行：
+![队列插入、打断、轮播和移除](../docs/images/control-plane-queue.gif)
+
+| Configuration | Services |
+|---|---|
+| ![本地模拟配置页](../docs/images/control-plane-config.png) | ![本地模拟服务页](../docs/images/control-plane-services.png) |
+
+</details>
+
+## 接入 Mac
+
+1. 使用适用于设备的 BUSY API token 登录。
+2. 打开 **Services → Connect computer**。
+3. 按[客户端指南](../docs/cloud-mode.zh-CN.md)接入。
+4. 注册 Agent status 和独立的 Agent requests Notifier。
+5. 将此浏览器与电脑配对。
+6. 使用 `--mode cloud` 启动观察服务。
+
+设备 token 允许查看所有电脑。
+服务端浏览器配对允许修改一台电脑的服务。
+其他电脑始终可见，但只能读取。
+浏览器本地偏好不能授予编辑权限。
+
+接入指南包含电脑接入、可选来源、路由和迁移。
+只用 Codex 的 Mac 不需要 Claude hooks。
+注册服务不会启动采集器，也不会上传可执行代码。
+自定义发布者使用 [PROTOCOL.md](PROTOCOL.md)。
+
+## 添加和控制服务
+
+1. 打开 **Services**。
+2. 选择 **Add service**。
+3. 选择 **Agent status**、**Notifications** 或 **Your own app**。
+4. 输入名称。
+5. 选择 **Add service**。
+6. 按来源连接引导操作。
+
+表单会生成服务 ID。
+高级设置允许自定义 ID。
+来源引导提供 `busy-bar cloud-route SOURCE SERVICE_ID`。
+如果 PATH 中没有 `busy-bar`，在仓库根目录使用 `.venv/bin/busy-bar`。
+
+在已配对 Mac 上使用安装好的客户端执行此命令。
+然后重启该 Mac 的 cloud 观察服务。
+只创建服务，不会连接来源。
+
+主开关控制服务启用或停用。
+展开 **Connection**，查看心跳、ID、**Bar buttons** 和 **Live preview**。
+仅向实际提供桥接的服务授予按键或预览能力。
+撤销、移除和替换凭据是不同操作。
+替换凭据会结束该服务的旧项目。
+更新本地连接后，服务才能再次发布。
+
+## 设置全局组
+
+| 组 | 行为 |
+|---|---|
+| **Interception** | 打断较低组，保留被打断的消息。 |
+| **Follow queue** | 按到达顺序播放，被打断后继续。 |
+| **Dispensable** | 上方两组为空时运行，各服务按 Hold 轮换。 |
+
+分组优先级适用于所有电脑。
+同组服务同级。
+行序不会增加优先级。
+只能移动本机服务换组。
+可以拖拽，也可以使用移动菜单或键盘。
+换组立即保存。
+
+选择服务后编辑时间设置。
+桌面端并排显示分组列表和详情。
+移动端分别显示列表与详情。
+完整 ID 保留在 **Connection details** 中。
+
+| 设置 | 含义 |
+|---|---|
+| **Hold** | 后台服务的可见轮播时长，以及定时消息的累计可见时长。 |
+| **Heartbeat** | 服务允许的上报间隔。 |
+
+使用吸附滑动条，或直接编辑数值。
+选择 **Save changes** 保存时间设置。
+选择 **Discard** 丢弃未保存的时间设置。
+如果服务端拒绝旧配置，先重新加载，再重试。
+
+每条消息由发送端声明 `exit: finite` 或 `exit: source`。
+定时消息从入场结束后计时，被打断时暂停。
+由来源结束的消息，需要宿主结束或撤出。
+宿主决定何时发送新的事件。
+Configuration 不提供 Exit 或 Later 控件。
+
+Agent 状态与批准、提问请求使用不同的注册服务。
+状态放入 Dispensable，请求放入 Follow queue。
+必须打断较低组的专用 Page 服务使用 Interception。
+
+## 连接预览和按键
+
+预览要求指定 Mac 与 Bar 在 Wi-Fi 局域网内互通。
+在 Services 中，为该 Mac 的服务打开 **Live preview**。
+预览桥先核对设备身份，再读取正面 framebuffer。
+登录后的管理页可见时，桥会发送真实像素。
+
+采集目标为 30 fps，Device 显示实测速率。
+浏览器缓冲目标约为 150 毫秒，最多保留六个待播放帧。
+预览桥不可用不会停止调度或设备写入。
+参见[预览恢复](../docs/cloud-mode.zh-CN.md#恢复断开的预览)。
+
+**Bar buttons** 允许指定监听器处理设备级 Start/Pause。
+普通发布者不能清除其他服务的项目。
+Primary 动作由原 Mac 执行。
+失败或未知的动作结果不会结束通知。
+
+当前紧急项目有 primary 动作时，Start/Pause 执行该动作。
+否则清除非紧急项目，并请求恢复日历。
+紧急项目不受这次清除影响。
+
+## 试用模拟设备
+
+[共享预览](https://busy-bar-control-plane-preview.orriduck.workers.dev)使用 `demo-token`。
+只使用模拟数据。
+不要向公开演示接入真实采集器或私有来源凭据。
+预览使用独立存储和 secret bindings。
+其模拟 BUSY Worker 不能控制真实设备。
+
+本地演示使用 Node 26 和 npm。
+从仓库根目录运行：
 
 ```sh
 cd control-plane
@@ -29,47 +176,20 @@ npm run dev:demo
 ```
 
 1. 打开 `http://localhost:8787`。
-2. 在设备 token 栏输入 `demo-token`。
-3. 打开 **Services**，选择 **Register**。
-4. 选择 Agent checker、Notifier 或 Custom publisher。
-5. 保存发布凭证。页面只显示一次。
-6. 在本地运行凭证窗口中的接入命令。
-7. 打开第二个管理页面，检查 SSE 更新。
+2. 使用 `demo-token` 登录。
+3. 打开 Display，查看模拟设备。
+4. 打开另一个页面，检查 SSE 更新。
 
-页面始终标注 **DEMO**，`/api/mode` 返回 `demo:true`。模拟 API 使用 8790 端口。诊断状态位于 `http://localhost:8790/__demo/state`。
-
-使用 `demo-blocked` 或 `demo-offline` 可以模拟设备拒绝显示或离线。它们对应同一台模拟设备。模拟 API 拒绝真实设备 token，也不会向 BUSY 转发请求。
-
-终止终端进程即可停止本地服务器。状态保留在已忽略的 `.wrangler/` 目录。本地调度随进程停止；部署后的云端调度由 Durable Object Alarm 驱动。
-
-## 接入本地采集器
-
-参见[本地客户端指南](../docs/cloud-mode.zh-CN.md)。Agent 和 notifier 各注册一个服务，分别保存发布凭证。Agent 优先级应低于 notifier；页面默认分别为 10 和 50。
-
-Setup 只保存连接信息，不替换正在运行的独立观察服务。准备好切换时，再显式选择 cloud 模式。本机不需要 Claude hooks。
-
-自定义发布服务按 [PROTOCOL.md](PROTOCOL.md) 接入。注册服务不会让 Cloudflare 执行上传的任意代码。
-
-## 使用管理页
-
-- **Display：**查看当前正面像素和队列，每行只显示 App、Sender、Received。点击 app 展开详情和分组成员，并暂停、恢复、结束通知或执行已声明的动作。
-- **Services：**开关服务及其按键和预览桥，注册采集器，替换或撤销 publisher credential。替换会结束该服务的旧项目；本地更新凭据后才能继续发布。
-- **Configuration：**把本机服务拖到 Interception、Follow queue 或 Dispensable；同组服务同级，拖拽只用于换组。其他电脑可查看、不可拖动。分组拖动立即保存；详情中的 Hold 和 Heartbeat 需要选择 **Save changes**。旧版本修改会被拒绝；重新加载表单后再保存。
-- **Device：**查看连接、当前控制者、API 确认和预览诊断，并退出登录。API 成功不等于实体像素验收。
-
-Sender 是注册服务名，必要时附上 instance，不代表来源通知的作者。Received 是首次收到该 occurrence 的服务端时间，更新后保留。展开行可查看每位成员的来源和完整时间。
-
-在 Services 中，仅为指定 Mac 的一个服务打开 **Live display preview bridge**。更新该 Mac，并保留现有本地 Wi-Fi 输入配置。预览桥先核对设备身份，再读取真实正面 framebuffer；在登录后的任意管理页面可见时发送像素。Display 展示大预览；其它页面在左下角保留同一个实时预览，不显示 Manage 按钮。采集以 30 fps 为目标，Device 显示实际速率。浏览器使用约 150 ms 的有限播放缓冲，最多保留六个待播放帧。预览桥不可用不影响云端调度。参见[预览接入与限制](../docs/cloud-mode.zh-CN.md#管理页面和实时画面)。
-
-**Trusted device button bridge** 是独立能力，只授权给本地按键监听器。它允许设备级 Start/Pause 操作；普通发布服务不能清除其它服务。Primary 动作由原 Mac 执行，失败或未知结果不会结束通知。
-
-紧急组按首次识别时间排队，不互相抢占。正常等待另一紧急组解除时，不弹系统通知。若显示证明过期或设备故障，Mac 的独立 watchdog 仍可兜底提醒。
-
-有限时长从入场结束后计起，抢占会暂停计时。非紧急常驻条件显示后可以延后再出现，但来源必须仍确认条件有效。默认显示十秒，延后三十分钟。手动清除后，同一 occurrence 不会自动复活。
-
-当前紧急项有 primary 动作时，Start/Pause 执行该动作。否则清除全部非紧急项并请求回日历；紧急项不受这次清除影响。
+页面显示 **DEMO**，`/api/mode` 返回 `demo:true`。
+使用 `demo-blocked` 或 `demo-offline` 测试拒绝显示或连接失败。
+模拟 API 拒绝真实设备 token。
+本地诊断状态位于 `http://localhost:8790/__demo/state`。
+停止终端进程即可停止本地调度。
+已忽略的 `.wrangler/` 文件保留本地状态。
 
 ## 运行检查
+
+在 `control-plane` 中运行：
 
 ```sh
 npm test
@@ -78,7 +198,8 @@ npm run build
 npm run dry-run
 ```
 
-测试使用真实 Workers 运行时、SQLite Durable Object 和模拟上游 HTTP。覆盖调度、权限、持久状态和下发行为。类型检查包含前端。Dry run 只打包，不部署。
+测试使用 Workers 运行时、SQLite Durable Object 和模拟上游 HTTP。
+Dry run 只打包 Worker，不会部署。
 
 在仓库根目录运行 Python 测试：
 
@@ -86,49 +207,68 @@ npm run dry-run
 .venv/bin/python scripts/run-tests.py
 ```
 
-本地测试不证明实体动效、固件画面、生产可用性或双 Mac 迁移。已确认命令的对象回收恢复有直接测试。未确认命令通过持久 SQLite 状态重新构造对象测试；完整进程突然崩溃仍需单独验收。
+测试不能证明实体像素、生产可用性或双 Mac 迁移。
+这些结果需要单独实机检查。
 
-## 为之后部署做准备
+## 部署自己的后端
 
-生产配置不含模拟上游绑定，固定调用 BUSY cloud API。不要部署 demo 配置，也不要把公开测试密钥复制到生产。
+生产配置固定调用 BUSY cloud API。
+不要部署演示配置或公开测试密钥。
 
-1. 将 `PUBLIC_ORIGIN` 设置为管理站点的准确 HTTPS origin。
-2. 用 Wrangler secret binding 设置新的 64 位十六进制 `TOKEN_ENCRYPTION_KEY`。
+1. 将 `PUBLIC_ORIGIN` 设为站点的准确 HTTPS origin。
+2. 通过 Wrangler secrets 设置新的 64 字符十六进制 `TOKEN_ENCRYPTION_KEY`。
 3. 单独设置随机 `SESSION_SIGNING_KEY`。
-4. 运行 `npm run types`，再运行上面的检查。
-5. 将评审通过的生产配置部署到指定账号。
-6. 先验证鉴权和云端调度，再迁移设备。
+4. 运行 `npm run types`。
+5. 运行上面的检查。
+6. 将生产配置部署到自己的账号。
+7. 先验证登录和调度，再迁移设备写入方。
 
-`wrangler secret put NAME` 从标准输入读取值，并会创建部署版本。密钥不能进入命令参数、Git 或日志。
+`wrangler secret put NAME` 从标准输入读取值，并创建部署版本。
+密钥不能进入命令参数、Git 或日志。
 
-完整迁移时，先准备好所有 Mac。给后端新建设备级 cloud token。将本地直连写屏服务改为独立发布凭证，再撤销旧直连 cloud token，并验证旧凭证失败。只删 Keychain 条目不等于撤销。撤销 cloud token 不影响 USB 或本地 Wi-Fi 访问。
-
-可以分批迁移 Mac。在旧 Mac 注册到新后端前，保留它正在使用的 token。云端命名空间使用原生优先级 51，高于旧普通显示的 50。更高优先级的设备应用仍可能阻挡云端绘制。所有 Mac 迁移并撤销旧直写 token 后，才算完成直写收口。
+本项目正式站使用连接 Git 的 Cloudflare Workers Builds。
+GitHub Actions 单独运行检查。
+其他 Mac 需要各自迁移。
+分批迁移时，不要撤销其他 Mac 仍在使用的 token。
+参见[迁移指南](../docs/cloud-mode.zh-CN.md#升级已接入的-mac)。
 
 ## 存储与故障规则
 
-后端从 BUSY status 验证设备身份，用 AES-GCM 加密保存设备 token。浏览器使用 Secure、HttpOnly、SameSite 会话 cookie。发布凭证只显示一次，只保存哈希，权限限定一个服务。初始 epoch 有效三十天，应在到期前替换。
+后端核对设备身份，并使用 AES-GCM 加密 BUSY token。
+浏览器会话使用 Secure、HttpOnly、SameSite cookie。
+电脑凭据只能向该电脑拥有的服务发布。
+旧 publisher 凭据只能向一个服务发布。
+来源账号的凭据保留在 Mac。
 
-SQLite 先保存队列和命令意图，再调用设备。每台设备只有一个顺序 dispatcher，每次写入前检查 generation。Alarm 处理过期、重试和续期。重启不能重复已确认的短时文字更新。
+SQLite 先保存队列状态和命令意图，再调用设备 HTTP。
+每台设备只有一个顺序 dispatcher。
+每次写入前，dispatcher 检查 generation。
+Alarm 处理过期、重试和续期。
+正常交接先准备下一画面，再移除旧元素。
+冷启动恢复或未知设备状态可能需要完整清屏。
+容量回退可能短暂显示黑屏。
+参见[交接边界](../docs/seamless-handoff.md)。
 
-活动和排队中的正文按必要生命周期保存，结束、清除和过期后受限清理。审计只存 ID、时间和状态，不存通知正文。来源账号凭据留在 Mac。
+数字滚动的末帧完全透明。
+旧数字不能覆盖后续底图更新。
+参见[数字覆盖层生命周期](../docs/digit-overlay-lifecycle.md)。
 
-后端只允许固定的方法、路径、参数和素材名，不提供任意代理。被盗的 BUSY token 仍可绕过后端；上游凭证的权限不会因此缩小。
-
-每台设备的上限：
-
-| 资源 | 上限 |
-| --- | --- |
+| 每台设备的资源 | 上限 |
+|---|---|
 | 注册服务 | 32 |
 | 活动项目 / 画面 JSON | 256 / 2 MiB |
 | 活动项与防重放保留位 | 4096 |
 | 动作 / 按键 ID / 会话 / SSE 客户端 | 512 / 2048 / 64 / 16 |
 | 云端素材 | 64 文件 / 4 MiB；单个 256 KiB |
 | 设备素材 | 16 个固定文件名 / 2 MiB |
-| 原生文字 TTL | 最多六十秒 |
+| 原生元素租约 | 最多六十秒 |
 
-设备槽位初始化后保留扩展名。播放和待执行命令引用的槽位不能覆盖。容量不足时明确报错，不会覆盖正在播放的素材来腾空间。
+容量错误会明确返回。
+后端不会覆盖正在播放的素材。
+云端故障不会让 Mac 改为直写 Bar。
+原生元素到期后，设备恢复日历。
+原 Mac 的独立 watchdog 可以提供紧急系统通知。
+休眠或未获通知权限时，这项兜底可能不可用。
 
-云端故障时，Mac 不会自动恢复直连抢屏。原生控件超时后回日历。原 Mac 在系统允许时发紧急通知；休眠或无通知权限时无法保证提醒。
-
-[协议细节](PROTOCOL.md) · [本地验证记录](../docs/plans/control-plane-ui-verification.md)
+退出登录会结束浏览器会话和配对。
+它不会停止 Mac 观察服务或云端调度。

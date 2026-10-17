@@ -3,33 +3,92 @@
 English | [简体中文](README.zh-CN.md)
 
 Show local AI agent status and short notifications on a BUSY Bar.
-One background service controls every app.
+One background service collects data from local apps.
 The device calendar is the default view.
 
 ## Cloud control plane
 
-An optional Cloudflare backend coordinates display services across Macs.
-The browser separates Display, Services, Configuration and Device pages.
-Display shows actual front-display pixels and a compact App / Sender / Received queue.
-An optional local Wi-Fi bridge targets 30 fps; Device reports the measured rate.
-Configuration groups services globally as Interception, Follow queue and Dispensable. Each computer can move only its own services between groups.
-Services in the same group have equal priority.
-Set Hold and Heartbeat in Configuration. Enable or disable services in Services.
-Each publisher declares a message’s end rule. A timed message completes once; its host decides when to send again.
-Local collectors publish scenes with separate service credentials.
-SSE keeps management pages in sync.
+[Open BUSY Traffic Control (BTC)](https://btc.orriduck.workers.dev).
+Sign in with a BUSY device API token.
+The Cloudflare backend controls the Bar.
+Each Mac sends local status and notifications to its registered services.
+The backend continues to schedule content after you close the browser.
 
-Open the [production control plane](https://btc.orriduck.workers.dev) and sign in with your BUSY device API token. Register each Mac with separate publisher credentials.
+| Page | Use |
+|---|---|
+| **Display** | See actual device pixels, the current message, and waiting messages. |
+| **Services** | Add services, connect local sources, and enable or disable each service. |
+| **Configuration** | Move your services between priority groups. Set Hold and Heartbeat. |
+| **Device** | Check connection, the current controller, and preview diagnostics. Sign out here. |
 
-Try the [cloud preview](https://busy-bar-control-plane-preview.orriduck.workers.dev) with `demo-token`. Use synthetic data only; do not connect real collectors to this shared demo. A local demo is also included.
-See the [control plane guide](control-plane/README.md), [local client setup](docs/cloud-mode.md), and [protocol](control-plane/PROTOCOL.md).
-The existing standalone installation remains the default.
+The queue marks the current message with a progress line.
+A rotation strip shows background services that take turns.
+New messages enter the list. Removed messages fade out.
+Expand a row to see its content, source, full IDs, and available actions.
+
+Services use compact cards under each computer.
+The setup guide provides a command to connect a local source.
+Creating a service does not start a local app.
+Other computers stay visible and read only.
+
+| Global group | Behavior |
+|---|---|
+| **Interception** | Interrupt either lower group. Keep the interrupted message for later. |
+| **Follow queue** | Process messages in arrival order. Resume after an interruption. |
+| **Dispensable** | Show background status when higher groups are empty. Rotate services by Hold. |
+
+Services in one group have equal priority, across all computers.
+Row order does not create another priority.
+Drag only your own services between groups.
+Group changes save immediately.
+Hold and Heartbeat changes require **Save changes**.
+
+**Hold** sets a background service's turn and a timed message's total visible time.
+**Heartbeat** sets the allowed interval between service check-ins.
+The sender declares whether a message ends by time or by its source.
+The sender also decides when to send a new occurrence.
+Agent status and requests for approval or input use separate services.
+
+The interface supports light, dark, and automatic themes.
+Mobile pages use a floating navigation bar with icons.
+You can add BTC to the Home Screen as a PWA.
+
+Live preview requires a configured Wi-Fi bridge and an enabled **Live preview** switch.
+Its target is 30 fps. Device shows measured rates.
+A preview failure does not stop cloud scheduling.
+
+<details>
+<summary>See the current interface with local mock data</summary>
+
+These captures use simulated services and a simulated device.
+They do not show a real device connection.
+
+![Queue insertion, interruption, rotation, and removal with local mock data](docs/images/control-plane-queue.gif)
+
+| Configuration | Services |
+|---|---|
+| ![Desktop Configuration with local mock data](docs/images/control-plane-config.png) | ![Desktop Services with local mock data](docs/images/control-plane-services.png) |
+
+</details>
+
+To connect a Mac, use the [client setup guide](docs/cloud-mode.md).
+Register Agent status and Agent requests before you start the cloud observer.
+The guide includes enrollment, browser pairing, source routes, and migration.
+A Codex-only Mac does not need Claude hooks.
+
+For a simulated device, use the [shared preview](https://busy-bar-control-plane-preview.orriduck.workers.dev) with `demo-token`.
+Use synthetic data only in that preview.
+See the [management guide](control-plane/README.md) and [protocol](control-plane/PROTOCOL.md).
+The [Install](#install) steps below use standalone mode.
 
 ## Watch the use cases
 
-These looping clips use synthetic events and the production renderers.
+The following archived clips use synthetic events and offline rendering.
 They do not need a device, credentials, or enabled integrations.
-Each clip has a `DEMO / OFFLINE RENDER` label.
+Each archived clip has a `DEMO / OFFLINE RENDER` label.
+
+Some clips predate the current token rates and cloud scheduling.
+Use the current instructions for those behaviors.
 The calendar is an illustration. Native text scrolling is approximate.
 Download an MP4 to pause or replay a clip locally.
 
@@ -37,7 +96,7 @@ Download an MP4 to pause or replay a clip locally.
 |---|---|
 | **Codex: run → approval → standby → calendar** · [MP4](docs/demos/codex-cycle.mp4)<br>![Codex: run → approval → standby → calendar; offline DEMO](docs/demos/codex-cycle.gif) | **ADSBao: aircraft → current Codex task** · [MP4](docs/demos/adsbao.mp4)<br>![ADSBao: aircraft → current Codex task; offline DEMO](docs/demos/adsbao.gif) |
 | **Your dot: dedicated source icon** · [MP4](docs/demos/your-dot.mp4)<br>![Your dot: dedicated source icon; offline DEMO](docs/demos/your-dot.gif) | **Start/Pause → calendar → new task turn** · [MP4](docs/demos/start-pause.mp4)<br>![Start/Pause → calendar → new task turn; offline DEMO](docs/demos/start-pause.gif) |
-| **Clock and input/output tokens** · [MP4](docs/demos/clock-tokens.mp4)<br>![Clock and input/output tokens; offline DEMO](docs/demos/clock-tokens.gif) | **Running, approval, error, stale, standby** · [MP4](docs/demos/state-colors.mp4)<br>![Running, approval, error, stale, standby; offline DEMO](docs/demos/state-colors.gif) |
+| **Clock and numeric animation** · [MP4](docs/demos/clock-tokens.mp4)<br>![Clock and numeric animation; offline DEMO](docs/demos/clock-tokens.gif) | **Running, approval, error, stale, standby** · [MP4](docs/demos/state-colors.mp4)<br>![Running, approval, error, stale, standby; offline DEMO](docs/demos/state-colors.gif) |
 
 The Codex clip includes the full ten-second standby period.
 The aircraft clip includes the full ten-second flight display.
@@ -77,19 +136,46 @@ See [all apps and their requirements](apps/README.md).
 
 Start a task in a configured agent app to show its status.
 The clock uses New York time in 24-hour format.
-The amber ↑ value shows input tokens. The cyan ↓ value shows output tokens.
-Both values are tokens per second, measured over the last 10 seconds of reported usage.
-Input excludes cache reads, which re-send earlier context on every request; it keeps new input and first-time cache writes.
-Codex and Claude Code report usage. `--` means that the rate is unknown, for example during the first second or when a source reports no usage.
-The front display uses compact values. The back display shows whole tokens per second.
+The amber ↑ value shows input tokens per second.
+The cyan ↓ value shows output tokens per second.
+These are token rates, not network speeds or task totals.
+
+The observer uses an approximately ten-second sample window.
+During startup, it uses the available interval after the first second.
+A long sample gap or unavailable usage restarts measurement.
+
+Input includes new input and first-time cache writes.
+It excludes cache reads.
+Output includes reasoning tokens.
+
+Codex and Claude Code report usage.
+`--` means that the rate is unknown.
+The program does not estimate missing usage.
+The front display uses compact values.
+The back display shows whole tokens per second.
+
+Changed digits roll upward and then release their overlay.
+A completed roll cannot cover a later value.
+
+The capture below shows a finite DEMO on a real Bar.
+All displayed times and rates are synthetic.
+Original task frames are excluded.
+This is a sampled recording, not a frame-rate measurement.
+
+![Actual BUSY Bar: synthetic clock and token-rate changes](docs/demos/numeric-device-demo.gif)
+
+See the [numeric overlay lifecycle](docs/digit-overlay-lifecycle.md).
 
 | Light | State |
 |---|---|
 | Moving blue | The task is in progress. |
-| Yellow | The task needs input or approval. |
+| Yellow | The task needs input or approval in standalone mode. |
 | Thin white | The task is complete or stopped. |
 | Red | The task reported an error. |
 | Gray | The last task update is more than 30 minutes old. |
+
+In cloud mode, approval and input requests use the separate **Agent requests** Notifier.
+Other active tasks can continue to report status.
 
 After ten seconds in standby, the service restores the calendar.
 Press Start/Pause to restore the calendar immediately.
@@ -113,10 +199,14 @@ Each aircraft alerts once per encounter.
 
 ### Notifications
 
-Every notification uses the aircraft entrance with an app icon.
-The icon background uses the app color, or red for urgent items. The detail text and LED show the level: red is urgent, amber needs attention, and the app accent is information.
-Other items return to the agent view or the calendar after ten seconds.
-Urgent items stay until their condition clears or their action succeeds.
+Built-in notifications use the aircraft entrance with an app icon.
+The icon background uses the app color, or red for urgent items.
+The detail text and LED show the level.
+Red means urgent. Amber means attention. The app accent means information.
+
+By default, timed notifications return after ten seconds.
+Cloud mode uses the configured Hold value.
+By default, urgent items stay until their condition clears or their action succeeds.
 Start/Pause runs the action of an urgent item, for example a Datadog page acknowledgement.
 On other items, Start/Pause dismisses all notifications and shows the calendar.
 See the [notifier rules](notifier/README.md).
@@ -133,6 +223,11 @@ Wi-Fi button input requires local access between the Mac and the Bar.
 The devices can use different Wi-Fi bands if the network permits this access.
 
 ## Install
+
+These steps install standalone mode.
+For cloud mode, follow the [client setup guide](docs/cloud-mode.md).
+Keep `--mode cloud` on cloud installation and status commands.
+Installing without that option selects standalone mode.
 
 Keep this checkout after installation.
 The service runs from its Python environment.
@@ -255,29 +350,80 @@ Run `.venv/bin/busy-bar notify-demo` to see each notification type. Stop the ser
 
 ## Share one Bar between Macs
 
-Several Macs can run this service for one Bar.
-A display lease in device storage keeps one notification visible at a time.
-Non-urgent items wait while another Mac shows a notification.
-Urgent items can take the display from a lower-level notification.
-An active urgent owner keeps its display until release.
-Every Mac must run the same version.
+Use BTC to coordinate multiple Macs.
+Each Mac has its own computer credential and registered services.
+A paired browser can change only that computer's services.
+All computers use the same three global priority groups.
+Do not run a standalone writer on a Mac after it moves to cloud mode.
+See [enrollment and migration](docs/cloud-mode.md).
+
+Standalone mode has a separate device-storage lease.
+It lets one notification own the display at a time.
+Urgent notifications can interrupt lower-level notifications.
+That lease does not provide the BTC queue or its three global groups.
 
 ## Check or stop the service
 
 | Action | Command |
 |---|---|
-| Check all components | `.venv/bin/busy-bar status` |
+| Check standalone components | `.venv/bin/busy-bar status` |
 | Check aircraft diagnostics | `.venv/bin/busy-bar adsbao-status` |
 | Use static displays | `.venv/bin/busy-bar install --reduced-motion` |
 | Restore animation | `.venv/bin/busy-bar install` |
 | Stop the service | `.venv/bin/busy-bar uninstall` |
 
-Check `service_running`, `traffic.connected`, and `button_input.connected` as applicable.
+For cloud mode, use `.venv/bin/busy-bar status --mode cloud`.
+Restart it with `.venv/bin/busy-bar install --mode cloud`.
+For static cloud displays, add `--reduced-motion`.
+
+In standalone mode, check `service_running` and `button_input.connected`.
+Use `adsbao-status` for aircraft diagnostics.
 Status output shows connection health and location accuracy.
 The log is at `~/Library/Logs/BusyBarAI/service.log`.
 Uninstalling the service retains the Keychain credentials.
 
+## Update this checkout
+
+Run these steps from a checkout of `main`.
+Keep the existing computer identity, routes, and credentials for a normal update.
+Do not enroll the computer again.
+
+1. Stop the observer.
+
+   ```sh
+   .venv/bin/busy-bar uninstall
+   ```
+
+2. Get the current main branch without rewriting local commits.
+
+   ```sh
+   git pull --ff-only
+   ```
+
+3. Update the package.
+
+   ```sh
+   .venv/bin/python -m pip install -e .
+   ```
+
+4. Run the Python checks.
+
+   ```sh
+   .venv/bin/python scripts/run-tests.py
+   ```
+
+5. Start the observer in its previous mode.
+
+   | Previous mode | Command |
+   |---|---|
+   | Cloud | `.venv/bin/busy-bar install --mode cloud` |
+   | Standalone | `.venv/bin/busy-bar install` |
+
 ## Show a mock aircraft
+
+This procedure uses standalone mode.
+It sends synthetic content to the device.
+Do not run a direct device demo beside an active cloud writer.
 
 1. Stop the background service.
 
@@ -321,7 +467,12 @@ The exact location stays in a private local file.
 Runtime directories use mode `0700`.
 Private state files use mode `0600`.
 Keep tokens and runtime files outside Git.
-The service clears only its `ai-status` display namespace.
+
+Standalone mode uses the `ai-status` display namespace.
+Cloud mode uses `busy-control`.
+Each mode clears only its own namespace.
+Source credentials stay on the Mac.
+The cloud backend stores the encrypted BUSY device token.
 Device focus modes retain their higher priority.
 
 ## Development
@@ -332,7 +483,8 @@ Device focus modes retain their higher priority.
 | `agent-checker` | Agent task registry, event spool, status display, and transitions. |
 | `notifier` | Notification queue, background sources, entrance, and presenter. |
 | `apps` | Agent apps and notifier apps. |
-| `service` | Command line, launchd service, and display coordinator. |
+| `service` | Command line, launchd service, and cloud publishers. |
+| `control-plane` | Cloudflare scheduler, device dispatcher, management UI, and mock backend. |
 | `scripts` | Native helper builds, tests, and previews. |
 | `docs` | Design records and device captures. |
 

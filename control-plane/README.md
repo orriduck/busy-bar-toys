@@ -1,26 +1,174 @@
-# BUSY Bar control plane
+# BUSY Traffic Control
 
-[中文](README.zh-CN.md) · [Protocol](PROTOCOL.md) · [Approved design](../docs/plans/control-plane-v5.md)
+[简体中文](README.zh-CN.md) · [Protocol](PROTOCOL.md) · [Mac setup](../docs/cloud-mode.md)
 
-Manage one BUSY Bar from a browser. Register display services. Set their priority, Hold, Heartbeat and enabled state. Each publisher declares its messages’ end rules. See the current owner and every queued notification. The page receives full state snapshots through SSE. React and Vite use Tailwind, shadcn/ui components, TanStack Query for session-scoped server state, and TanStack Table for the queue.
+Manage a BUSY Bar at [btc.orriduck.workers.dev](https://btc.orriduck.workers.dev).
+The Cloudflare backend selects content and writes the display.
+Each Mac collects local events and sends scenes to its registered services.
+Closing the browser does not stop cloud scheduling.
 
-The Cloudflare backend schedules the queue and writes the display. A local Mac collects Codex, Your dot and notification data. It sends complete scenes to the backend. Closing the browser does not stop cloud scheduling.
+The interface uses React, Vite, Tailwind, and shadcn/ui with Base UI.
+TanStack Query manages server state.
+GSAP handles list and page transitions. Number Flow handles changing numbers.
 
-Open the [production management page](https://busy-bar-control-plane.orriduck.workers.dev) and sign in with your device-scoped BUSY API token. Production uses the real BUSY cloud API. It has separate storage and secret bindings from the preview.
+## Read the pages
 
-The local demo and shared cloud preview use a simulated BUSY API. They cannot control a real device. Use `demo-token` only with the preview.
+| Page | Purpose |
+|---|---|
+| **Display** | Actual front-display pixels, the current message, and waiting messages. |
+| **Services** | Service cards, source setup, switches, and connection details. |
+| **Configuration** | Three global groups, Hold, and Heartbeat. |
+| **Device** | Device connection, current controller, API confirmation, and preview diagnostics. |
 
-![Display page with synthetic device pixels and a compact queue](../docs/images/control-plane-display.png)
+The queue shows the confirmed player first.
+Other rows retain server order.
+A progress line marks the current message.
+The rotation strip represents services, including services with several messages.
 
-## Open the cloud preview
+New rows enter smoothly. Removed rows fade out.
+Expand a row for content, full source IDs, receipt time, and available actions.
 
-Open [the preview](https://busy-bar-control-plane-preview.orriduck.workers.dev) and enter `demo-token`. This is a shared public demo. Use synthetic data only. Do not connect real Mac collectors or source credentials to it. Hosted demo credential dialogs omit real-collector setup commands.
+The short sender ID identifies the sending computer.
+It does not identify the business author of a notification.
+Received time includes seconds and remains unchanged when a message receives updates.
+A selected message is not necessarily confirmed on the device.
+An API acknowledgment alone does not prove physical pixels.
 
-The preview has a separate SQLite namespace and fresh secret bindings. Its simulated BUSY Worker has no public route and no network egress. The production configuration has no simulated upstream binding.
+The preview stays available on other pages in a compact panel.
+Mobile pages use a floating navigation bar with icons.
+Appearance cycles through Automatic, Light, and Dark.
+You can add BTC to the Home Screen as a PWA.
+A PWA still needs a network connection for control and live data.
 
-## Run the local demo
+<details>
+<summary>Current interface: local mock data</summary>
 
-Use Node 26 and npm. From the repository root:
+These captures show simulated services and a simulated device.
+They do not establish real device connectivity.
+
+![Queue insertion, interruption, rotation, and removal](../docs/images/control-plane-queue.gif)
+
+| Configuration | Services |
+|---|---|
+| ![Configuration with local mock data](../docs/images/control-plane-config.png) | ![Services with local mock data](../docs/images/control-plane-services.png) |
+
+</details>
+
+## Connect a Mac
+
+1. Sign in with a device-scoped BUSY API token.
+2. Open **Services → Connect computer**.
+3. Follow the [client setup guide](../docs/cloud-mode.md).
+4. Register Agent status and a separate Agent requests Notifier.
+5. Pair this browser with the computer.
+6. Start the observer with `--mode cloud`.
+
+The device token permits viewing all computers.
+A server-side browser pairing permits changes to one computer's services.
+Other computers remain visible and read only.
+A browser preference cannot grant editing access.
+
+The setup guide includes enrollment, optional sources, routes, and migration.
+A Codex-only Mac does not need Claude hooks.
+Registration does not start a collector or upload executable code.
+A custom publisher uses [PROTOCOL.md](PROTOCOL.md).
+
+## Add and control services
+
+1. Open **Services**.
+2. Select **Add service**.
+3. Choose **Agent status**, **Notifications**, or **Your own app**.
+4. Enter a name.
+5. Select **Add service**.
+6. Follow the source connection guide.
+
+The form generates a service ID.
+Advanced settings permit a custom ID.
+The source guide provides `busy-bar cloud-route SOURCE SERVICE_ID`.
+If `busy-bar` is not on PATH, use `.venv/bin/busy-bar` from the repository root.
+
+Run it with the installed client on the paired Mac.
+Then restart that Mac's cloud observer.
+Creating a service alone does not connect a source.
+
+Use the main switch to enable or disable a service.
+Expand **Connection** for heartbeat details, IDs, **Bar buttons**, and **Live preview**.
+Grant button and preview access only to the service that supplies each bridge.
+Revoke, remove, and credential replacement remain separate operations.
+Credential replacement ends that service's old items.
+Update its local connection before it publishes again.
+
+## Set global groups
+
+| Group | Behavior |
+|---|---|
+| **Interception** | Interrupt lower groups. Retain interrupted work. |
+| **Follow queue** | Process arrival order. Resume after an interruption. |
+| **Dispensable** | Run when higher groups are empty. Alternate services by Hold. |
+
+Group priority applies across computers.
+Services in one group have equal priority.
+Row order does not add another priority.
+You can move only your own services between groups.
+Use drag, the move menu, or keyboard controls.
+A group change saves immediately.
+
+Select a service to edit its timing.
+The desktop layout keeps the group list and detail panel side by side.
+Mobile pages show the list and detail separately.
+Full IDs remain available in **Connection details**.
+
+| Setting | Meaning |
+|---|---|
+| **Hold** | A background service's visible turn and a timed message's cumulative visible lifetime. |
+| **Heartbeat** | The allowed interval between service check-ins. |
+
+Use the snap sliders or edit their numeric values.
+Select **Save changes** to save timing.
+Select **Discard** to remove timing edits.
+If the server rejects an old configuration, reload it before retrying.
+
+Each sender declares `exit: finite` or `exit: source` per occurrence.
+Finite time starts after entrance and pauses during interruption.
+A source-ended message requires its host to end or withdraw it.
+The host decides when to send a new occurrence.
+There is no Exit or Later control in Configuration.
+
+Agent status and approval or question requests use separate registrations.
+Place status in Dispensable and requests in Follow queue.
+Use Interception for a dedicated Page service that must interrupt lower groups.
+
+## Connect the preview and buttons
+
+Preview requires local Wi-Fi access between the designated Mac and the Bar.
+Enable **Live preview** on that Mac's service in Services.
+The bridge verifies device identity before reading the front framebuffer.
+It sends actual pixels while a signed-in management page is visible.
+
+Capture targets 30 fps. Device reports actual rates.
+The browser buffer targets about 150 ms and holds at most six pending frames.
+A missing preview bridge does not stop scheduling or device writes.
+See [preview setup](../docs/cloud-mode.md#restore-a-disconnected-preview).
+
+**Bar buttons** permits device-wide Start/Pause handling through the designated listener.
+An ordinary publisher cannot clear another service's items.
+Primary actions run on the original Mac.
+Failed or unknown action results keep the notification.
+
+Start/Pause runs the current urgent primary action when one exists.
+Otherwise, it clears nonurgent items and requests the device calendar.
+Urgent items survive that clear.
+
+## Try a simulated device
+
+The [shared preview](https://busy-bar-control-plane-preview.orriduck.workers.dev) accepts `demo-token`.
+Use synthetic data only.
+Do not connect real collectors or private source credentials to this public demo.
+The preview uses separate storage and secret bindings.
+Its simulated BUSY Worker cannot control a real device.
+
+For a local demo, use Node 26 and npm.
+Run these commands from the repository root:
 
 ```sh
 cd control-plane
@@ -29,47 +177,21 @@ npm run dev:demo
 ```
 
 1. Open `http://localhost:8787`.
-2. Enter `demo-token` in the device token field.
-3. Open **Services**, then select **Register**.
-4. Choose **Agent checker**, **Notifier** or **Custom publisher**.
-5. Save the publisher credential. The page shows it once.
-6. Connect a publisher with the command in the credential dialog.
-7. Open a second browser page to check SSE updates.
+2. Sign in with `demo-token`.
+3. Open Display to inspect the simulated device.
+4. Open another page to check SSE updates.
 
-The page shows **DEMO**. `/api/mode` reports `demo:true`. The mock API listens on port 8790. Its diagnostic state is at `http://localhost:8790/__demo/state`.
+The page shows **DEMO**. `/api/mode` reports `demo:true`.
+Use `demo-blocked` or `demo-offline` to test display rejection or connection failure.
 
-Use `demo-blocked` or `demo-offline` to test device rejection or loss of connection. These tokens select the same fake device. A real device token is rejected by the mock. The mock never forwards a request to BUSY.
-
-Stop the terminal process to stop the local server. State remains in the ignored `.wrangler/` folder. Local scheduling stops with this process. Cloud scheduling after deployment uses Durable Object alarms.
-
-## Connect local collectors
-
-See the [local client guide](../docs/cloud-mode.md). Each role needs its own registered service and publisher credential. Keep the agent service below the notifier service in priority. The page starts new agent services at 10 and notifier services at 50.
-
-Setup stores a connection. It does not change the installed standalone observer. Use explicit cloud mode only when you are ready to switch. This Mac does not need Claude hooks.
-
-A custom publisher follows [PROTOCOL.md](PROTOCOL.md). Registering a service does not upload code for Cloudflare to execute.
-
-## Use the management page
-
-- **Display:** see current front-display pixels and the queue. Rows show App, Sender, and Received. Open an app to read details, expand grouped members, pause, resume, end, or run an advertised action.
-- **Services:** register collectors. Replace or revoke publisher credentials here. Replacement ends that service's old items. Update the local client before it can publish again.
-- **Configuration:** drag your services into Interception, Follow queue or Dispensable, keep every service in that group at equal priority. Other computers stay visible and read only. Drag changes groups only. Group moves save immediately. Edit Hold and Heartbeat in the detail panel and select **Save changes**. A stale configuration is rejected. Reload the form before you try again.
-- **Device:** inspect connection, current controller, API confirmation and preview diagnostics. Sign out here. An API acknowledgment does not prove physical pixels.
-
-Sender is the service name, with an instance when needed. It is not the notification's business author. Received is the occurrence's first server receipt time. Updates retain it. Open the row for full provenance and time.
-
-Enable **Live display preview bridge** in Configuration for one designated Mac service. Update that Mac and retain its existing local Wi-Fi input configuration. The bridge verifies the Bar identity and reads its actual front framebuffer. It sends pixels while any signed-in management page is visible. Display shows the large preview. Other pages keep one compact live preview at the lower left, without a Manage button. Capture targets 30 fps; Device reports actual rates. The browser uses a bounded 150 ms playback buffer with at most six pending frames. A missing bridge does not stop cloud scheduling. See [preview setup and limits](../docs/cloud-mode.md#management-pages-and-live-display).
-
-**Trusted device button bridge** is a separate capability. Grant it only to the local input listener. It permits device-wide Start/Pause handling. An ordinary publisher cannot clear other services. Primary actions run on the original Mac. Failed or unknown results keep the notification.
-
-Urgent groups use first-recognized order. They do not interrupt another urgent group. A normal wait behind a healthy urgent group does not trigger a system notification. The Mac watchdog still warns if display proof expires or the device fails.
-
-Finite items count visible time after entry. An interruption pauses that time. Nonurgent standing conditions return after a delay if the source still confirms them. Defaults are 10 seconds visible and 30 minutes delayed. Manual clearing prevents the same occurrence from returning.
-
-Start/Pause runs the current urgent primary action, when one exists. Otherwise it clears nonurgent items and requests calendar fallback. Urgent items survive that clear.
+The simulated API rejects real device tokens.
+Its local diagnostic state is at `http://localhost:8790/__demo/state`.
+Stop the terminal process to stop local scheduling.
+Ignored `.wrangler/` files retain local state.
 
 ## Run checks
+
+Run from `control-plane`:
 
 ```sh
 npm test
@@ -78,7 +200,8 @@ npm run build
 npm run dry-run
 ```
 
-Tests use the Workers runtime, SQLite Durable Objects and fake upstream HTTP. They cover scheduling, permissions, state recovery and dispatcher behavior. Type checking includes the browser code. A dry run packages the production Worker; it does not deploy it.
+Tests use the Workers runtime, SQLite Durable Objects, and simulated upstream HTTP.
+A dry run packages the Worker. It does not deploy it.
 
 Run the Python suite from the repository root:
 
@@ -86,49 +209,70 @@ Run the Python suite from the repository root:
 .venv/bin/python scripts/run-tests.py
 ```
 
-Local tests do not verify real firmware visuals, animation timing, production availability or two-Mac migration. Acknowledged-command eviction is tested directly. Uncertain-command recovery is tested by reconstructing the object over saved SQLite intent. A full abrupt-process failure remains a separate acceptance check.
+Tests do not establish physical pixels, production availability, or a two-Mac migration.
+Use separate device checks for those results.
 
-## Deploy your own backend
+## Deploy your backend
 
-The production configuration has no mock upstream binding. It uses the fixed BUSY cloud API origin. Do not deploy the demo configuration or copy its public fixture secrets.
+Production uses the fixed BUSY cloud API origin.
+Do not deploy a demo configuration or its public fixture secrets.
 
-1. Set `PUBLIC_ORIGIN` to the management site's exact HTTPS origin.
-2. Set a fresh 64-character hex `TOKEN_ENCRYPTION_KEY` with Wrangler secret bindings.
+1. Set `PUBLIC_ORIGIN` to the site's exact HTTPS origin.
+2. Set a fresh 64-character hex `TOKEN_ENCRYPTION_KEY` through Wrangler secrets.
 3. Set a separate random `SESSION_SIGNING_KEY`.
-4. Run `npm run types`, then the checks above.
-5. Deploy the reviewed production configuration to the intended account.
-6. Verify authentication and cloud scheduling before device migration.
+4. Run `npm run types`.
+5. Run the checks above.
+6. Deploy the production configuration to your account.
+7. Verify sign-in and scheduling before moving device writers.
 
-`wrangler secret put NAME` reads its value from stdin. It creates a deployed version. Keep secret values out of arguments, Git and logs.
+`wrangler secret put NAME` reads the value from standard input.
+It creates a deployed version.
+Keep values out of command arguments, Git, and logs.
 
-For a complete migration, first prepare every Mac. Create a new device-scoped cloud token for the backend. Replace local direct writers with scoped publishers. Then revoke old direct-writer cloud tokens and verify they fail. Deleting a Keychain item alone does not revoke a token. Cloud token revocation does not disable USB or local Wi-Fi access.
-
-A staged migration can leave an older Mac running until it is registered. Do not revoke its token during that stage. The cloud namespace uses native priority 51, above the old normal display at 50. A higher-priority native application can still block cloud drawing. Full removal of direct writers requires migrating the remaining Macs and revoking their old cloud tokens.
+This project's production site uses Cloudflare Workers Builds connected to Git.
+GitHub Actions runs checks separately.
+Changes to other Macs require their own migration.
+Do not revoke their active tokens during a staged migration.
+See the [migration guide](../docs/cloud-mode.md#upgrade-an-existing-mac).
 
 ## Storage and failure rules
 
-The backend encrypts the BUSY token with AES-GCM. It verifies device identity from BUSY status. Browser sessions use Secure, HttpOnly and SameSite cookies. Publisher credentials are hashed, scoped to one service and returned once. The initial publisher epoch lasts 30 days. Replace it before it expires.
+The backend verifies device identity and encrypts the BUSY token with AES-GCM.
+Browser sessions use Secure, HttpOnly, SameSite cookies.
+Computer credentials permit publishing only to services owned by that computer.
+Legacy publisher credentials permit publishing to one service.
+Source account credentials remain on the Mac.
 
-SQLite saves queue state and command intent before HTTP. One dispatcher writes each device. It checks the display generation before each write. Alarms handle expiry, retries and renewal. A restart must not replay an acknowledged short text update.
+SQLite stores queue state and command intent before device HTTP calls.
+One dispatcher writes each device.
+It checks the generation before each write.
+Alarms handle expiry, retry, and renewal.
 
-Current and queued text is stored while needed. Ended, cleared and expired content is removed after its bounded lifecycle. Audit entries contain IDs, times and status, not notification bodies. Source credentials remain on the Mac.
+Normal handoff prepares the next scene before retiring old elements.
+Cold recovery or unknown device state can require a full clear.
+A capacity fallback can briefly show a dark display.
+See [handoff limits](../docs/seamless-handoff.md).
 
-The backend has fixed API methods, paths, parameters and asset names. It is not an arbitrary proxy. A stolen upstream BUSY token can still bypass the backend; its upstream permissions do not become narrower.
+Completed numeric rolls end with a transparent frame.
+Old digits cannot cover later base updates.
+See the [numeric overlay lifecycle](../docs/digit-overlay-lifecycle.md).
 
-Per device limits:
-
-| Resource | Limit |
-| --- | --- |
+| Resource per device | Limit |
+|---|---|
 | Registered services | 32 |
 | Live items / presentation JSON | 256 / 2 MiB |
 | Live-item and replay-protection reservations | 4096 |
-| Retained actions / button IDs / sessions / SSE clients | 512 / 2048 / 64 / 16 |
-| Cloud assets | 64 files / 4 MiB; 256 KiB each |
+| Actions / button IDs / sessions / SSE clients | 512 / 2048 / 64 / 16 |
+| Cloud assets | 64 files / 4 MiB; 256 KiB per file |
 | Device assets | 16 fixed filenames / 2 MiB |
-| Native text TTL | At most 60 seconds |
+| Native element lease | At most 60 seconds |
 
-An initialized device slot keeps its file extension. Active and pending device commands pin slots. Capacity errors are explicit. The backend does not overwrite a playing asset to make room.
+Capacity errors are explicit.
+The backend does not overwrite an asset that is playing.
+A cloud outage does not make Macs write directly to the Bar.
+Native elements expire, and the device calendar returns.
+The original Mac's independent watchdog can provide urgent system notifications.
+Sleep or denied notification permission can prevent that fallback.
 
-A cloud outage does not make Macs write directly to the Bar. Native elements expire to the device calendar. The original Mac's independent watchdog provides urgent system notifications where the OS permits them. A sleeping Mac or denied notification permission cannot guarantee a warning.
-
-[Protocol details](PROTOCOL.md) · [Local verification record](../docs/plans/control-plane-ui-verification.md)
+Sign out ends the browser session and its pairing.
+It does not stop the Mac observer or cloud scheduler.

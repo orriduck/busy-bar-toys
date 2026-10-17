@@ -30,19 +30,31 @@ The layout matches the device calendar.
 The source icon identifies the agent app of the task.
 
 The two numbers show input and output tokens per second for the selected session.
-Each agent app reports cumulative session totals. The observer samples every live session about once a second, whether or not it is on screen.
-The rate is the change in reported totals over the last 10 seconds of samples.
-During the first 10 seconds of samples, the rate covers the observed span. It shows `--` until one second is observed.
-A session with no new usage shows 0.
-Input counts new input and first-time cache writes. It excludes cache reads, which re-send earlier context on every request. Output includes reasoning output.
-Codex totals come from local rollout records. Claude Code totals come from its local transcript, read through the hook's transcript path. Only usage fields are read, never message text.
-The back display shows the rates in whole tokens per second.
+They are not network speeds or task totals.
+Each app reports cumulative session totals.
+The observer samples every live session about once a second, including sessions that are not on screen.
+The rate uses an approximately ten-second observation window.
 
-The front display uses decimal abbreviations: K means one thousand and M means one million.
-Each rate has three characters. For example, `.1M` means 100,000 tokens per second.
-Compact values are rounded down. The back display shows the unabbreviated rate.
-`--` means that the rate is unknown: the source does not report usage, its usage became unavailable, or sampling is warming up.
-A gap of more than 10 seconds between samples, unavailable usage, or a decrease in the source counter restarts sampling. The next rate warms up again; the program never shows a delta it did not observe within the window.
+During startup, the observer uses the available interval after the first second.
+A session with no new usage shows 0.
+
+Input includes new input and first-time cache writes.
+It excludes cache reads.
+Output includes reasoning tokens.
+Codex reads usage from local rollout records.
+Claude Code reads transcript usage through the path supplied by its hook.
+The usage reader does not read message text.
+
+The front display uses decimal abbreviations.
+K means one thousand. M means one million.
+Each rate has at most three characters.
+For example, `.1M` means 100,000 tokens per second.
+
+Compact values round down. The back display shows whole tokens per second.
+
+`--` means that the rate is unknown.
+Unavailable usage, a decreasing counter, or a sample gap longer than ten seconds restarts measurement.
+The rate then needs a new observation interval.
 The program does not estimate missing usage.
 
 ## Return to the calendar
@@ -64,6 +76,8 @@ An icon change uses the same sequence.
 The clock stays visible during these changes.
 
 Changed digits roll upward.
+Travel frames cover the target digit during movement.
+The final frame is transparent, so old digits cannot cover later values.
 A change of count format fades the token field.
 Repeated values do not restart an effect.
 The device plays the animation frames from stored files.
@@ -72,6 +86,8 @@ Standby remains visible for ten seconds after its entrance effect.
 The display then fades out and returns to the device calendar.
 
 See the [transition settings and device captures](../docs/motion.md).
+See the [numeric overlay lifecycle](../docs/digit-overlay-lifecycle.md) for the cloud animation fix.
+The [actual-device DEMO](../docs/demos/numeric-device-demo.gif) uses synthetic times and rates.
 
 To use static lights and direct display changes, install with this option:
 
@@ -80,6 +96,15 @@ To use static lights and direct display changes, install with this option:
 ```
 
 Run `install` without this option to restore motion effects.
+
+## Cloud status and requests
+
+Cloud mode registers status and requests for human input as separate services.
+Place Agent status in Dispensable and Agent requests in Follow queue.
+Other active tasks can continue to report status while a request waits.
+Use the [cloud client guide](../docs/cloud-mode.md) for setup.
+The installation and device-demo commands below use standalone mode.
+Do not run direct device demos beside an active cloud writer.
 
 ## Requirements
 
@@ -235,7 +260,7 @@ Show an 18-second transition demo:
 .venv/bin/busy-bar motion-demo --seconds 18
 ```
 
-This demo uses example clock values and synthetic token counts.
+This demo uses example clock values and synthetic token rates.
 It does not change the device clock.
 
 Start the observer after the demo:
@@ -268,6 +293,7 @@ The program owns display namespace `ai-status` at priority 50.
 It clears only that namespace.
 Device focus modes have a higher priority.
 An HTTP 409 response makes the program yield the display.
+
 Display elements expire after 15 seconds without a refresh.
 Connection failures use a bounded retry delay.
 Authentication failures stop retries.
