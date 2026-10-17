@@ -47,6 +47,8 @@ function App() {
   const queryClient = useQueryClient();
   const [demo, setDemo] = useState<boolean | null>(null);
   const [error, setError] = useState("");
+  const [sessionCheckError, setSessionCheckError] = useState("");
+  const checkingSession = useRef<number | null>(null);
   const [stream, setStream] = useState("Connecting");
   const [lastSync, setLastSync] = useState<number>();
   const [pending, setPending] = useState(false);
@@ -98,6 +100,7 @@ function App() {
       setPending(false);
       setLastSync(undefined);
       setStream("Connecting");
+      setSessionCheckError("");
       return generation;
     },
     [queryClient, request.reset],
@@ -158,25 +161,57 @@ function App() {
       setError(message(e));
     }
   }, [apply, invalidate]);
-  useEffect(() => {
+  const checkSession = useCallback(async () => {
     const generation = fence.current.generation;
+    if (checkingSession.current === generation) return;
+    checkingSession.current = generation;
+    setSessionCheckError("");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    try {
+      const value = await api<{
+        deviceId: string;
+        demo?: boolean;
+        computerId?: string | null;
+      }>("/session", undefined, "GET", undefined, controller.signal);
+      if (!/^[a-f0-9]{64}$/.test(value.deviceId))
+        throw new Error("Invalid session response");
+      if (fence.current.current(generation))
+        beginSession(value.deviceId, value.demo, value.computerId ?? null);
+    } catch (error) {
+      if (!fence.current.current(generation)) return;
+      if (error instanceof APIError && error.status === 401) invalidate();
+      else
+        setSessionCheckError(
+          "Your saved sign-in has not been cleared. Check your connection and try again.",
+        );
+    } finally {
+      window.clearTimeout(timeout);
+      if (checkingSession.current === generation)
+        checkingSession.current = null;
+    }
+  }, [beginSession, invalidate]);
+  useEffect(() => {
     void api<{ demo: boolean }>("/mode")
       .then((v) => {
         // Deployment mode also applies to the signed-out page.
         setDemo(typeof v.demo === "boolean" ? v.demo : null);
       })
       .catch(() => {});
-    void api<{ deviceId: string; demo?: boolean; computerId?: string | null }>(
-      "/session",
-    )
-      .then((v) => {
-        if (fence.current.current(generation))
-          beginSession(v.deviceId, v.demo, v.computerId ?? null);
-      })
-      .catch(() => {
-        if (fence.current.current(generation)) invalidate();
-      });
-  }, [beginSession, invalidate]);
+    void checkSession();
+  }, [checkSession]);
+  useEffect(() => {
+    if (session !== null || !sessionCheckError) return;
+    const retry = () => void checkSession();
+    window.addEventListener("online", retry);
+    window.addEventListener("focus", retry);
+    window.addEventListener("pageshow", retry);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.removeEventListener("focus", retry);
+      window.removeEventListener("pageshow", retry);
+    };
+  }, [session, sessionCheckError, checkSession]);
   useEffect(() => {
     if (!session) return;
     const generation = fence.current.generation;
@@ -363,8 +398,22 @@ function App() {
           {session === null ? (
             <MotionPage key="connecting" className="auth-slot" active>
               <section className="signin">
-                <h1>Connecting…</h1>
-                <Skeleton className="h-12 w-64" />
+                <h1>
+                  {sessionCheckError ? "Connection interrupted" : "Connecting…"}
+                </h1>
+                {sessionCheckError ? (
+                  <>
+                    <p role="status">{sessionCheckError}</p>
+                    <Button
+                      variant="secondary"
+                      onClick={() => void checkSession()}
+                    >
+                      Try again
+                    </Button>
+                  </>
+                ) : (
+                  <Skeleton className="h-12 w-64" />
+                )}
               </section>
             </MotionPage>
           ) : !session ? (

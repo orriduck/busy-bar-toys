@@ -32,11 +32,13 @@ export async function api<T>(
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
   expectedDeviceId?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch("/api" + path, {
     method,
     credentials: "same-origin",
     cache: "no-store",
+    signal,
     headers: {
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       ...(expectedDeviceId ? { "X-Busy-Device": expectedDeviceId } : {}),

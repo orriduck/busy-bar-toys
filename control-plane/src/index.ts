@@ -53,6 +53,7 @@ import {
 import { BusyClient, NAMESPACE, NATIVE_PRIORITY } from "./busy";
 import { storeAsset, pinnedSlots, reserveSlots } from "./assets";
 import {
+  BROWSER_SESSION_SECONDS,
   base64,
   decrypt,
   digest,
@@ -1907,7 +1908,7 @@ export default {
         );
         const deviceId = await digest(serial),
           id = crypto.randomUUID(),
-          expiresAt = Date.now() + 12 * 3600000;
+          expiresAt = Date.now() + BROWSER_SESSION_SECONDS * 1000;
         await env.DEVICES.getByName(deviceId).login(
           deviceId,
           await encrypt(token, env.TOKEN_ENCRYPTION_KEY),
@@ -1919,7 +1920,7 @@ export default {
           env.SESSION_SIGNING_KEY,
         );
         return json({ deviceId, demo: !!env.BUSY_UPSTREAM }, 200, {
-          "Set-Cookie": `busy_session=${encodeURIComponent(signed)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200`,
+          "Set-Cookie": `busy_session=${encodeURIComponent(signed)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${BROWSER_SESSION_SECONDS}`,
         });
       }
       let deviceId: string, auth: Auth;

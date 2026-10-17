@@ -240,6 +240,9 @@ See the [migration guide](../docs/cloud-mode.md#upgrade-an-existing-mac).
 
 The backend verifies device identity and encrypts the BUSY token with AES-GCM.
 Browser sessions use Secure, HttpOnly, SameSite cookies.
+A new login lasts 30 days unless you sign out or clear browser data.
+A connection failure shows a retry action. It does not clear the saved sign-in.
+After an older session expires, sign in once to use the new duration.
 Computer credentials permit publishing only to services owned by that computer.
 Legacy publisher credentials permit publishing to one service.
 Source account credentials remain on the Mac.

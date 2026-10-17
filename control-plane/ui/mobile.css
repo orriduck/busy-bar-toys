@@ -368,3 +368,20 @@
     overflow-wrap: anywhere;
   }
 }
+
+/* Touch browsers can request a desktop viewport. Keep focus-safe text sizes
+   independent of the compact desktop root scale, without disabling pinch zoom. */
+@media (any-pointer: coarse) {
+  input[data-slot],
+  textarea[data-slot],
+  select {
+    font-size: max(16px, 1rem);
+  }
+}
+@supports (-webkit-touch-callout: none) {
+  input[data-slot],
+  textarea[data-slot],
+  select {
+    font-size: max(16px, 1rem);
+  }
+}
