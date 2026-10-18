@@ -29,6 +29,8 @@ The native helper reads app launch metadata. It does not read game memory, scree
 
 The title entrance uses the shared native character animation. The time line appears from the first frame. Later time updates change only that line. They keep the same occurrence and do not restart the title or its scroll. A complete scene remains available for recovery and Hold rotation.
 
+The display and management page use the official game-site icons. The display fits each mark to the small pixel region without stretching it. See [asset sources](../NOTICE.md).
+
 ## Rendered preview
 
 This offline preview uses synthetic durations. It is not a recording from a running game or a physical Bar.

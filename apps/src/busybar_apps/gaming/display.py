@@ -1,5 +1,7 @@
 """GAMING rolls into the game title; the elapsed-time region stays independent."""
-from PIL import Image, ImageDraw
+from functools import lru_cache
+from pathlib import Path
+from PIL import Image, ImageOps
 from busybar_notifier.model import Notification
 from busybar_notifier.display import detail_elements
 
@@ -11,19 +13,20 @@ def elapsed_text(seconds):
     return f'{hours}:{minutes:02}:{seconds:02}' if hours else f'{minutes:02}:{seconds:02}'
 
 
-def controller_icon(accent):
+@lru_cache(maxsize=3)
+def game_icon(source):
+    """Fit the official site mark to the LED region without stretching it."""
+    with Image.open(Path(__file__).with_name('assets') / (source+'.png')) as original:
+        mark = ImageOps.contain(original.convert('RGBA'), (16,14), Image.Resampling.LANCZOS)
     image = Image.new('RGB', (16,14), 'black')
-    draw = ImageDraw.Draw(image)
-    draw.polygon([(3,3),(12,3),(15,11),(12,12),(9,9),(6,9),(3,12),(0,11)], fill='#B8B8B8')
-    draw.line((2,6,6,6), fill='black');draw.line((4,4,4,8), fill='black')
-    draw.point((11,5), fill=accent);draw.point((13,7), fill=accent)
+    image.paste(mark, ((16-mark.width)//2, (14-mark.height)//2), mark)
     return image
 
 
 def notification(game, seconds=None):
     return Notification('game','info',game.source,'GAMING',game.title,
                         '' if seconds is None else elapsed_text(seconds), note='Client open',
-                        accent=game.accent,icon=controller_icon(game.accent),exit='source')
+                        accent=game.accent,icon=game_icon(game.source).copy(),exit='source')
 
 
 def time_element(game, seconds):

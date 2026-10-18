@@ -14,7 +14,6 @@ import {
   Plane,
   GitPullRequest,
   Terminal,
-  Gamepad2,
   type LucideIcon,
 } from "lucide-react";
 import type { Snapshot } from "./api";
@@ -32,8 +31,7 @@ export type IconName =
   | "settings"
   | "plane"
   | "github"
-  | "terminal"
-  | "gaming";
+  | "terminal";
 export function Icon({
   name,
   ...props
@@ -53,7 +51,6 @@ export function Icon({
     plane: Plane,
     github: GitPullRequest,
     terminal: Terminal,
-    gaming: Gamepad2,
   };
   const Component = icons[name];
   return <Component aria-hidden="true" {...props} />;
@@ -86,25 +83,23 @@ export function AppIcon({ app }: { app: string }) {
         height="28"
       />
     );
-  if (app === "claude" || app === "dots")
+  if (["claude", "dots", "wow", "wow-forever", "maplestory"].includes(app))
     return (
       <img
         className="app-icon"
-        src={`/apps/${app === "claude" ? "claude.png" : "dots.svg"}`}
+        src={`/apps/${app}.${app === "dots" ? "svg" : "png"}`}
         alt=""
         width="28"
         height="28"
       />
     );
-  const icon: IconName = ["wow", "wow-forever", "maplestory"].includes(app)
-    ? "gaming"
-    : app === "adsbao"
-      ? "plane"
-      : app === "github"
-        ? "github"
-        : app === "terminal"
-          ? "terminal"
-          : "services";
+  const icon: IconName = app === "adsbao"
+    ? "plane"
+    : app === "github"
+      ? "github"
+      : app === "terminal"
+        ? "terminal"
+        : "services";
   return (
     <span className={`app-icon app-${app.replace(/[^a-z-]/g, "")}`}>
       <Icon name={icon} />
