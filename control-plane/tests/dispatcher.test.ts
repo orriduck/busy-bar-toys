@@ -1668,3 +1668,81 @@ it.each([1, 32])(
     await displayed(admin);
   },
 );
+
+it.each([false, true])(
+  "lets expired selective-retirement targets leave the retry queue (one target still live: %s)",
+  async (hasLiveTarget) => {
+    const { send, admin, epoch, deviceId } = await setup();
+    const masks = ["expired-mask", ...(hasLiveTarget ? ["live-mask"] : [])].map(
+      (id) => ({ id, type: "rectangle", width: 1, height: 1, opacity: 0 }),
+    );
+    await send("/publish", {
+      ...presentation(epoch),
+      level: "urgent",
+      scene: {
+        entryDurationMs: 0,
+        commands: [
+          {
+            offsetMs: 0,
+            elements: [
+              ...presentation(epoch).scene.commands[0].elements,
+              ...masks,
+            ],
+          },
+        ],
+      },
+    });
+    await displayed(admin);
+    const deletes: string[][] = [];
+    let reject = true;
+    setUpstream(async (request) => {
+      if (request.method === "DELETE") {
+        const body = (await request.json()) as { element_ids?: string[] };
+        deletes.push(body.element_ids || []);
+        return Response.json({}, { status: reject ? 400 : 200 });
+      }
+      return Response.json({ ok: true });
+    });
+    await send("/publish", {
+      ...presentation(epoch),
+      version: 2,
+      level: "urgent",
+    });
+    const stub = env.DEVICES.getByName(deviceId);
+    let pending: State | null = null;
+    for (let i = 0; i < 50; i++) {
+      await admin("/snapshot");
+      pending = await runInDurableObject(stub, (_instance, ctx) =>
+        new StateStore(ctx.storage).load(),
+      );
+      if (
+        pending!.commands[0]?.status === "pending" &&
+        pending!.commands[0]?.attempts > 0
+      )
+        break;
+    }
+    expect(deletes).toHaveLength(1);
+    expect(pending!.displaying).toBeNull();
+    await runInDurableObject(stub, (_instance, ctx) => {
+      const store = new StateStore(ctx.storage),
+        s = store.load()!;
+      s.elementExpiries["expired-mask"].expiresAt = Date.now() - 1;
+      s.commands[0].dueAt = Date.now();
+      store.save(s);
+    });
+    reject = false;
+    await runDurableObjectAlarm(stub);
+    await displayed(admin);
+    expect(deletes).toEqual(
+      hasLiveTarget
+        ? [["expired-mask", "live-mask"], ["live-mask"]]
+        : [["expired-mask"]],
+    );
+    const accepted = await runInDurableObject(stub, (_instance, ctx) =>
+      new StateStore(ctx.storage).load(),
+    );
+    expect(accepted!.admission[0].version).toBe(2);
+    expect(accepted!.nativeElements["expired-mask"]).toBeUndefined();
+    expect(accepted!.commands).toHaveLength(0);
+  },
+);

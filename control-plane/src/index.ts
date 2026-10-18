@@ -133,7 +133,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       | "recovery"
       | "clear"
       | "command_ack"
-      | "command_failed",
+      | "command_failed"
+      | "retirement_expired",
     data: {
       generation: number;
       command?: Command["kind"];
@@ -1551,6 +1552,18 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           this.save(s);
           break;
         }
+        if (cmd.kind === "clear" && cmd.elementIds) {
+          // tick has removed ACKed widgets whose finite device TTL has ended.
+          // Retrying their IDs can fail forever after the namespace disappears.
+          // Unknown draws go through recovery above; never widen this deletion.
+          const retained = cmd.elementIds.filter((id) => s.nativeElements[id]);
+          if (retained.length < cmd.elementIds.length)
+            this.traceDisplay("retirement_expired", {
+              generation: cmd.generation,
+              elementCount: cmd.elementIds.length - retained.length,
+            });
+          cmd.elementIds = retained;
+        }
         // Reserve all assets for the generation before any draw. Playing/pending slots stay pinned.
         if (cmd.kind === "draw") {
           const hashes = (
@@ -1646,7 +1659,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               409,
             );
           });
-          if (cmd.kind === "clear") {
+          if (cmd.kind === "clear" && cmd.elementIds?.length !== 0) {
             this.traceDisplay("clear", {
               generation: cmd.generation,
               scope: cmd.elementIds ? "selective" : "full",
@@ -1660,6 +1673,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                 ? { application_name: NAMESPACE, element_ids: cmd.elementIds }
                 : undefined,
             );
+          } else if (cmd.kind === "clear") {
+            // All targets expired. No write and no device ACK are fabricated.
           } else if (cmd.kind === "upload") {
             const slot = s.slots.find(
               (v) => v.slot === cmd.slot && v.hash === cmd.hash,
@@ -1762,7 +1777,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           if (slot) slot.uploaded = true;
         }
         const acceptedAt = Date.now();
-        if (!cmd.refresh || cmd.kind !== "draw")
+        if (
+          (!cmd.refresh || cmd.kind !== "draw") &&
+          !(cmd.kind === "clear" && cmd.elementIds?.length === 0)
+        )
           this.traceDisplay("command_ack", {
             generation: cmd.generation,
             command: cmd.kind,
