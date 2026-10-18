@@ -63,10 +63,12 @@ def load_computer(runtime):
                 raise ValueError()
             if entry['serviceId'] in ids or entry.get('template') not in ('agent', 'notifier', 'custom'):
                 raise ValueError()
+            if entry.get('priorityGroup') is not None and entry['priorityGroup'] not in ('interception','follow-queue','dispensable'):
+                raise ValueError()
             ids.add(entry['serviceId'])
             if not entry.get('pending') and (not isinstance(entry.get('epoch'), str) or not 1 <= len(entry['epoch']) <= 256):
                 raise ValueError()
-            if set(entry) - {'serviceId', 'template', 'name', 'epoch', 'epochExpiresAt', 'pending', 'fallbackSeconds'}:
+            if set(entry) - {'serviceId', 'template', 'name', 'epoch', 'epochExpiresAt', 'pending', 'fallbackSeconds', 'priorityGroup'}:
                 raise ValueError()
         if any(not valid_id(source) or service_id not in ids for source, service_id in routes.items()):
             raise ValueError()
@@ -139,10 +141,11 @@ def enroll(runtime, url, ticket, *, store=keychain, transport=Transport, secret_
 
 
 @_serialized
-def register_service(runtime, alias, *, name=None, template='notifier', source=None,
+def register_service(runtime, alias, *, name=None, template='notifier', source=None, priority_group=None,
                      store=keychain, transport=Transport, id_factory=None):
     """Register a named local route, retaining its intended ID across lost replies."""
-    if not valid_id(alias) or not valid_id(source or alias) or template not in ('agent', 'notifier', 'custom'):
+    if (not valid_id(alias) or not valid_id(source or alias) or template not in ('agent', 'notifier', 'custom')
+            or priority_group is not None and priority_group not in ('interception','follow-queue','dispensable')):
         raise CloudError('invalid_service')
     name = name or alias.title()
     if not isinstance(name, str) or not 1 <= len(name) <= 80:
@@ -160,6 +163,7 @@ def register_service(runtime, alias, *, name=None, template='notifier', source=N
         if not valid_id(ident) or any(s['serviceId'] == ident for s in config['services'].values()):
             raise CloudError('invalid_service')
         entry = {'serviceId': ident, 'template': template, 'name': name, 'pending': True}
+        if priority_group is not None: entry['priorityGroup'] = priority_group
         config['services'][alias] = entry
         atomic_json(Path(runtime) / FILE, config)
     elif entry['template'] != template:
@@ -173,6 +177,7 @@ def register_service(runtime, alias, *, name=None, template='notifier', source=N
             transport(config['url'], credential).request('POST', '/api/services', {
                 'id': ident, 'name': entry['name'], 'template': entry['template'],
                 'expectedRevision': remote['configRevision'], 'computerId': config['computerId'],
+                **({'priorityGroup':entry['priorityGroup']} if 'priorityGroup' in entry else {}),
             })
         except CloudError:
             # A lost response may have committed. Read once; never invent success.
@@ -186,6 +191,8 @@ def register_service(runtime, alias, *, name=None, template='notifier', source=N
     if (not known or known.get('computerId') != config['computerId'] or known.get('template') != entry['template']
             or not isinstance(known.get('epoch'), str) or not known['epoch']):
         raise CloudError('registration_identity_mismatch')
+    if entry.get('pending') and entry.get('priorityGroup') is not None and known.get('priorityGroup') != entry['priorityGroup']:
+        raise CloudError('registration_priority_mismatch')
     if not entry.get('pending') and entry.get('epoch') != known['epoch']:
         raise CloudError('registration_epoch_changed')
     entry.update(epoch=known['epoch'], epochExpiresAt=known.get('epochExpiresAt'), pending=False)

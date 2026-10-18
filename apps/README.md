@@ -35,3 +35,7 @@ The other notifier apps use the private `notifier.json` file.
   Add its name to `NOTIFIER_APPS` in `busybar_apps/__init__.py`.
 - Keep account names, organization names, and internal commands in the private configuration.
 - Add tests under `apps/tests` with recorded command output.
+
+## Activity apps
+
+[Gaming](src/busybar_apps/gaming/README.md) shows WoW, WoW Forever, and MapleStory while the game client is open. Each game has one owned Dispensable service. Agent and game renderers share the activity publication layer. Games do not use Agent hooks or token accounting.

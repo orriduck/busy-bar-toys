@@ -20,6 +20,7 @@ from busybar_notifier.source import Poller
 from busybar_notifier.config import read_config
 from .cloud_adapter import AgentRenderer, AgentSignals, CloudQueue, RoutedCloudQueue
 from .cloud_registration import FILE as COMPUTER_FILE, load_computer
+from .game_watch import GameWatch
 
 LOG = logging.getLogger('busy-bar')
 
@@ -82,7 +83,7 @@ def watch(args,runtime,repo):
     try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close(); raise RuntimeError('The BUSY Bar observer is already running.') from None
-    clients={}; poller=None; monitor=None; preview=None; stopping=False
+    clients={}; poller=None; monitor=None; preview=None; gaming=None; stopping=False
     def stop(*_):
         nonlocal stopping
         stopping=True
@@ -103,6 +104,11 @@ def watch(args,runtime,repo):
                     or notify_client.config.get('template','notifier')!='notifier'):
                 raise CloudError('setup_required_agent_notifier')
             agent=AgentSignals(AgentRenderer(agent_client,reduced=reduced),CloudQueue(notify_client,reduced=reduced))
+        routes=load_computer(runtime)['routes'] if any(c.config.get('computerId') for c in clients.values()) else {}
+        try:
+            gaming=GameWatch(runtime,clients,routes,reduced=reduced); gaming.start()
+        except (ValueError,OSError):
+            LOG.warning('Game session state is unavailable; game collection is disabled.')
         view=ViewMode(runtime/'cloud-view.json'); known_turns=set(); cleared=set()
         if agent:
             def tombstone(item_id,reason):
@@ -155,6 +161,7 @@ def watch(args,runtime,repo):
                     if key in watcher.dot_thread_ids: event['source']='dots'
                     registry.ingest(event,now); seen[key]=stamp
             if poller: poller.run_due()
+            if gaming: gaming.tick()
             known_turns=registry.known_turns()
             if cleared:
                 view.dismiss(known_turns); cleared.clear()
@@ -171,9 +178,14 @@ def watch(args,runtime,repo):
                     if agent.due: agent.advance()
                 else: agent.hide()
             if now>=next_status:
-                monitor.write_status(runtime/'input-status.json'); next_status=now+5
+                monitor.write_status(runtime/'input-status.json')
+                if gaming:
+                    from busybar_shared.cloud import atomic_json
+                    atomic_json(runtime/'gaming-status.json',{'updatedAt':now,**gaming.diagnostics()})
+                next_status=now+5
             time.sleep(.05 if agent and agent.pending else .25)
     finally:
+        if gaming: gaming.stop()
         if preview: preview.stop()
         if poller: poller.stop()
         if monitor: monitor.stop(); monitor.write_status(runtime/'input-status.json')

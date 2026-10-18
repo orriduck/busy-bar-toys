@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { BROWSER_SESSION_DAYS } from "../session-policy";
 import type { FormEvent } from "react";
 import { api, message } from "./api";
 import { useMutation } from "@tanstack/react-query";
@@ -71,6 +72,10 @@ export function SignIn({
               }
             />
           </Field>
+          <p className="text-sm text-muted-foreground">
+            Stay signed in on this browser for {BROWSER_SESSION_DAYS} days.
+            Signing out or clearing site data ends this session earlier.
+          </p>
           {error && (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>

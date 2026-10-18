@@ -498,3 +498,7 @@ CI 使用 Python 3.10 和 3.14 运行测试。
 
 中文说明沿用英文版的短句、明确术语和单步操作结构。
 本项目独立于 BUSY、OpenAI 和 ADSBao。
+
+## 游戏指示器
+
+[游戏接入说明](apps/src/busybar_apps/gaming/README.zh-CN.md)可注册 WOW、WOW FOREVER 和 MAPLESTORY 三个独立服务，默认位于 Dispensable 组。打开对应客户端后，粗字从 **GAMING** 切换为英文游戏名，下方显示本次已打开时长。关闭客户端后撤回状态。同组服务按 Hold 轮换。

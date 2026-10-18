@@ -24,3 +24,5 @@ Run the complete suite from the repository root:
 ```sh
 .venv/bin/python scripts/run-tests.py
 ```
+
+`activity.ActivityPublisher` provides the shared occurrence lifecycle for Agent and game renderers. It keeps identity, freshness, pending native updates, and withdrawal separate from source detection and cloud scheduling.

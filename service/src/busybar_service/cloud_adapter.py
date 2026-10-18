@@ -11,6 +11,7 @@ from busybar_notifier.presenter import NotificationPresenter
 from busybar_notifier.display import entrance_seconds
 from busybar_notifier.model import status_color, Notification
 from busybar_shared.cloud import CloudError
+from busybar_shared.activity import ActivityPublisher
 
 
 class Capture:
@@ -196,6 +197,7 @@ class AgentRenderer:
     """Use MotionDirector unchanged; publish full recovery and native deltas."""
     def __init__(self,producer,*,reduced=False,clock=None):
         self.producer=producer; self.reduced=reduced
+        self.activity=ActivityPublisher(producer,'agent',identity_field='agentTurn')
         self.capture=Capture(producer); self.motion=MotionDirector(self.capture,reduced=reduced,clock=clock)
         self._task=None; self._args=None; self._last_elements={}
         previous=producer.state.records.get('agent') or {}
@@ -229,36 +231,20 @@ class AgentRenderer:
         content={'app':app,'kind':'event' if state=='standby' else 'agent','level':'info',
                  'title':'Agent '+state,'detail':getattr(self._task,'project','')[:2048],
                  'scene':scene,'actionKeys':[], 'frameSignature':json.dumps(changed,sort_keys=True), 'agentTurn':self._turn}
-        record=self.producer.state.recognize('agent',**content)
-        if record:
-            with self.producer.state.lock:
-                live=self.producer.state.records['agent']
-                if live['acked'] and live['version']>live['acked']:
-                    # Merge pending deltas so a slow publisher cannot lose a
-                    # motion update produced between clock samples.
-                    pending={e['id']:e for e in previous.get('update',[]) if previous.get('itemId')==live['itemId']}
-                    pending.update(changed); live['update']=list(pending.values())
-                self.producer.state.save()
+        self.activity.publish(content,list(changed.values()))
 
     def show(self,task,now,count=1,usage=None):
         state=visual_state(task)
         turn=(getattr(task,'session_id',None),getattr(task,'turn_id',None),state=='standby')
         if task is None and self._turn is not None and self._turn[2]: turn=self._turn
-        if self._turn is not None and turn!=self._turn:
-            # New task/standby is a new finite occurrence. Updates within a turn
-            # keep identity and do not restart native animations or visible time.
-            self.producer.state.clear('agent')
+        self.activity.begin(turn)
         self._turn=turn; self._task=task; self._args=(task,now,count,usage)
         self.motion.show(task,now,count,usage); self._save()
-        with self.producer.state.lock:
-            record=self.producer.state.records.get('agent')
-            if record and not record.get('cleared') and not record.get('tombstone'):
-                record['lastSourceAt']=int(self.producer.clock()*1000)
-                self.producer.state.save()
+        self.activity.renew()
 
     def advance(self): self.motion.advance(); self._save()
     def hide(self):
-        self.producer.state.clear('agent'); self.motion.invalidate(); self._last_elements={}
+        self.activity.hide(); self.motion.invalidate(); self._last_elements={}
 
 
 class AgentSignals:

@@ -509,3 +509,7 @@ See the [agent checker](agent-checker/README.md), the [notifier](notifier/README
 - Writing principles: [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/).
 
 This project is independent of BUSY, OpenAI, and ADSBao.
+
+## Game indicators
+
+[Gaming setup](apps/src/busybar_apps/gaming/README.md) adds separate WoW, WoW Forever, and MapleStory services. They start in the Dispensable group. Open a supported game client to show **GAMING**, then its English name and elapsed client-open time. Close the client to withdraw its activity. Equal services rotate by Hold.

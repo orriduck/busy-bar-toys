@@ -1,6 +1,6 @@
 import { requireThat } from "./model";
 /** Fixed browser lifetime; logout still revokes the server-side session. */
-export const BROWSER_SESSION_SECONDS = 30 * 24 * 60 * 60;
+export { BROWSER_SESSION_SECONDS } from "../session-policy";
 const enc = new TextEncoder();
 export function base64(bytes: Uint8Array) {
   let str = "";

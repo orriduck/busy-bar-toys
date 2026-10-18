@@ -235,3 +235,25 @@ class RegistrationTest(unittest.TestCase):
             self.assertEqual(registration.migrate_outboxes(root),0)
             old['actions']={'a':{'status':'unknown'}};atomic_json(root/'cloud-notifier-state.json',old)
             with self.assertRaisesRegex(CloudError,'local_action_unresolved'):registration.migrate_outboxes(root)
+
+    def test_game_registration_sends_requested_group_without_changing_other_services(self):
+        from busybar_shared.cloud import atomic_json
+        store=Store([]);store.value=CREDENTIAL;remote=[];requests=[]
+        class HTTP:
+            def __init__(self,*_):pass
+            def request(self,method,path,body=None):
+                if path=='/api/services':
+                    requests.append(body)
+                    remote.append({**body,'epoch':'e'})
+                    return {}
+                return {'deviceId':DEVICE,'computerId':COMPUTER,'configRevision':len(remote),'services':remote}
+        with tempfile.TemporaryDirectory() as folder:
+            atomic_json(Path(folder)/registration.FILE,{'url':'https://control.test','deviceId':DEVICE,
+                'computerId':COMPUTER,'instanceId':'mac','phase':'active','services':{},'routes':{}})
+            registration.register_service(folder,'wow',template='custom',priority_group='dispensable',
+                store=store,transport=HTTP,id_factory=lambda:'wow-id')
+            self.assertEqual(requests[0]['priorityGroup'],'dispensable')
+            registration.register_service(folder,'wow',template='custom',priority_group='dispensable',store=store,transport=HTTP)
+            self.assertEqual(len(requests),1)
+            with self.assertRaisesRegex(CloudError,'invalid_service'):
+                registration.register_service(folder,'bad',priority_group='invalid',store=store,transport=HTTP)

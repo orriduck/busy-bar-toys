@@ -62,6 +62,10 @@ def install(*, reduced_motion=False, mode="standalone"):
     if mode == "cloud":
         from .cloud_watch import configurations
         configurations(RUNTIME)
+        from .cloud_registration import FILE as COMPUTER_FILE, load_computer
+        from busybar_apps.gaming import GAMES
+        if (RUNTIME/COMPUTER_FILE).exists() and set(load_computer(RUNTIME)['routes']) & {g.source for g in GAMES}:
+            subprocess.run([sys.executable,str(REPO/'scripts/build-app-observer.py')],check=True)
     else:
         read_token()  # Fail before changing any service files if credentials aren't ready.
     from busybar_apps.adsbao.checker import read_config as read_aircraft_config
@@ -499,6 +503,9 @@ def main(argv=None):
     command.add_argument('--name')
     command.add_argument('--template', choices=('agent', 'notifier', 'custom'))
     command.add_argument('--source', help='Local source name or app routed to this service')
+    command.add_argument('--priority-group', choices=('interception','follow-queue','dispensable'))
+    sub.add_parser('gaming-setup',help='Build local app detection and register three Dispensable game services')
+    sub.add_parser('gaming-status',help='Show recognized game sources without local paths or process inventory')
     command = sub.add_parser('cloud-route', help='Route a local source to any registered service owned by this computer')
     command.add_argument('source')
     command.add_argument('service_id')
@@ -538,6 +545,12 @@ def main(argv=None):
     # request traces out of the service log; our diagnostics contain no URL.
     logging.getLogger('httpx2').setLevel(logging.WARNING)
     try:
+        if args.command == 'gaming-setup':
+            from .gaming_commands import setup_games
+            return setup_games(RUNTIME,REPO)
+        if args.command == 'gaming-status':
+            from .gaming_commands import game_status
+            return game_status(RUNTIME)
         if args.command in ('cloud-enroll', 'cloud-migrate', 'cloud-register', 'cloud-pair', 'cloud-route', 'cloud-handover'):
             from . import cloud_registration as registration
             if args.command == 'cloud-enroll':
@@ -548,7 +561,8 @@ def main(argv=None):
                 print('Computer enrolled:', value['computerId'])
             elif args.command == 'cloud-register':
                 value = registration.register_service(RUNTIME, args.alias, name=args.name,
-                    template=args.template or ('agent' if args.alias == 'codex' else 'notifier'), source=args.source)
+                    template=args.template or ('agent' if args.alias == 'codex' else 'notifier'), source=args.source,
+                    **({'priority_group':args.priority_group} if args.priority_group else {}))
                 print('Registered service:', value['services'][args.alias]['serviceId'])
             elif args.command == 'cloud-route':
                 registration.route_service(RUNTIME, args.source, args.service_id)

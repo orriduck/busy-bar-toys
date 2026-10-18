@@ -14,6 +14,7 @@ import {
   Plane,
   GitPullRequest,
   Terminal,
+  Gamepad2,
   type LucideIcon,
 } from "lucide-react";
 import type { Snapshot } from "./api";
@@ -31,7 +32,8 @@ export type IconName =
   | "settings"
   | "plane"
   | "github"
-  | "terminal";
+  | "terminal"
+  | "gaming";
 export function Icon({
   name,
   ...props
@@ -51,6 +53,7 @@ export function Icon({
     plane: Plane,
     github: GitPullRequest,
     terminal: Terminal,
+    gaming: Gamepad2,
   };
   const Component = icons[name];
   return <Component aria-hidden="true" {...props} />;
@@ -93,8 +96,9 @@ export function AppIcon({ app }: { app: string }) {
         height="28"
       />
     );
-  const icon: IconName =
-    app === "adsbao"
+  const icon: IconName = ["wow", "wow-forever", "maplestory"].includes(app)
+    ? "gaming"
+    : app === "adsbao"
       ? "plane"
       : app === "github"
         ? "github"
