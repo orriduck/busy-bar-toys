@@ -119,3 +119,14 @@ class GameWatchTest(unittest.TestCase):
         restarted.show('session',2)
         self.producer.flush()
         self.assertTrue(any(call.args[1]=='/api/publish' for call in self.producer.http.request.call_args_list))
+
+    def test_timer_uses_the_cloud_element_contract_for_scene_and_deltas(self):
+        renderer=GameRenderer(self.producer,GAMES[0],reduced=True)
+        renderer.show('session',1)
+        record=self.producer.state.records['game'];record['acked']=record['version']
+        renderer.show('session',2)
+        record=self.producer.state.records['game']
+        elements=[e for c in record['scene']['commands'] for e in c['elements']]+record['update']
+        forbidden={'timeout','display_until','application_name','path'}
+        self.assertTrue(all(not forbidden.intersection(e) for e in elements),
+                        'Native-only fields are rejected by the cloud ELEMENT_FIELD_NOT_ALLOWED contract')

@@ -8,7 +8,7 @@ from busybar_shared.running_apps import RunningApps
 from busybar_apps.gaming import GAMES
 from busybar_apps.gaming.sessions import GameSessions
 from busybar_apps.gaming.display import notification, time_element, elapsed_text
-from .cloud_adapter import notification_scene
+from .cloud_adapter import Capture, notification_scene
 
 LOG = logging.getLogger('busy-bar')
 
@@ -23,7 +23,7 @@ class GameRenderer:
         self.activity.unknown()
 
     def show(self, session, elapsed):
-        timer = time_element(self.game,elapsed)
+        timer = Capture(self.producer).convert([time_element(self.game,elapsed)])[0]
         signature = (session, timer['text'])
         if signature == self._last:
             self.activity.renew()
