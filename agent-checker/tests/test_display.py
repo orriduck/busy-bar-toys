@@ -10,14 +10,6 @@ load_agents()
 
 
 class DisplayTests(unittest.TestCase):
-    def test_codex_whole_turn_average_is_labelled_separately_from_claude_reply_rate(self):
-        for source, labelled in (('codex',True),('dots',True),('claude',False)):
-            task=self.task(source)
-            known=render(task,100,usage=TokenUsage(21,25))[1]
-            unknown=render(task,100)[1]
-            different=known.crop((36,21,160,29)).tobytes()!=unknown.crop((36,21,160,29)).tobytes()
-            self.assertEqual(different,labelled,source)
-
     def task(self, source="chatgpt", state="working", project="中文项目"):
         return SimpleNamespace(source=source, state=state, project=project,
                                started_at=100, updated_at=100)

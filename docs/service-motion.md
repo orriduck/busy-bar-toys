@@ -60,32 +60,27 @@ latency. The ADSBao source and registration identity remain `adsbao`; its new
 
 ![ADSBao old and new mark](images/adsbao-icon-before-after.png)
 
-Codex's optional rate uses attributed per-turn usage and the corresponding
-positive monotonic duration, labelled **TURN AVG** on the back display. It
-includes tools, waiting, thinking, first-token latency and retries; output
-reasoning is counted once. The parser change does not enable a new event feed
-or grant session-directory access. See [supported Codex input fields](../apps/src/busybar_apps/codex/README.md).
+Codex metadata access remains blocked and is outside this animation release.
+The existing Codex unknown-rate behavior and PR63 reply-throughput fixes remain
+unchanged. This release adds no data feed, hook or session-directory access.
 
 ## Controlled device preview before deployment
 
 Temporary synthetic occurrences were sent through the existing binding and
 withdrawn or confirmed terminal afterwards. This did not install the new observer
 or control-plane code. Actual firmware captures confirmed native coin playback,
-the new ADSBao mark, z-index 255 black masks on both service canvases, and the
-synthetic Codex parser result (`938 / 37 s`, OUT 25/s) with its TURN AVG label.
+the new ADSBao mark and z-index 255 black masks on both service canvases.
 Firmware-owned status icons remained visible alongside the black back canvas.
 
 [Device coin capture](images/actual-service-coin.gif)
-
-![Synthetic Codex turn average on the actual back display](images/actual-codex-turn-average.png)
 
 ![Actual back service canvas under the opaque mask](images/actual-service-black-back.png)
 
 These captures establish asset/display compatibility. The new exit scheduler's
 200/200 ms boundaries are verified with an injected monotonic clock and mocked
 native acknowledgements; physical WAN transition timing still needs acceptance
-after a reviewed deployment. The current Mac's real Codex event feed was not
-accessible, so the synthetic rate does not establish live Codex throughput.
+after a reviewed deployment. These animation captures do not establish live
+Codex throughput.
 
 
 A revised native fade preview used two small RLE assets (front 526 B, back
