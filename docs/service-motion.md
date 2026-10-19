@@ -12,7 +12,7 @@ scene without another HTTP request, upload, host timer or layer deletion.
 
 Every non-looping first-command animation contains a200ms black prefix. Its
 original selected RGB/RGBA raw/RLE frame records and frame rate are copied
-byte-for-byte after that prefix. Later scene commands move by200ms, and any
+byte-for-byte after that prefix before the transport compaction below. Later scene commands move by200ms, and any
 first-command scrolling text gains200ms start delay. The original icon and text
 entrances therefore start at reveal rather than playing away behind the mask.
 At30FPS the six prefix frames use the firmware's33ms integer timer (198ms);
@@ -69,6 +69,40 @@ Third-party scenes without `entryLeadMs: 200` retain the legacy outgoing
 transition. The earlier fade/host-black path and inline-fence patch observed
 multi-second actual black intervals; those observations are historical and do
 not validate this prepared path. Reduced-motion adapters remain static.
+
+## Lossless scene transport
+
+The Python cloud producer compacts valid `bicycle0` raw RGB/RGBA frame records
+using the firmware's existing RLE format before hashing or uploading. Existing
+RLE records and incompressible raw records stay unchanged. Decoded pixels,
+partial alpha, FPS, frame durations and section periods remain identical;
+section offsets and the input-buffer bound are recalculated. The original
+256 KiB asset limit still applies before compaction. Other native variants
+retain the previous upload behavior.
+
+Cloud notification scenes omit the standalone presenter's transparent exit
+unmask, which never performs an exit in that adapter. The control plane owns
+cloud masks and old-layer retirement. Original text entrance/completion frames
+and the icon's transparent renewal target remain; standalone exits are unchanged.
+An encoding fingerprint rebuilds cached notification scenes once while keeping
+the occurrence identity and deadline.
+
+Matching asset-upload acknowledgements are retained across producer restarts
+within the same epoch for at most30 minutes. They are cache hints, not admission
+or display proof. Expired/future timestamps are ignored; epoch changes clear
+them. `ASSET_NOT_AUTHORIZED` invalidates them and forces asset re-upload before
+one retry of the exact frozen content request. HTTP stays outside the local
+state lock, uploads stay sequential, and native commit still waits for all
+required assets. No early display confirmation or new concurrency is introduced.
+
+An offline public ADSBao fixture shrank from276,768 bytes/six assets to54,646
+bytes/five assets; the text entrance alone shrank from204,216 to43,178 bytes.
+Across all six fixtures, independent decoders verified696 identical frame
+records, and151 front composites per scene matched after the unchanged200ms
+native-mask lead. Mocked cold/warm/restart request counts verify the cache
+behavior. These are byte and semantic checks, not measurements of real upload
+latency, device decode cost, first-pixel time or physical200ms timing. The
+transport change still requires separate authorized hardware acceptance.
 
 ## Icon and original text entrance
 
