@@ -11,6 +11,7 @@ export function referencedHashes(s: State) {
       for (const e of c.elements) if (e.assetHash) hashes.add(e.assetHash);
   for (const c of s.commands) {
     if (c.hash) hashes.add(c.hash);
+    for (const hash of c.preparedAssetHashes ?? []) hashes.add(hash);
     for (const e of c.elements ?? []) if (e.assetHash) hashes.add(e.assetHash);
   }
   return hashes;
@@ -29,6 +30,7 @@ export function pinnedSlots(s: State) {
       for (const e of c.elements) if (e.assetHash) hashes.add(e.assetHash);
   for (const c of s.commands) {
     if (c.hash) hashes.add(c.hash);
+    for (const hash of c.preparedAssetHashes ?? []) hashes.add(hash);
     for (const e of c.elements ?? []) if (e.assetHash) hashes.add(e.assetHash);
   }
   return new Set(

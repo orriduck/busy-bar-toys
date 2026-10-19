@@ -13,7 +13,7 @@ from busybar_notifier.display import entrance_seconds
 from busybar_shared.native import encode_sections
 from busybar_shared.cloud import CloudError
 from busybar_shared.activity import ActivityPublisher
-from busybar_shared.service_entry import ENTRY_FPS, ENTRY_SECONDS, wrap_scene
+from busybar_shared.service_entry import ENTRY_FPS, ENTRY_SECONDS, ENTRY_LEAD_MS, wrap_scene
 
 
 class Capture:
@@ -132,7 +132,7 @@ class CloudQueue:
         # Persisted occurrences can survive a service upgrade without changing
         # their title/detail. Rebuild their recovery scene once when the entry
         # encoder or reduced-motion mode changes; keep the occurrence itself.
-        fingerprint=json.dumps({'content':content,'entry':[ENTRY_SECONDS,ENTRY_FPS],
+        fingerprint=json.dumps({'content':content,'entry':[ENTRY_SECONDS,ENTRY_FPS,ENTRY_LEAD_MS],
                                 'reduced':self.reduced},sort_keys=True)
         if (existing and existing.get('localFingerprint')==fingerprint and not existing.get('cleared')
                 and not existing.get('renderPending')):

@@ -16,6 +16,11 @@ import {
   visibleHandoff,
   type ServiceMotion,
 } from "./service-motion";
+import {
+  PREPARED_ENTRY_PREFIX,
+  materializePreparedElements,
+  setPreparedEntryIds,
+} from "./prepared-handoff";
 /** Deterministic v5 state machine. Every operation is persisted atomically by DeviceControl. */
 export class ProtocolError extends Error {
   constructor(
@@ -43,6 +48,7 @@ export type Element = {
 export interface Scene {
   ledColor?: string;
   entryDurationMs: number;
+  entryLeadMs?: 0 | 200;
   commands: { offsetMs: number; elements: Element[] }[];
 }
 export interface Config {
@@ -156,6 +162,8 @@ export interface Command {
   handoffReclaimed?: boolean;
   /** Internal exit command; not scene content and never admission proof. */
   motionId?: number;
+  prepared?: "pending" | "commit" | "fallback";
+  preparedAssetHashes?: string[];
 }
 export interface Asset {
   hash: string;
@@ -220,6 +228,7 @@ export interface State {
   pairings: Record<string, { computerId: string; expiresAt: number }>;
   elementExpiries: Record<string, { type: Element["type"]; expiresAt: number }>;
   nativeElements: Record<string, Element>;
+  preparedEntryIds?: Record<string, string>;
   /** A sent draw with an uncertain response requires complete namespace recovery. */
   nativeRecoveryRequired?: boolean;
   serviceMotion?: ServiceMotion;
@@ -525,6 +534,12 @@ export function validateElements(value: unknown): Element[] {
 export function validateScene(v: unknown): Scene {
   const x = record(v);
   const entryDurationMs = integer(x.entryDurationMs, 0, 10_000);
+  if (x.entryLeadMs !== undefined)
+    requireThat(
+      (x.entryLeadMs === 0 || x.entryLeadMs === 200) &&
+        entryDurationMs >= Number(x.entryLeadMs),
+      "INVALID_ENTRY_LEAD",
+    );
   requireThat(
     Array.isArray(x.commands) &&
       x.commands.length > 0 &&
@@ -540,7 +555,10 @@ export function validateScene(v: unknown): Scene {
     const elements = validateElements(c.elements);
     requireThat(
       elements.every(
-        (e) => !isMotionElement(e.id) && Number(e.z_index ?? 0) < 255,
+        (e) =>
+          !isMotionElement(e.id) &&
+          !e.id.startsWith(PREPARED_ENTRY_PREFIX) &&
+          Number(e.z_index ?? 0) < 255,
       ),
       "COMPOSITOR_LAYER_RESERVED",
     );
@@ -554,6 +572,9 @@ export function validateScene(v: unknown): Scene {
     );
   return {
     entryDurationMs,
+    ...(x.entryLeadMs === undefined
+      ? {}
+      : { entryLeadMs: x.entryLeadMs as 0 | 200 }),
     commands,
     ...(x.ledColor ? { ledColor: String(x.ledColor) } : {}),
   };
@@ -772,6 +793,9 @@ export function enqueue(
 ) {
   s.commands.push({
     ...command,
+    ...(command.kind === "draw" && command.elements
+      ? { elements: materializePreparedElements(s, command.elements) }
+      : {}),
     id: ++s.commandSeq,
     status: "pending",
     attempts: 0,
@@ -782,15 +806,19 @@ function switchTo(s: State, next: Item | null, now: number) {
   // Only acknowledged content needs an exit. Initial/cold scenes retain their
   // existing recovery behavior. The same exit survives every candidate change.
   if (
+    next &&
+    next.scene.entryLeadMs !== 200 &&
     (!s.serviceMotion || visibleHandoff(s)) &&
     Object.keys(s.nativeElements).length
   )
     s.serviceMotion = { id: s.commandSeq + 1, phase: "fade", elapsedMs: 0 };
+  if (!next || next.scene.entryLeadMs === 200) delete s.serviceMotion;
   const prior = s.selected ? s.items[s.selected] : null;
   if (prior && prior.state !== "paused" && prior.state !== "snoozed")
     prior.state = "preempted";
   s.generation++;
   s.selected = next?.itemKey ?? null;
+  setPreparedEntryIds(s);
   s.applying = next?.itemKey ?? null;
   s.displaying = null;
   s.visibleSince = null;
@@ -808,7 +836,7 @@ function switchTo(s: State, next: Item | null, now: number) {
       dueAt: now,
       motionId: s.serviceMotion.id,
     });
-  if (!next || initial)
+  if (!next || (initial && next.scene.entryLeadMs !== 200))
     enqueue(s, { generation: s.generation, kind: "clear", dueAt: now });
   if (next) {
     next.state = "applying";
@@ -826,7 +854,14 @@ function switchTo(s: State, next: Item | null, now: number) {
         kind: "draw",
         dueAt: now + c.offsetMs,
         elements: c.elements,
-        ...(index === 0 ? { handoff: true } : {}),
+        ...(index === 0
+          ? {
+              handoff: true,
+              ...(next.scene.entryLeadMs === 200
+                ? { prepared: "pending" as const }
+                : {}),
+            }
+          : {}),
       });
   }
   s.revision++;
@@ -942,6 +977,8 @@ export function tick(s: State, now: number) {
         if (element.assetHash) pinnedHashes.add(element.assetHash);
   for (const command of s.commands) {
     if (command.hash) pinnedHashes.add(command.hash);
+    for (const hash of command.preparedAssetHashes ?? [])
+      pinnedHashes.add(hash);
     for (const element of command.elements ?? [])
       if (element.assetHash) pinnedHashes.add(element.assetHash);
   }

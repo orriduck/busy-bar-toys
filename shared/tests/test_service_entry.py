@@ -2,7 +2,7 @@ import math
 import struct
 import unittest
 from PIL import Image, ImageDraw
-from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_FPS, coin_motion, coin_pose, coin_frame, coin_asset, wrap_scene
+from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_FPS, ENTRY_LEAD_MS, coin_motion, coin_pose, coin_frame, coin_asset, wrap_scene
 
 
 class ServiceEntryTests(unittest.TestCase):
@@ -61,24 +61,30 @@ class ServiceEntryTests(unittest.TestCase):
     def test_scene_wrap_is_local_and_never_mutates_other_scene_elements(self):
         from copy import deepcopy
         from types import SimpleNamespace
-        assets={}
+        import base64,hashlib
+        assets={};stored={}
         def asset(name,data):
-            assets[name]=data
-            return name
-        producer=SimpleNamespace(asset=asset)
+            key=hashlib.sha256(data).hexdigest()
+            assets[name]=data;stored[key]={'data':base64.b64encode(data).decode()}
+            return key
+        producer=SimpleNamespace(asset=asset,state=SimpleNamespace(data={'assets':stored}))
         scene={'entryDurationMs':1700,'commands':[{'offsetMs':0,'elements':[
-            {'id':'title','type':'text','display':'front','x':17,'text':'WORDS'},
+            {'id':'title','type':'text','display':'front','x':17,'text':'WORDS',
+             'scroll_rate':1500,'scroll_start_delay':1000},
             {'id':'back','type':'xpmbitmap','display':'back','data':'unchanged'}]}]}
         original=deepcopy(scene)
         wrapped=wrap_scene(producer,scene,self.face,position=(0,1))
         self.assertEqual(scene,original)
-        self.assertEqual(wrapped['commands'][0]['elements'][:2],original['commands'][0]['elements'])
+        self.assertEqual(wrapped['commands'][0]['elements'][0],
+                         {**original['commands'][0]['elements'][0],'scroll_start_delay':1200})
+        self.assertEqual(wrapped['commands'][0]['elements'][1],original['commands'][0]['elements'][1])
         entry=wrapped['commands'][0]['elements'][-1]
         self.assertEqual((entry['x'],entry['y']),(0,1))
         header=struct.unpack_from('<8sBBBBBHBIIIII',assets['service-entry.anim'])
         self.assertEqual((header[2],header[3]),(16,14))
-        self.assertEqual(wrapped['entryDurationMs'],1700)
-        self.assertEqual(wrapped['commands'][-1]['offsetMs'],round(ENTRY_SECONDS*1000))
+        self.assertEqual(wrapped['entryDurationMs'],1700+ENTRY_LEAD_MS)
+        self.assertEqual(wrapped['entryLeadMs'],ENTRY_LEAD_MS)
+        self.assertEqual(wrapped['commands'][-1]['offsetMs'],round(ENTRY_SECONDS*1000)+ENTRY_LEAD_MS)
         with self.assertRaises(ValueError):wrap_scene(producer,scene,Image.new('RGB',(72,16)))
 
 

@@ -244,8 +244,15 @@ export function nativeMotionAssets() {
 
 /** Internal public assets gain no producer ownership and obey existing cache bounds. */
 export function cacheNativeMotionAssets(state: State, now: number): boolean {
-  const assets = nativeMotionAssets(),
-    missing = assets.filter((a) => !state.assets[a.hash]);
+  return cacheInternalAssets(state, now, nativeMotionAssets());
+}
+
+export function cacheInternalAssets(
+  state: State,
+  now: number,
+  assets: ReturnType<typeof nativeMotionAssets>,
+): boolean {
+  const missing = assets.filter((a) => !state.assets[a.hash]);
   if (
     assets.some(
       (a) =>
@@ -284,16 +291,18 @@ export function cacheNativeMotionAssets(state: State, now: number): boolean {
 }
 
 /** Counts only: diagnostics never include content, asset hashes or item keys. */
-export function nativeMotionCapacity(state: State, pins: Set<number>) {
+export function nativeMotionCapacity(
+  state: State,
+  pins: Set<number>,
+  assets = nativeMotionAssets(),
+) {
   return {
     cachedAssets: Object.keys(state.assets).length,
     cachedAssetBytes: Object.values(state.assets).reduce(
       (n, a) => n + a.bytes,
       0,
     ),
-    missingMotionAssets: nativeMotionAssets().filter(
-      (a) => !state.assets[a.hash],
-    ).length,
+    missingMotionAssets: assets.filter((a) => !state.assets[a.hash]).length,
     slotCount: state.slots.length,
     slotBytes: state.slots.reduce((n, s) => n + s.bytes, 0),
     pinnedSlotCount: pins.size,
@@ -307,10 +316,10 @@ export function nativeMotionCapacity(state: State, pins: Set<number>) {
 export function reuseNativeMotionSlots(
   state: State,
   pins: Set<number>,
+  assets = nativeMotionAssets(),
 ): boolean {
   const plan = state.slots.map((slot) => ({ ...slot }));
-  const assets = nativeMotionAssets(),
-    reserved = new Set(pins);
+  const reserved = new Set(pins);
   for (const asset of assets) {
     let slot = plan.find(
       (value) => value.hash === asset.hash && value.type === "anim",

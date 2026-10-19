@@ -6,8 +6,9 @@ delivered frames, to fence the entrance. Firmware playback and WAN scheduling
 remain separate from the host monotonic clock.
 """
 import math
+import base64
 from PIL import Image, ImageEnhance, ImageOps
-from .native import encode_sections
+from .native import encode_sections, prefix_native_section
 
 # 50 FPS has an exact 20ms native timer period (firmware uses integer 1000/fps).
 # Two revolutions finish in 540ms. The first sampled step is <90 degrees, so
@@ -15,6 +16,7 @@ from .native import encode_sections
 ENTRY_SECONDS = .54
 ENTRY_FPS = 50
 ENTRY_ID = 'shared-service-entry'
+ENTRY_LEAD_MS = 200
 
 
 def coin_motion(elapsed, *, duration=ENTRY_SECONDS):
@@ -86,5 +88,21 @@ def wrap_scene(producer, scene, icon, *, position=(0,1)):
     # services cannot replay their entrance when the native TTL is renewed.
     result['commands'].append({'offsetMs':milliseconds,'elements':[{**layer,'assetHash':clear,'section':'clear'}]})
     result['commands'].sort(key=lambda command:command['offsetMs'])
-    result['entryDurationMs'] = max(result['entryDurationMs'],milliseconds)
+    # The control plane preloads the complete scene, then commits it together
+    # with device-local black/reveal masks. Non-loop players wait on-device,
+    # so neither the coin nor text/masks consume their entrance under black.
+    for command in result['commands']:
+        if command['offsetMs']>0:
+            command['offsetMs']+=ENTRY_LEAD_MS
+            continue
+        for element in command['elements']:
+            if element['type']=='animation' and not element.get('loop',False):
+                original=producer.state.data['assets'][element['assetHash']]
+                data=prefix_native_section(base64.b64decode(original['data']),
+                                           element.get('section','default'),lead_ms=ENTRY_LEAD_MS)
+                element['assetHash']=producer.asset('prepared-service-entry.anim',data)
+            elif element['type']=='text' and element.get('scroll_rate',0)>0:
+                element['scroll_start_delay']=element.get('scroll_start_delay',0)+ENTRY_LEAD_MS
+    result['entryLeadMs']=ENTRY_LEAD_MS
+    result['entryDurationMs'] = max(result['entryDurationMs'],milliseconds)+ENTRY_LEAD_MS
     return result

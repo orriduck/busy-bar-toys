@@ -527,12 +527,20 @@ class Producer:
         if any(i.get('serviceId',self.config['serviceId'])!=self.config['serviceId'] for i in snapshot.get('items',[])):
             raise CloudError('scope_violation')
         self.guard.snapshot(snapshot)
+        # Receipt history grows over the enrollment lifetime. Index our exact
+        # scoped keys once instead of serializing every record for every receipt
+        # on each SSE, poll and heartbeat snapshot. Keep durable reconciliation
+        # and callbacks in State.tombstone, including repeated fallback updates.
+        with self.state.lock:
+            receipt_ids={json.dumps([self.config['serviceId'],self.config['instanceId'],rec['itemId']],
+                                    separators=(',',':')):rec['itemId']
+                         for rec in self.state.records.values()}
         for tomb in snapshot.get('tombstones',[]):
-            for rec in list(self.state.records.values()):
-                key=json.dumps([self.config['serviceId'],self.config['instanceId'],rec['itemId']],separators=(',',':'))
-                if tomb.get('itemKey')==key:
-                    changed=self.state.tombstone(rec['itemId'],tomb.get('reason','ended'))
-                    if changed and self.on_tombstone: self.on_tombstone(rec['itemId'],tomb.get('reason'))
+            key=tomb.get('itemKey')
+            item_id=receipt_ids.get(key) if isinstance(key,str) else None
+            if item_id is not None:
+                changed=self.state.tombstone(item_id,tomb.get('reason','ended'))
+                if changed and self.on_tombstone: self.on_tombstone(item_id,tomb.get('reason'))
         now=self.clock()*1000
         display=snapshot.get('displaying') or {}
         for item in snapshot.get('items',[]):
