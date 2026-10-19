@@ -22,8 +22,17 @@ def decode_asset(data):
     frames=[];p=36+h[8]
     for _ in range(h[11]):
         encoding,duration,size=struct.unpack_from('<BBH',data,p)
-        if encoding!=0 or duration!=1:raise ValueError('Preview supports raw single-duration frames')
+        if encoding not in (0,1) or duration!=1:raise ValueError('Preview supports raw/RLE single-duration frames')
         raw=data[p+4:p+4+size];mode='RGBA' if h[4]==2 else 'RGB'
+        if encoding==1:
+            stride=4 if h[4]==2 else 3;decoded=bytearray();i=0
+            while i<len(raw):
+                opcode=raw[i];i+=1;count=opcode&127
+                take=count*stride if opcode&128 else stride
+                if not count or i+take>len(raw):raise ValueError('Invalid RLE preview frame')
+                decoded.extend(raw[i:i+take] if opcode&128 else raw[i:i+take]*count);i+=take
+            if len(decoded)!=h[2]*h[3]*stride:raise ValueError('Invalid RLE preview size')
+            raw=bytes(decoded)
         frames.append(Image.frombytes(mode,(h[2],h[3]),raw,'raw','BGRA' if h[4]==2 else 'BGR'))
         p+=4+size
     return h[5],sections,frames

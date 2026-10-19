@@ -6,6 +6,72 @@ from PIL import Image,ImageChops
 
 FPS=30
 
+
+def _rle_pixels(raw, stride):
+    """Firmware RLE: 1..127 repeated or literal BGR/BGRA pixel blocks."""
+    pixels=[raw[i:i+stride] for i in range(0,len(raw),stride)]
+    out=bytearray();index=0
+    while index<len(pixels):
+        count=1
+        while count<127 and index+count<len(pixels) and pixels[index+count]==pixels[index]:count+=1
+        if count>1:
+            out.append(count);out.extend(pixels[index]);index+=count
+        else:
+            start=index;index+=1
+            while index<len(pixels) and index-start<127:
+                if index+1<len(pixels) and pixels[index]==pixels[index+1]:break
+                index+=1
+            out.append(0x80|(index-start));out.extend(raw[start*stride:index*stride])
+    return bytes(out)
+
+
+def compact_native_asset(data):
+    """Losslessly shrink raw bicycle0 records; retain sections and playback.
+
+    Already-RLE records remain byte-identical. Incompressible raw records stay
+    raw. Section offsets and the compressed-input buffer bound are recalculated;
+    pixel format, alpha, FPS, frame durations and section periods never change.
+    Malformed/unsupported containers raise ValueError for the caller to retain.
+    """
+    if not isinstance(data,bytes) or len(data)<36:raise ValueError('Invalid native asset')
+    h=list(struct.unpack_from('<8sBBBBBHBIIIII',data));body_start=36+h[8]
+    if (h[0]!=b'bicycle0' or h[1]!=0 or h[4] not in (0,2) or not h[2] or not h[3]
+            or not h[5] or not h[10] or not h[11] or body_start+h[9]!=len(data)):
+        raise ValueError('Unsupported native asset')
+    sections=[];position=36
+    try:
+        for _ in range(h[10]):
+            if position+14>body_start:raise ValueError()
+            first,last,old_offset,period=struct.unpack_from('<IIIB',data,position)
+            end=data.index(b'\0',position+13,body_start)
+            name=data[position+13:end]
+            if not name or not name.isascii() or not 0<=first<=last<h[11]:raise ValueError()
+            sections.append((first,last,old_offset,period,name));position=end+1
+        if position!=body_start:raise ValueError()
+        records=[];starts=[];new_starts=[];position=body_start;new_position=body_start;changed=False
+        stride=4 if h[4]==2 else 3
+        for _ in range(h[11]):
+            if position+4>len(data):raise ValueError()
+            encoding,duration,size=struct.unpack_from('<BBH',data,position)
+            if encoding not in (0,1) or not duration or not size or position+4+size>len(data):raise ValueError()
+            starts.append(position);new_starts.append(new_position)
+            record=data[position:position+4+size]
+            if encoding==0:
+                raw=record[4:]
+                if len(raw)!=h[2]*h[3]*stride:raise ValueError()
+                packed=_rle_pixels(raw,stride)
+                if len(packed)<len(raw):
+                    record=struct.pack('<BBH',1,duration,len(packed))+packed;changed=True
+            records.append(record);position+=4+size;new_position+=len(record)
+        if position!=len(data) or any(old!=starts[first] for first,_,old,_,_ in sections):raise ValueError()
+    except (ValueError,struct.error):
+        raise ValueError('Invalid native records or sections') from None
+    if not changed:return data
+    table=b''.join(struct.pack('<IIIB',first,last,new_starts[first],period)+name+b'\0'
+                   for first,last,_,period,name in sections)
+    body=b''.join(records);h[6]=max(len(r)-4 for r in records);h[9]=len(body)
+    return struct.pack('<8sBBBBBHBIIIII',*h)+table+body
+
 def encode_sections(size, sections, *, rgba=False, fps=FPS):
     width,height=size
     if not (1<=width<=255 and 1<=height<=255 and 1<=fps<=255):

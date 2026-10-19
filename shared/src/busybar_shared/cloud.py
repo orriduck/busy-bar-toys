@@ -28,6 +28,7 @@ LOCAL_ASSET_BYTES = 8 * 1024 * 1024
 LOCAL_RECORDS = 4096
 LOCAL_ACTIONS = 512
 LOCAL_INPUTS = 2048
+ASSET_ENCODING_VERSION = 'native-rle-v1'
 DELIVERY_FAILURE_REASONS = frozenset(('expired', 'epoch-expired', 'epoch_expired', 'heartbeat-expired', 'source-expired'))
 IDENTIFIER = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 HELPER = Path(__file__).resolve().parents[3] / '.venv/bin/busy-cloud-keychain'
@@ -510,11 +511,18 @@ class Producer:
         with self.state.lock:
             if self.state.data.get('epoch',config['epoch'])!=config['epoch']:
                 self.state.records.clear(); self.state.data['ends']={}; self.state.data['actions']={}; self.state.data['inputs']={}
+                for asset in self.state.data['assets'].values():asset.pop('uploadedAt',None)
             self.state.data['epoch']=config['epoch']; self.state.save()
         self.guard=Watchdog(self.state,config,clock=self.clock,monotonic=time.monotonic if clock is None else clock,notify=notify,delay=fallback)
         self.actions=Actions(self.state,config,clock=self.clock)
         self.snapshot={}; self._snapshot_lock=threading.Lock(); self._stop=threading.Event()
-        self._threads=[]; self._assets={}; self._heart=0; self.error=None; self.on_admitted=None; self.on_tombstone=None
+        now=self.clock()
+        self._threads=[]
+        # Cache receipts are an optimization, never display/admission proof.
+        # Capacity eviction is repaired by the existing exact-body403 retry.
+        self._assets={digest:asset['uploadedAt'] for digest,asset in self.state.data['assets'].items()
+                      if type(asset.get('uploadedAt')) in (int,float) and 0<=now-asset['uploadedAt']<1800}
+        self._heart=0; self.error=None; self.on_admitted=None; self.on_tombstone=None
         self._io_lock=threading.Lock()
 
     def accept(self,snapshot):
@@ -567,8 +575,13 @@ class Producer:
                             if live: live['admitted']=False; self.state.save()
 
     def asset(self,name,data):
-        digest=hashlib.sha256(data).hexdigest(); suffix=Path(name).suffix.lstrip('.').lower()
+        suffix=Path(name).suffix.lstrip('.').lower()
         if suffix not in ('png','gif','webp','anim') or len(data)>262144: raise CloudError('invalid_asset')
+        if suffix=='anim' and data.startswith(b'bicycle0'):
+            from .native import compact_native_asset
+            try:data=compact_native_asset(data)
+            except ValueError:pass  # Preserve existing handling of other native variants.
+        digest=hashlib.sha256(data).hexdigest()
         with self.state.lock:
             if digest not in self.state.data['assets']:
                 self.state.data['assets'][digest]={'hash':digest,'type':suffix,'data':base64.b64encode(data).decode(),'usedAt':self.clock()}
@@ -627,13 +640,18 @@ class Producer:
 
     def _upload_assets(self,hashes,asset_bodies,*,force=False):
         for digest in hashes:
-            if not force and self.clock()-self._assets.get(digest,-float('inf'))<1800: continue
+            if not force and 0<=self.clock()-self._assets.get(digest,-float('inf'))<1800: continue
             asset=asset_bodies.get(digest)
             if asset is None: raise CloudError('local_asset_unavailable')
             result=self.http.request('POST','/api/assets',asset)
             if result.get('hash')!=digest: raise CloudError('asset_hash_mismatch')
             with self.state.lock:
                 self._assets[digest]=self.clock()
+                cached=self.state.data['assets'].get(digest)
+                if cached is not None:
+                    # Persist with the next normal state save. A crash before
+                    # that save merely reuploads; no new I/O lock is introduced.
+                    cached['uploadedAt']=self._assets[digest]
                 if len(self._assets)>LOCAL_ASSET_COUNT:
                     del self._assets[min(self._assets,key=self._assets.get)]
 
@@ -641,7 +659,11 @@ class Producer:
         try: return self._response('POST',path,body)
         except CloudError as error:
             if error.code!='asset_not_authorized': raise
-            for digest in hashes: self._assets.pop(digest,None)
+            with self.state.lock:
+                for digest in hashes:
+                    self._assets.pop(digest,None)
+                    cached=self.state.data['assets'].get(digest)
+                    if cached is not None:cached.pop('uploadedAt',None)
             self._upload_assets(hashes,asset_bodies,force=True)
             # At most one immediate repair. Another eviction goes through the
             # normal bounded worker backoff, with the exact frozen body retained.

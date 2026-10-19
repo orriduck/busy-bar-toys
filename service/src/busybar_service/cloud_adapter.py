@@ -11,7 +11,7 @@ from busybar_notifier.model import status_color, Notification
 from busybar_notifier.presenter import NotificationPresenter
 from busybar_notifier.display import entrance_seconds
 from busybar_shared.native import encode_sections
-from busybar_shared.cloud import CloudError
+from busybar_shared.cloud import CloudError, ASSET_ENCODING_VERSION
 from busybar_shared.activity import ActivityPublisher
 from busybar_shared.service_entry import ENTRY_FPS, ENTRY_SECONDS, ENTRY_LEAD_MS, wrap_scene
 
@@ -88,6 +88,10 @@ def notification_scene(producer,item,*,reduced=False):
         for elements in capture.draws: commands.append({'offsetMs':300,'elements':elements})
         capture.draws.clear(); tick[0]=duration/1000+.001; presenter.advance()
         for elements in capture.draws: commands.append({'offsetMs':duration,'elements':elements})
+        # This standalone exit-unmask never fades in a cloud scene. The control
+        # plane owns exit masks and old-layer retirement; retaining it would
+        # create a redundant prefixed asset and another native upload/slot.
+        commands[0]['elements']=[e for e in commands[0]['elements'] if e['id']!='motion-view']
     color=status_color(item.level,item.accent)
     scene={'entryDurationMs':duration,'commands':commands,'ledColor':'#{:02X}{:02X}{:02X}FF'.format(*color)}
     return scene if reduced else wrap_scene(producer,scene,icon_image(item),position=(0,1))
@@ -133,6 +137,7 @@ class CloudQueue:
         # their title/detail. Rebuild their recovery scene once when the entry
         # encoder or reduced-motion mode changes; keep the occurrence itself.
         fingerprint=json.dumps({'content':content,'entry':[ENTRY_SECONDS,ENTRY_FPS,ENTRY_LEAD_MS],
+                                'assetEncoding':ASSET_ENCODING_VERSION,
                                 'reduced':self.reduced},sort_keys=True)
         if (existing and existing.get('localFingerprint')==fingerprint and not existing.get('cleared')
                 and not existing.get('renderPending')):

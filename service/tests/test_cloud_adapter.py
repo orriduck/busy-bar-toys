@@ -43,6 +43,26 @@ class AdapterTest(unittest.TestCase):
             self.assertEqual(record['scene']['entryLeadMs'],200)
             self.assertIn(round(ENTRY_SECONDS*1000)+ENTRY_LEAD_MS,[c['offsetMs'] for c in record['scene']['commands']])
 
+    def test_encoding_upgrade_rebuilds_once_without_restarting_occurrence(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory()as directory:
+            producer=self.producer(directory);queue=CloudQueue(producer)
+            item=Notification('x','urgent','app','APP','Title','Detail',source='source')
+            queue.set_state('source',[item]);old=producer.state.records['source:x']
+            identity,deadline,version=old['itemId'],old['deadline'],old['version']
+            fingerprint=json.loads(old['localFingerprint']);fingerprint.pop('assetEncoding')
+            old['localFingerprint']=json.dumps(fingerprint,sort_keys=True);producer.state.save()
+            resumed=self.producer(directory);queue=CloudQueue(resumed)
+            with patch('busybar_service.cloud_adapter.notification_scene',wraps=notification_scene)as render:
+                queue.set_state('source',[item]);rebuilt_version=resumed.state.records['source:x']['version']
+                queue.set_state('source',[item])
+            current=resumed.state.records['source:x']
+            self.assertEqual(render.call_count,1)
+            self.assertEqual((current['itemId'],current['deadline']),(identity,deadline))
+            self.assertGreater(rebuilt_version,version)
+            self.assertEqual(current['version'],rebuilt_version)
+            self.assertEqual(json.loads(current['localFingerprint'])['assetEncoding'],'native-rle-v1')
+
     def test_all_group_members_publish_and_errors_do_not_resolve_urgent(self):
         with tempfile.TemporaryDirectory() as directory:
             producer=self.producer(directory); queue=CloudQueue(producer,reduced=True)
@@ -134,6 +154,19 @@ class AdapterTest(unittest.TestCase):
             self.assertNotIn('"path"',encoded); self.assertNotIn('"timeout"',encoded)
             self.assertIn('assetHash',encoded)
             self.assertTrue(all(a['type']=='anim' for a in producer.state.data['assets'].values()))
+
+    def test_only_cloud_notification_omits_the_standalone_exit_unmask(self):
+        from busybar_service.cloud_adapter import Capture
+        from busybar_notifier.presenter import NotificationPresenter
+        with tempfile.TemporaryDirectory()as directory:
+            producer=self.producer(directory);item=Notification('a','info','app','BRAND','TITLE','Detail')
+            standalone=Capture(producer);NotificationPresenter(standalone).start(item)
+            self.assertIn('motion-view',{e['id']for e in standalone.draws[0]})
+            scene=notification_scene(producer,item)
+            self.assertNotIn('motion-view',{e['id']for c in scene['commands']for e in c['elements']})
+            for ident in ('notice-view','shared-service-entry'):
+                self.assertIn(ident,{e['id']for e in scene['commands'][0]['elements']})
+                self.assertIn(ident,{e['id']for c in scene['commands'][1:]for e in c['elements']})
 
     def test_prepared_lead_shifts_original_text_commands_but_not_loops_or_reduced_mode(self):
         import base64
