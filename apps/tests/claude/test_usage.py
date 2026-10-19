@@ -137,10 +137,50 @@ class TranscriptUsageTest(unittest.TestCase):
         first = self.transcript.row("m", 30, parent=context, out=938, created=1000)
         self.assertIsNone(self.throughput(), "One row without a follower is not a completed reply")
         self.transcript._write({"parentUuid": first, "type": "progress", "at": 31})
-        self.throughput()
+        self.transcript._write({"parentUuid": first, "type": "attachment", "isSidechain": True, "at": 31.5})
+        self.assertIsNone(self.throughput(), "Progress and child-agent records are not completion evidence")
         self.transcript.row("m", 37, parent=first, out=938, created=1000)
         self.transcript.context(38)
         self.assertEqual(self.throughput(), TokenUsage(27, 25), "Later rows extend the reply: 938/37, not 938/30")
+
+    def test_tool_calls_complete_only_when_the_next_reply_begins(self):
+        self.transcript.reply("m0", 0, [5], out=50)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
+        self.transcript.context(10)
+        first = self.transcript.row("m", 40, parent=self.transcript.last, out=900, stop="tool_use")
+        self.transcript._write({"parentUuid": first, "type": "user", "at": 41, "message": {"content": "tool result"}})
+        self.assertEqual(self.throughput(), TokenUsage(0, 10), "An early tool result on a non-last row is not final")
+        self.transcript.row("m", 46, parent=first, out=900, stop="tool_use")
+        self.transcript.context(47, "user")
+        self.assertEqual(self.throughput(), TokenUsage(0, 10), "A tool reply waits for the next reply")
+        self.transcript.row("next", 50, parent=self.transcript.last, out=1, stop=None)
+        self.assertEqual(self.throughput(), TokenUsage(0, 25), "900 output over 36 s, once the next reply began")
+
+    def test_newest_completed_reply_with_missing_fields_is_unknown_and_older_rows_cannot_replace_it(self):
+        for name, damage in (("no-timestamp", lambda r: r.pop("timestamp")),
+                             ("no-usage", lambda r: r["message"].pop("usage")),
+                             ("null-usage", lambda r: r["message"].__setitem__("usage", None))):
+            with self.subTest(name):
+                path = self.root / f"{name}.jsonl"
+                transcript = Transcript(path)
+                transcript.reply("m1", 0, [10], out=100)
+                transcript.context(30)
+                record = {"parentUuid": transcript.last, "isSidechain": False, "type": "assistant",
+                          "uuid": str(uuidlib.uuid4()), "timestamp": stamp(40),
+                          "message": {"id": "m2", "stop_reason": "end_turn", "usage": {"input_tokens": 0, "output_tokens": 900}}}
+                damage(record)
+                transcript.raw(json.dumps(record, separators=(",", ":")) + "\n")
+                transcript.last = record["uuid"]
+                transcript.context(41, "user")
+                self.assertIsNone(self.reader(str(path)).throughput)
+        path = self.root / "late.jsonl"
+        transcript = Transcript(path)
+        transcript.reply("m1", 0, [10], out=100)
+        early = transcript.last
+        transcript.reply("m2", 20, [30], out=500)
+        transcript.row("m1", 12, parent=early, out=100)
+        transcript.context(31)
+        self.assertEqual(self.reader(str(path)).throughput, TokenUsage(0, 50), "A late older row does not replace m2")
 
     def test_equivalent_serializations_and_nested_lookalikes(self):
         spaced = Transcript(self.root / "spaced.jsonl", spaced=True)
