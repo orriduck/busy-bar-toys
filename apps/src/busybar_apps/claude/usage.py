@@ -2,10 +2,15 @@
 
 Usage fields and record timestamps only, never message text. Observed in real
 transcripts: every row of an assistant message carries the same final usage and
-a non-null stop_reason, and a later record outside the message points to one of
-its rows through parentUuid within seconds. A reply counts as completed only
-when both are seen; there is no inactivity timeout, and later rows of the same
-message update its value. A reply starts at the record its first row points to
+a non-null stop_reason. A reply that may continue with tool calls (tool_use,
+pause_turn) can receive tool results on earlier rows while later rows are still
+being written, but all of its rows precede the next assistant message; so it
+completes when the next main-chain assistant message begins. Any other stopped
+reply (end_turn, max_tokens, ...) never had an outside child before its last
+row, so it completes when a later record outside the message points to one of
+its rows; only user and attachment records count, as observed, never progress
+or child-agent records. There is no inactivity timeout. Completion order is the order in which
+messages first appear in the file. A reply starts at the record its first row points to
 through parentUuid (the request context, usually an attachment or the user/tool
 result) and ends at its last row. The duration includes first-token latency and
 thinking but not tool execution. Input is fresh input plus cache writes; cache
@@ -24,6 +29,8 @@ ROOT = Path.home() / ".claude" / "projects"
 MAX_MESSAGES = 4096
 MAX_RECORDS = 16384
 CHUNK = 1 << 20
+CONTINUING = frozenset({"tool_use", "pause_turn"})
+FOLLOWERS = frozenset({"user", "attachment"})
 
 
 def _stamp(value):
@@ -72,7 +79,8 @@ class TranscriptUsage:
         state = self._files.get(path)
         if state is None or state["inode"] != stat.st_ino or stat.st_size < state["offset"]:
             state = self._files[path] = {"inode": stat.st_ino, "offset": 0, "times": OrderedDict(),
-                                         "owners": OrderedDict(), "messages": OrderedDict(), "latest": None}
+                                         "owners": OrderedDict(), "messages": OrderedDict(), "latest": None,
+                                         "seq": 0}
         try:
             with open(path, "rb") as stream:
                 stream.seek(state["offset"])
@@ -124,9 +132,10 @@ class TranscriptUsage:
         message = record.get("message")
         key = message.get("id") if isinstance(message, dict) else None
         own = (isinstance(message, dict) and record.get("type") == "assistant" and record.get("isSidechain") is not True
-               and isinstance(key, str) and key and isinstance(message.get("usage"), dict))
+               and isinstance(key, str) and bool(key))
         owner = state["owners"].get(parent) if parent else None
-        if owner is not None and owner != (key if own else None):
+        if (owner is not None and owner != (key if own else None) and record.get("type") in FOLLOWERS
+                and record.get("isSidechain") is not True):
             follow = state["messages"].get(owner)
             if follow is not None:
                 follow["followed"] = True
@@ -135,16 +144,21 @@ class TranscriptUsage:
             messages = state["messages"]
             entry = messages.get(key)
             if entry is None:
+                state["seq"] += 1
                 entry = messages[key] = {"start": state["times"].get(parent), "end": None, "usage": (0, 0),
-                                         "stopped": False, "followed": False}
+                                         "stop": None, "followed": False, "superseded": False, "seq": state["seq"]}
                 _bounded(messages, MAX_MESSAGES)
+                for earlier, other in list(messages.items()):
+                    if earlier != key and not other["superseded"]:
+                        other["superseded"] = True
+                        self._promote(state, earlier)
             usage = _usage(message.get("usage"))
             entry["usage"] = None if usage is None or entry["usage"] is None else tuple(
                 max(a, b) for a, b in zip(entry["usage"], usage))
             if stamp is not None and (entry["end"] is None or stamp > entry["end"]):
                 entry["end"] = stamp
             if message.get("stop_reason") is not None:
-                entry["stopped"] = True
+                entry["stop"] = str(message.get("stop_reason"))
             if uuid:
                 state["owners"][uuid] = key
                 _bounded(state["owners"], MAX_RECORDS)
@@ -156,10 +170,12 @@ class TranscriptUsage:
     @staticmethod
     def _promote(state, key):
         entry = state["messages"].get(key)
-        if not entry or not entry["stopped"] or not entry["followed"]:
+        if not entry or entry["stop"] is None:
+            return
+        if not (entry["superseded"] or (entry["followed"] and entry["stop"] not in CONTINUING)):
             return
         current = state["messages"].get(state["latest"])
-        if current is None or key == state["latest"] or (entry["end"] or 0) >= (current["end"] or 0):
+        if current is None or entry["seq"] >= current["seq"]:
             state["latest"] = key
 
 
