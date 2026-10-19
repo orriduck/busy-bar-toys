@@ -29,9 +29,9 @@ The layout matches the device calendar.
 
 The source icon identifies the agent app of the task.
 
-The two numbers show the selected session's latest completed measurement in tokens per second: a Claude reply average, or an explicitly attributed Codex whole-turn average.
-They are observed elapsed-time averages, not live decoding or prefill speed, network speed, or a task total.
-The value stays while the next reply or turn is generating, so it does not drop to 0.
+The two numbers show the latest completed reply of the selected session, in tokens per second.
+They are an observed elapsed-time average for that reply, not live decoding or prefill speed, network speed, or a task total.
+The value stays until the next reply completes, so it does not drop to 0 while a reply is generating.
 
 Claude Code writes a reply's final usage once, when the reply ends.
 A reply starts at the record its first row points to through `parentUuid`, usually the request context written just before the request, and ends at its last row.
@@ -45,7 +45,7 @@ A reply counts as completed only on terminal evidence observed in real transcrip
 
 If the newest completed reply has no known start, a non-positive duration, missing or invalid usage, a missing timestamp, or an unsupported `stop_reason`, the value is `--`. An older reply's value is not reused. A reply that is still generating keeps the previous completed value.
 
-Codex accepts the same thread/turn's explicit `turn_token_usage` and positive `task_complete.duration_ms`. The back display labels it `TURN AVG`: it includes tools, waiting, thinking, first-token latency and retries. Output already includes reasoning and is not counted twice. Legacy thread totals and last-response usage are insufficient. No new data feed, hook or permission is enabled, and restricted session directories must not be read. Without an allowed source providing both fields, Codex still shows `--`.
+Codex shows `--`. Its rollout records do not yet have verified per-reply start and end times, so the program does not derive a speed from them.
 
 Input includes new input and first-time cache writes.
 It excludes cache reads.

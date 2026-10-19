@@ -141,15 +141,15 @@ The amber ↑ value shows input tokens per second.
 The cyan ↓ value shows output tokens per second.
 These are token rates, not network speeds or task totals.
 
-Claude values describe the latest completed reply: its tokens divided by its elapsed time, including first-token latency and thinking.
-Codex can report the latest completed whole-turn average, labelled `TURN AVG` on the back display, when attributed turn usage and a matching monotonic duration are available. That duration includes tools, waiting and retries as well as thinking and first-token latency.
-The previous value stays during generation; an unmeasurable new completion clears it to `--`. These values are not live decoding speed.
+Both values describe the latest completed reply: its tokens divided by its elapsed time, including first-token latency and thinking.
+The value stays until the next reply completes. It is not live decoding speed.
 
 Input includes new input and first-time cache writes.
 It excludes cache reads.
 Output includes reasoning tokens.
 
-Codex legacy totals alone show `--`; this change does not enable a new live data feed or authorize reading restricted session directories. See the [supported Codex fields and limitations](apps/src/busybar_apps/codex/README.md).
+Claude Code reports reply timing. Codex shows `--` until its reply timing is verified.
+Codex metadata access remains blocked and is outside this animation release; no new feed, hook or session-directory access is enabled.
 `--` means that the rate is unknown.
 The program does not estimate missing usage.
 The front display uses compact values.

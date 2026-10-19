@@ -67,8 +67,6 @@ def render(task, now, count=1, usage=None):
     demo = getattr(task, "session_id", None) == "demo"
     draw.text((36, 5), title + (" DEMO" if demo else ""),
               font=font(12 if demo else 16), fill="white")
-    if usage is not None and profiles.profile(source).source in ('chatgpt','dots'):
-        draw.text((36, 21), 'TURN AVG', font=font(7), fill='#AAAAAA')
     draw.text((5, 29), clock_text(now), font=font(18), fill="white")
     draw.text((5, 53), "IN " + (f"{input_tokens}/s" if input_tokens is not None else "--"), font=font(10), fill="#AAAAAA")
     draw.text((5, 66), "OUT " + (f"{output_tokens}/s" if output_tokens is not None else "--"), font=font(10), fill="#AAAAAA")

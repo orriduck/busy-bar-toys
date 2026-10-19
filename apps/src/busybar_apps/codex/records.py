@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 from busybar_agents.events import FLASH_SECONDS, STALE_SECONDS, STATES, TaskRegistry, parse_timestamp
-from busybar_agents.tokens import SourceUsage, TokenUsage
+from busybar_agents.tokens import TokenUsage
 
 TAIL_BYTES = 1024 * 1024
 WAITING_TOOLS = frozenset({"request_user_input", "request_user_input_async"})
@@ -28,71 +28,6 @@ class CodexTaskRegistry(TaskRegistry):
         super().__init__()
         self._waiting_calls: dict[str, str] = {}
         self._default_session = ""
-        self._turn_usage: dict[str, dict] = {}
-        self._finished_rates: dict[str, str] = {}
-
-    def _record_turn_usage(self, session, record, payload, now):
-        """Use attributed per-turn snapshots, never last-response or thread totals.
-
-        This consumes already supplied records; it opens no files or connections.
-        output_tokens already includes reasoning_output_tokens.
-        """
-        current = self.task(session)
-        turn = payload.get("turn_id")
-        if (not current or current.state not in {"working", "waiting"}
-                or not isinstance(turn, str) or not turn or turn != current.turn_id
-                or payload.get("thread_id") != session
-                or record.get("turn_id", turn) != turn):
-            return False
-        stamp = parse_timestamp(record.get("timestamp"))
-        if stamp is None:
-            candidate = self._turn_usage.get(session)
-            if candidate:
-                candidate["valid"] = False
-            return False
-        if stamp < current.updated_at:
-            return False
-        usage = codex_usage(payload.get("turn_token_usage"))
-        response = payload.get("response_id")
-        candidate = self._turn_usage.setdefault(session, {"turn": turn, "usage": None, "responses": {},
-                                                        "session": payload.get("session_id"), "valid": True})
-        epoch_valid = (isinstance(payload.get("session_id"), str) and bool(payload["session_id"])
-                       and payload["session_id"] == candidate["session"])
-        previous = candidate["responses"].get(response) if isinstance(response, str) else None
-        if epoch_valid and previous is not None and previous == usage:
-            return False  # Replay does not count as activity or add tokens.
-        if not self._apply(session, current.state, record, now, payload=payload, default_source="codex"):
-            return False
-        old = candidate["usage"]
-        if (usage is None or not isinstance(response, str) or not response
-                or not epoch_valid
-                or previous is not None
-                or (old is not None and (usage.input_tokens < old.input_tokens or usage.output_tokens < old.output_tokens))):
-            candidate["valid"] = False
-        else:
-            candidate["usage"] = usage
-            candidate["responses"][response] = usage
-        totals = codex_usage(payload.get("thread_token_usage"))
-        if totals is not None:
-            self.set_usage(session, totals)
-        return True
-
-    def _finish_turn_usage(self, session, payload, state):
-        current = self.task(session)
-        turn = current.turn_id
-        if self._finished_rates.get(session) == turn and state == "done":
-            return
-        candidate = self._turn_usage.get(session, {})
-        duration = payload.get("duration_ms")
-        rate = None
-        if (state == "done" and payload.get("turn_id") == turn and payload.get("error") is None
-                and type(duration) is int and duration > 0
-                and candidate.get("turn") == turn and candidate.get("valid")):
-            usage = candidate.get("usage")
-            if usage is not None:
-                rate = TokenUsage(usage.input_tokens * 1000 // duration, usage.output_tokens * 1000 // duration)
-        self.set_usage(session, SourceUsage(totals=current.token_usage, throughput=rate))
-        self._finished_rates[session] = turn
 
     def ingest(self, record: dict, now: float | None = None) -> bool:
         if not isinstance(record, dict):
@@ -124,8 +59,6 @@ class CodexTaskRegistry(TaskRegistry):
         if not isinstance(session, str) or not session or self.is_ignored(session):
             return False
         current = self.task(session)
-        if record.get("type") == "token_usage_record":
-            return self._record_turn_usage(session, record, payload, now)
         state = record.get("state")
         kind = payload.get("type")
         usage = (codex_usage(payload["info"].get("total_token_usage"))
@@ -154,10 +87,6 @@ class CodexTaskRegistry(TaskRegistry):
         if usage is not None:
             self.set_usage(session, usage)
         turn = self.task(session).turn_id
-        if not current or current.turn_id != turn:
-            self._turn_usage.pop(session, None)
-        if state in {"done", "stopped", "error", "unknown"}:
-            self._finish_turn_usage(session, payload, state)
         if state != "waiting" or (current and current.turn_id != turn):
             self._waiting_calls.pop(session, None)
         if state == "waiting" and kind == "function_call" and isinstance(payload.get("call_id"), str):
