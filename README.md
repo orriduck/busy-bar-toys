@@ -141,15 +141,14 @@ The amber ↑ value shows input tokens per second.
 The cyan ↓ value shows output tokens per second.
 These are token rates, not network speeds or task totals.
 
-The observer uses an approximately ten-second sample window.
-During startup, it uses the available interval after the first second.
-A long sample gap or unavailable usage restarts measurement.
+Both values describe the latest completed reply: its tokens divided by its elapsed time, including first-token latency and thinking.
+The value stays until the next reply completes. It is not live decoding speed.
 
 Input includes new input and first-time cache writes.
 It excludes cache reads.
 Output includes reasoning tokens.
 
-Codex and Claude Code report usage.
+Claude Code reports reply timing. Codex shows `--` until its reply timing is verified.
 `--` means that the rate is unknown.
 The program does not estimate missing usage.
 The front display uses compact values.

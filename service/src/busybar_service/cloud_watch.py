@@ -8,6 +8,7 @@ from pathlib import Path
 
 from busybar_shared.cloud import CloudError, Producer, Transport, State, keychain, load_config
 from busybar_agents.view import ViewMode
+from busybar_agents.display import view_key
 from busybar_shared.device_input import configured_input_monitor, InputMonitor
 from busybar_shared.preview import PreviewBridge
 from busybar_apps.codex.records import CodexTaskRegistry, RolloutWatcher
@@ -148,7 +149,7 @@ def watch(args,runtime,repo):
         monitor.start()
         for client in clients.values(): client.start()
         preview=PreviewBridge(runtime,clients); preview.start()
-        last_scan=last_dot=next_draw=next_status=0; seen={}
+        last_scan=last_dot=next_draw=next_status=0; seen={}; shown_key=None
         while not stopping:
             now=time.time()
             if now-last_dot>=60:
@@ -173,8 +174,9 @@ def watch(args,runtime,repo):
                         client.input(); break
             if agent:
                 if view.allows(registry.active_turns(now),known_turns=known_turns):
-                    if now>=next_draw:
-                        agent.show_tasks(registry.visible_tasks(now),now,registry.active_count(now)); next_draw=now+5
+                    tasks=registry.visible_tasks(now); key=view_key(tasks,now)
+                    if now>=next_draw or key!=shown_key:
+                        agent.show_tasks(tasks,now,registry.active_count(now)); next_draw=now+5; shown_key=key
                     if agent.due: agent.advance()
                 else: agent.hide()
             if now>=next_status:

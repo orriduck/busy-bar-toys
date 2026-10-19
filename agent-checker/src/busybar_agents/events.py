@@ -44,6 +44,7 @@ class Task:
     started_at: float
     updated_at: float
     token_usage: TokenUsage | None = None
+    token_rate: TokenUsage | None = None
 
 
 class TaskRegistry:
@@ -60,17 +61,21 @@ class TaskRegistry:
     def set_usage(self, session: str, totals):
         """Record cumulative session token totals without counting as activity."""
         current = self._tasks.get(session)
-        if current and totals is not None:
+        if not current or totals is None:
+            return
+        if isinstance(totals, tokens.SourceUsage):
+            self._tasks[session] = replace(current, token_usage=totals.totals, token_rate=totals.throughput)
+        else:
             self._tasks[session] = replace(current, token_usage=totals)
 
     def invalidate_usage(self, session: str):
         """Mark usage unavailable, so the display shows unknown instead of idle."""
         current = self._tasks.get(session)
-        if current and current.token_usage is not None:
-            self._tasks[session] = replace(current, token_usage=None)
+        if current and (current.token_usage is not None or current.token_rate is not None):
+            self._tasks[session] = replace(current, token_usage=None, token_rate=None)
 
     def refresh_usage(self, now: float):
-        """Read source totals for live sessions, then sample every live session's rate.
+        """Read source usage for live sessions only.
 
         Live means visible to the agent view, including off-screen sessions and
         the post-completion flash. Ended sessions stay in _tasks for turn fencing,
@@ -92,9 +97,6 @@ class TaskRegistry:
                 self.invalidate_usage(session)
             else:
                 self.set_usage(session, totals)
-        for session in live:
-            tokens.METER.observe(session, self._tasks[session].token_usage)
-        tokens.METER.retain(live)
 
     def ignore(self, session: str):
         self._ignored.add(session)
@@ -151,7 +153,8 @@ class TaskRegistry:
         if started_at is not None:
             started = started_at
         self._tasks[session] = Task(session, turn, source, project, state, started, timestamp,
-                                    current.token_usage if current else None)
+                                    current.token_usage if current else None,
+                                    current.token_rate if current else None)
         if isinstance(record.get("transcript"), str):
             self._usage_refs[session] = (source, record["transcript"])
         self._seen_turns.setdefault(session, set()).add(turn)
