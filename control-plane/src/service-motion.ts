@@ -2,7 +2,6 @@ import type { Element, State } from "./model";
 
 export const FADE_MS = 200;
 export const BLACK_MS = 200;
-export const MOTION_SAMPLE_MS = 50;
 const PREFIX = "control-service-motion-";
 
 /** A single exit survives candidate changes; only native acknowledgements advance it. */
@@ -10,8 +9,11 @@ export interface ServiceMotion {
   id: number;
   phase: "fade" | "black" | "handoff";
   elapsedMs: number;
-  /** Monotonic sample gate; wall-clock dueAt only wakes the Durable Object. */
+  /** Monotonic phase fence; wall-clock dueAt only wakes the Durable Object. */
   nextSampleMs?: number;
+  mode?: "native" | "fallback";
+  /** Set only after the single native fade-start draw acknowledges. */
+  nativeStarted?: boolean;
 }
 
 /**
@@ -88,4 +90,178 @@ const masks: Element[] = [
 
 export function motionElements(opacity: number): Element[] {
   return masks.map((e) => ({ ...e, opacity }));
+}
+
+/** Firmware 1.2.4 bicycle0: uniform-pixel RLE BGRA, fade0..6 and clear7. */
+export function nativeFadeAsset(width: number, height: number): Uint8Array {
+  if (
+    width < 1 ||
+    width > 255 ||
+    height < 1 ||
+    height > 255 ||
+    width * height * 4 > 65535
+  )
+    throw new Error("Invalid native fade dimensions");
+  // Firmware RLE: each low-seven-bit opcode repeats one four-byte BGRA
+  // pixel, at most127 times. Avoid per-instance raw-frame scratch allocations.
+  const frameBytes = Math.ceil((width * height) / 127) * 5,
+    recordBytes = frameBytes + 4;
+  const sections = [
+    { name: "default", start: 0, end: 7, offset: 0 },
+    { name: "fade", start: 0, end: 6, offset: 0 },
+    { name: "clear", start: 7, end: 7, offset: 7 * recordBytes },
+  ];
+  const sectionBytes = sections.reduce((n, s) => n + 14 + s.name.length, 0);
+  const result = new Uint8Array(36 + sectionBytes + 8 * recordBytes),
+    view = new DataView(result.buffer);
+  result.set(new TextEncoder().encode("bicycle0"));
+  result[9] = width;
+  result[10] = height;
+  result[11] = 2;
+  result[12] = 30;
+  view.setUint16(13, frameBytes, true);
+  view.setUint32(16, sectionBytes, true);
+  view.setUint32(20, 8 * recordBytes, true);
+  view.setUint32(24, sections.length, true);
+  view.setUint32(28, 8, true);
+  view.setUint32(32, 8, true);
+  let offset = 36;
+  for (const section of sections) {
+    view.setUint32(offset, section.start, true);
+    view.setUint32(offset + 4, section.end, true);
+    view.setUint32(offset + 8, 36 + sectionBytes + section.offset, true);
+    result[offset + 12] = 1;
+    result.set(new TextEncoder().encode(section.name), offset + 13);
+    offset += 14 + section.name.length;
+  }
+  for (let frame = 0; frame < 8; frame++) {
+    result[offset] = 1; // RLE encoding
+    result[offset + 1] = 1;
+    view.setUint16(offset + 2, frameBytes, true);
+    const t = (frame * 1000) / 30 / FADE_MS;
+    // Fresh widget IDs plus alpha1 preserved intermediate levels in a slow
+    // hardware probe. The combined changes do not isolate a cache/alpha bug;
+    // avoid a fully transparent initial canvas conservatively. Widget
+    // opacity0 handles unmasking independently of pixel alpha.
+    const alpha =
+      frame === 7 ? 0 : Math.max(1, Math.round(255 * t * t * (3 - 2 * t)));
+    for (
+      let pixel = offset + 4, remaining = width * height;
+      remaining > 0;
+      pixel += 5
+    ) {
+      result[pixel] = Math.min(127, remaining);
+      result[pixel + 4] = alpha;
+      remaining -= result[pixel];
+    }
+    offset += recordBytes;
+  }
+  return result;
+}
+
+const NATIVE_HASHES = {
+  front: "27e262da8497b418e4c763d30d699e9c6e5fc030546e6fac27a7c758271fd266",
+  back: "3760f789e7c4639656e0eec53518385c3c9379e8819a86061ed152fd83b12103",
+};
+let cachedAssets:
+  { hash: string; type: string; bytes: number; data: string }[] | undefined;
+export function nativeMotionAssets() {
+  return (cachedAssets ??= (
+    [
+      ["front", 72, 16],
+      ["back", 160, 80],
+    ] as const
+  ).map(([name, width, height]) => {
+    const raw = nativeFadeAsset(width, height);
+    let binary = "";
+    for (const byte of raw) binary += String.fromCharCode(byte);
+    return {
+      hash: NATIVE_HASHES[name],
+      type: "anim",
+      bytes: raw.length,
+      data: btoa(binary),
+    };
+  }));
+}
+
+/** Internal public assets gain no producer ownership and obey existing cache bounds. */
+export function cacheNativeMotionAssets(state: State, now: number): boolean {
+  const assets = nativeMotionAssets(),
+    missing = assets.filter((a) => !state.assets[a.hash]);
+  if (
+    assets.some(
+      (a) => state.assets[a.hash] && state.assets[a.hash].data !== a.data,
+    ) ||
+    Object.keys(state.assets).length + missing.length > 64 ||
+    Object.values(state.assets).reduce((n, a) => n + a.bytes, 0) +
+      missing.reduce((n, a) => n + a.bytes, 0) >
+      4 * 1024 * 1024
+  )
+    return false;
+  for (const asset of assets)
+    state.assets[asset.hash] = {
+      ...asset,
+      owners: state.assets[asset.hash]?.owners ?? [],
+      usedAt: now,
+    };
+  return true;
+}
+
+/** Reuse historical unpinned anim slots only; never fragment a pure-PNG device. */
+export function reuseNativeMotionSlots(
+  state: State,
+  pins: Set<number>,
+): boolean {
+  const plan = state.slots.map((slot) => ({ ...slot }));
+  const assets = nativeMotionAssets(),
+    reserved = new Set(pins);
+  for (const asset of assets) {
+    let slot = plan.find(
+      (value) => value.hash === asset.hash && value.type === "anim",
+    );
+    if (!slot) {
+      slot = plan.find(
+        (value) => value.type === "anim" && !reserved.has(value.slot),
+      );
+      if (!slot) return false;
+      Object.assign(slot, {
+        hash: asset.hash,
+        bytes: asset.bytes,
+        uploaded: false,
+      });
+    }
+    reserved.add(slot.slot);
+  }
+  if (plan.reduce((n, slot) => n + slot.bytes, 0) > 2 * 1024 * 1024)
+    return false;
+  state.slots = plan;
+  return true;
+}
+
+/** Separate IDs avoid a same-ID XPM/animation type change on capacity fallback. */
+export function nativeMotionElements(motionId = 0): Element[] {
+  // Load the larger back player first, then front. Two native instances avoid
+  // the observed incomplete back coverage of four independently loaded strips.
+  return (["back", "front"] as const).map((display) => ({
+    // A same source path cannot restart a finished firmware player. A fresh
+    // widget per exit also works before old transparent masks retire.
+    id: PREFIX + "native-" + motionId + "-" + display,
+    type: "animation",
+    display,
+    x: 0,
+    y: 0,
+    z_index: 255,
+    opacity: 100,
+    assetHash: NATIVE_HASHES[display],
+    section: "fade",
+    loop: false,
+    await_previous_end: false,
+  }));
+}
+
+export function unmaskMotionElement(element: Element): Element {
+  return {
+    ...element,
+    opacity: 0,
+  };
 }

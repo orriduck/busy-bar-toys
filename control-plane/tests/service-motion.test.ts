@@ -14,8 +14,144 @@ import {
   isMotionElement,
   motionElements,
   motionOpacity,
+  nativeFadeAsset,
+  nativeMotionAssets,
+  nativeMotionElements,
+  reuseNativeMotionSlots,
+  cacheNativeMotionAssets,
+  unmaskMotionElement,
   type ServiceMotion,
 } from "../src/service-motion";
+import { digest } from "../src/security";
+
+describe("native device fade assets", () => {
+  it("matches the hardware-preview bytes, seven time samples and transparent clear section", async () => {
+    for (const [width, height, hash, length] of [
+      [
+        72,
+        16,
+        "27e262da8497b418e4c763d30d699e9c6e5fc030546e6fac27a7c758271fd266",
+        526,
+      ],
+      [
+        160,
+        80,
+        "3760f789e7c4639656e0eec53518385c3c9379e8819a86061ed152fd83b12103",
+        4166,
+      ],
+    ] as const) {
+      const raw = nativeFadeAsset(width, height),
+        view = new DataView(raw.buffer);
+      expect(raw.length).toBe(length);
+      expect(await digest(raw)).toBe(hash);
+      expect(new TextDecoder().decode(raw.slice(0, 8))).toBe("bicycle0");
+      expect([raw[9], raw[10], raw[11], raw[12]]).toEqual([
+        width,
+        height,
+        2,
+        30,
+      ]);
+      expect(view.getUint32(16, true)).toBe(58);
+      expect(view.getUint32(28, true)).toBe(8);
+      // Independent reference decoder checks every pixel, including the final
+      // short run. Hash equality also ties these bytes to the device preview.
+      const alphas = [1, 19, 66, 128, 189, 236, 255, 0];
+      let frameOffset = 94;
+      for (const alpha of alphas) {
+        expect(raw[frameOffset]).toBe(1); // RLE
+        expect(raw[frameOffset + 1]).toBe(1);
+        const size = view.getUint16(frameOffset + 2, true);
+        const decoded: number[] = [];
+        for (let p = frameOffset + 4; p < frameOffset + 4 + size; p += 5) {
+          expect(raw[p]).toBeGreaterThan(0);
+          expect(raw[p]).toBeLessThanOrEqual(127);
+          expect(raw[p] & 128).toBe(0);
+          for (let n = 0; n < raw[p]; n++)
+            decoded.push(...raw.slice(p + 1, p + 5));
+        }
+        expect(decoded).toEqual(
+          Array.from({ length: width * height }, () => [0, 0, 0, alpha]).flat(),
+        );
+        frameOffset += 4 + size;
+      }
+      expect(frameOffset).toBe(raw.length);
+      expect(view.getUint32(57, true)).toBe(0); // named fade starts at frame0
+      expect(view.getUint32(61, true)).toBe(6); // opaque at t200ms
+      expect(view.getUint32(75, true)).toBe(7); // clear section is separate
+    }
+  });
+
+  it("hides same-type native widgets by opacity and gives each exit fresh IDs", () => {
+    const state = createState("native-fade");
+    expect(cacheNativeMotionAssets(state, 10)).toBe(true);
+    expect(
+      nativeMotionAssets().every(
+        (a) => a.bytes < 262144 && state.assets[a.hash].owners.length === 0,
+      ),
+    ).toBe(true);
+    const fade = nativeMotionElements(),
+      clear = fade.map(unmaskMotionElement);
+    expect(fade.map((e) => e.display)).toEqual(["back", "front"]);
+    expect(
+      fade.every(
+        (e) =>
+          e.type === "animation" &&
+          e.section === "fade" &&
+          e.loop === false &&
+          e.await_previous_end === false,
+      ),
+    ).toBe(true);
+    expect(
+      clear.every(
+        (e, n) =>
+          e.id === fade[n].id &&
+          e.type === fade[n].type &&
+          e.assetHash === fade[n].assetHash &&
+          e.section === "fade" &&
+          e.opacity === 0,
+      ),
+    ).toBe(true);
+    expect(
+      new Set(fade.filter((e) => e.display === "back").map((e) => e.assetHash))
+        .size,
+    ).toBe(1);
+    const next = nativeMotionElements(12),
+      previous = nativeMotionElements(11);
+    expect(next.every((e) => !previous.some((old) => old.id === e.id))).toBe(
+      true,
+    );
+    expect(next.map((e) => e.assetHash)).toEqual(
+      previous.map((e) => e.assetHash),
+    );
+  });
+
+  it("reuses only historical unpinned animation slots without fragmenting PNG-only history", () => {
+    const state = createState("native-fade");
+    expect(reuseNativeMotionSlots(state, new Set())).toBe(false);
+    expect(state.slots).toEqual([]);
+    state.slots = Array.from({ length: 16 }, (_, slot) => ({
+      slot,
+      hash: String(slot),
+      type: "png",
+      bytes: 1,
+      uploaded: true,
+    }));
+    const previous = structuredClone(state.slots);
+    expect(reuseNativeMotionSlots(state, new Set())).toBe(false);
+    expect(state.slots).toEqual(previous);
+    state.slots[3].type = "anim";
+    state.slots[4].type = "anim";
+    expect(reuseNativeMotionSlots(state, new Set([3]))).toBe(false);
+    expect(reuseNativeMotionSlots(state, new Set())).toBe(true);
+    expect(state.slots).toHaveLength(16);
+    expect(
+      state.slots.filter((s) => s.type === "anim").map((s) => s.slot),
+    ).toEqual([3, 4]);
+    expect(
+      new Set(state.slots.filter((s) => s.type === "anim").map((s) => s.hash)),
+    ).toEqual(new Set(nativeMotionAssets().map((a) => a.hash)));
+  });
+});
 
 describe("shared service exit timeline", () => {
   it("samples 199/200ms fade and 399/400ms total boundaries from elapsed time", () => {
