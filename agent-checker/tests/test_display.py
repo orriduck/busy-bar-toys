@@ -195,3 +195,19 @@ class DisplayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ViewKeyTests(unittest.TestCase):
+    def test_key_tracks_exact_rates_task_identity_and_clock(self):
+        from types import SimpleNamespace
+        from busybar_agents.display import view_key
+        def task(**k):
+            base=dict(session_id='s',turn_id='t',source='claude',state='working',token_usage=None,token_rate=TokenUsage(0,1001))
+            base.update(k); return SimpleNamespace(**base)
+        now=1_800_000_000-(1_800_000_000%60)+5
+        same=view_key([task()],now)
+        self.assertEqual(same,view_key([task()],now+1),'Nothing shown changed')
+        for changed in (dict(token_rate=TokenUsage(0,1999)),dict(turn_id='t2'),dict(source='chatgpt'),dict(session_id='x'),dict(state='waiting')):
+            self.assertNotEqual(same,view_key([task(**changed)],now),changed)
+        self.assertNotEqual(same,view_key([task()],now+60),'The displayed minute changed')
+        self.assertNotEqual(same,view_key([],now))

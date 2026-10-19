@@ -24,8 +24,12 @@ def token_labels(usage):
 
 
 def view_key(tasks, now):
-    """What the agent view shows: repaint when this changes, not on a fixed interval."""
-    return clock_text(now), tuple(sorted((t.session_id, t.state, token_labels(task_usage(t))) for t in tasks))
+    """What the agent view shows, front and back: repaint when this changes, not on a fixed interval."""
+    def shown(task):
+        rate = task_usage(task)
+        return (str(getattr(task, "session_id", "")), str(getattr(task, "turn_id", "")), str(getattr(task, "source", "")),
+                str(getattr(task, "state", "")), () if rate is None else (rate.input_tokens, rate.output_tokens))
+    return clock_text(now), tuple(sorted(shown(t) for t in tasks if t is not None))
 
 
 def token_fields(usage):

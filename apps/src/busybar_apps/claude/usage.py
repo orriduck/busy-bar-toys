@@ -1,42 +1,58 @@
 """Throughput of the latest completed Claude Code reply, read from local transcripts.
 
-Usage fields and record timestamps only, never message text. Each assistant
-message is written with its final usage when the reply ends; nothing is written
-while it generates. A reply starts at the record its first row points to through
-parentUuid (the request context, usually an attachment or the user/tool result)
-and ends at its last row. The duration includes first-token latency and thinking
-but not tool execution, which starts the next reply. Input is fresh input plus
-cache writes; cache reads re-send earlier context and are excluded.
+Usage fields and record timestamps only, never message text. Observed in real
+transcripts: every row of an assistant message carries the same final usage and
+a non-null stop_reason, and a later record outside the message points to one of
+its rows through parentUuid within seconds. A reply counts as completed only
+when both are seen; there is no inactivity timeout, and later rows of the same
+message update its value. A reply starts at the record its first row points to
+through parentUuid (the request context, usually an attachment or the user/tool
+result) and ends at its last row. The duration includes first-token latency and
+thinking but not tool execution. Input is fresh input plus cache writes; cache
+reads re-send earlier context and are excluded. If the newest completed reply has
+no usable timing or usage, the result is unknown rather than an older reply.
 """
 from collections import OrderedDict
 from datetime import datetime
 import json
 import os
 from pathlib import Path
-import re
-import time
 
 from busybar_agents.tokens import SourceUsage, TokenUsage
 
 ROOT = Path.home() / ".claude" / "projects"
 MAX_MESSAGES = 4096
-MAX_TIMES = 16384
+MAX_RECORDS = 16384
 CHUNK = 1 << 20
-SETTLE_SECONDS = 3
-RECORD = re.compile(rb'"uuid":"([0-9a-f-]{36})","timestamp":"([^"]+)"')
 
 
 def _stamp(value):
+    if not isinstance(value, str):
+        return None
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except (AttributeError, TypeError, ValueError):
+    except ValueError:
         return None
 
 
+def _usage(value):
+    """Counted input and output, or None when a count is missing or invalid."""
+    if not isinstance(value, dict):
+        return None
+    counts = [value.get("input_tokens", 0), value.get("cache_creation_input_tokens", 0), value.get("output_tokens")]
+    if any(type(count) is not int or count < 0 for count in counts):
+        return None
+    return counts[0] + counts[1], counts[2]
+
+
+def _bounded(mapping, limit):
+    while len(mapping) > limit:
+        mapping.popitem(last=False)
+
+
 class TranscriptUsage:
-    def __init__(self, root=ROOT, clock=time.time):
+    def __init__(self, root=ROOT):
         self.root = Path(root)
-        self.clock = clock
         self._files = {}
 
     def _allowed(self, path):
@@ -56,7 +72,7 @@ class TranscriptUsage:
         state = self._files.get(path)
         if state is None or state["inode"] != stat.st_ino or stat.st_size < state["offset"]:
             state = self._files[path] = {"inode": stat.st_ino, "offset": 0, "times": OrderedDict(),
-                                         "messages": OrderedDict(), "open": None, "latest": None}
+                                         "owners": OrderedDict(), "messages": OrderedDict(), "latest": None}
         try:
             with open(path, "rb") as stream:
                 stream.seek(state["offset"])
@@ -80,75 +96,71 @@ class TranscriptUsage:
                     stream.seek(state["offset"])
         except OSError:
             return None
-        current = state["messages"].get(state["open"])
-        if current and current["end"] is not None and self.clock() - current["end"] >= SETTLE_SECONDS:
-            self._complete(state)
-        latest = state["latest"]
-        return SourceUsage(throughput=latest[1] if latest else None)
-
-    def _line(self, state, line):
-        found = RECORD.findall(line)
-        uuid, stamp = (found[-1][0].decode(), _stamp(found[-1][1].decode())) if found else (None, None)
-        message = self._assistant(line)
-        if message is None:
-            if uuid is not None and state["open"] is not None:
-                self._complete(state)
-        else:
-            key, parent, usage = message
-            if state["open"] not in (None, key):
-                self._complete(state)
-            messages = state["messages"]
-            entry = messages.get(key)
-            if entry is None:
-                entry = messages[key] = {"start": state["times"].get(parent), "end": stamp, "usage": usage}
-                while len(messages) > MAX_MESSAGES:
-                    messages.popitem(last=False)
-            else:
-                if stamp is not None and (entry["end"] is None or stamp > entry["end"]):
-                    entry["end"] = stamp
-                entry["usage"] = tuple(max(a, b) for a, b in zip(entry["usage"], usage))
-            state["open"] = key
-        if uuid is not None and stamp is not None:
-            times = state["times"]
-            times[uuid] = stamp
-            while len(times) > MAX_TIMES:
-                times.popitem(last=False)
+        return SourceUsage(throughput=self._throughput(state))
 
     @staticmethod
-    def _assistant(line):
-        if b'"usage"' not in line or b'"assistant"' not in line:
+    def _throughput(state):
+        entry = state["messages"].get(state["latest"])
+        if not entry or entry["usage"] is None or entry["start"] is None or entry["end"] is None:
             return None
+        duration = entry["end"] - entry["start"]
+        if duration <= 0:
+            return None
+        counted, output = entry["usage"]
+        return TokenUsage(int(counted / duration), int(output / duration))
+
+    def _line(self, state, line):
+        if not line.strip():
+            return
         try:
             record = json.loads(line)
         except (ValueError, UnicodeDecodeError, RecursionError):
-            return None
-        if not isinstance(record, dict) or record.get("type") != "assistant" or record.get("isSidechain") is True:
-            return None
+            return
+        if not isinstance(record, dict):
+            return
+        uuid, parent, stamp = record.get("uuid"), record.get("parentUuid"), _stamp(record.get("timestamp"))
+        uuid = uuid if isinstance(uuid, str) and uuid else None
+        parent = parent if isinstance(parent, str) and parent else None
         message = record.get("message")
-        if not isinstance(message, dict):
-            return None
-        usage, key = message.get("usage"), message.get("id")
-        if not isinstance(usage, dict) or not isinstance(key, str):
-            return None
-        def count(name):
-            value = usage.get(name, 0)
-            return value if type(value) is int and value >= 0 else 0
-        return key, record.get("parentUuid"), (count("input_tokens") + count("cache_creation_input_tokens"),
-                                               count("output_tokens"))
+        key = message.get("id") if isinstance(message, dict) else None
+        own = (isinstance(message, dict) and record.get("type") == "assistant" and record.get("isSidechain") is not True
+               and isinstance(key, str) and key and isinstance(message.get("usage"), dict))
+        owner = state["owners"].get(parent) if parent else None
+        if owner is not None and owner != (key if own else None):
+            follow = state["messages"].get(owner)
+            if follow is not None:
+                follow["followed"] = True
+                self._promote(state, owner)
+        if own:
+            messages = state["messages"]
+            entry = messages.get(key)
+            if entry is None:
+                entry = messages[key] = {"start": state["times"].get(parent), "end": None, "usage": (0, 0),
+                                         "stopped": False, "followed": False}
+                _bounded(messages, MAX_MESSAGES)
+            usage = _usage(message.get("usage"))
+            entry["usage"] = None if usage is None or entry["usage"] is None else tuple(
+                max(a, b) for a, b in zip(entry["usage"], usage))
+            if stamp is not None and (entry["end"] is None or stamp > entry["end"]):
+                entry["end"] = stamp
+            if message.get("stop_reason") is not None:
+                entry["stopped"] = True
+            if uuid:
+                state["owners"][uuid] = key
+                _bounded(state["owners"], MAX_RECORDS)
+            self._promote(state, key)
+        if uuid and stamp is not None:
+            state["times"][uuid] = stamp
+            _bounded(state["times"], MAX_RECORDS)
 
     @staticmethod
-    def _complete(state):
-        entry = state["messages"].get(state["open"])
-        state["open"] = None
-        if not entry or entry["start"] is None or entry["end"] is None or entry.get("done"):
+    def _promote(state, key):
+        entry = state["messages"].get(key)
+        if not entry or not entry["stopped"] or not entry["followed"]:
             return
-        entry["done"] = True
-        duration = entry["end"] - entry["start"]
-        if duration <= 0:
-            return
-        if state["latest"] is None or entry["end"] >= state["latest"][0]:
-            counted, output = entry["usage"]
-            state["latest"] = (entry["end"], TokenUsage(int(counted / duration), int(output / duration)))
+        current = state["messages"].get(state["latest"])
+        if current is None or key == state["latest"] or (entry["end"] or 0) >= (current["end"] or 0):
+            state["latest"] = key
 
 
 TRANSCRIPTS = TranscriptUsage()
