@@ -26,6 +26,7 @@ import {
   isMotionElement,
   motionElements,
   nativeMotionElements,
+  nativeMotionCapacity,
   reuseNativeMotionSlots,
   unmaskMotionElement,
   visibleHandoff,
@@ -148,11 +149,25 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       | "clear"
       | "command_ack"
       | "command_failed"
+      | "motion_fallback"
       | "retirement_expired",
     data: {
       generation: number;
       command?: Command["kind"];
-      reason?: "inflight_restart" | "uncertain_draw";
+      reason?:
+        | "inflight_restart"
+        | "uncertain_draw"
+        | "asset_cache"
+        | "animation_slots"
+        | "incoming_slot_count"
+        | "incoming_slot_bytes";
+      cachedAssets?: number;
+      cachedAssetBytes?: number;
+      missingMotionAssets?: number;
+      slotCount?: number;
+      slotBytes?: number;
+      pinnedSlotCount?: number;
+      reusableAnimationSlots?: number;
       scope?: "selective" | "full";
       outgoingElements?: number;
       retainedElements?: number;
@@ -1687,9 +1702,17 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             this.save(s);
             continue;
           }
-          motion.mode ??= cacheNativeMotionAssets(s, now)
-            ? "native"
-            : "fallback";
+          if (!motion.mode) {
+            motion.mode = cacheNativeMotionAssets(s, now)
+              ? "native"
+              : "fallback";
+            if (motion.mode === "fallback")
+              this.traceDisplay("motion_fallback", {
+                generation: s.generation,
+                reason: "asset_cache",
+                ...nativeMotionCapacity(s, pinnedSlots(s)),
+              });
+          }
           cmd.elements =
             motion.mode === "native"
               ? nativeMotionElements(motion.id)
@@ -1740,6 +1763,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             s.serviceMotion?.mode === "native" &&
             !reuseNativeMotionSlots(s, pinnedSlots(s))
           ) {
+            this.traceDisplay("motion_fallback", {
+              generation: s.generation,
+              reason: "animation_slots",
+              ...nativeMotionCapacity(s, pinnedSlots(s)),
+            });
             s.serviceMotion.mode = "fallback";
             cmd.elements = motionElements(100);
           }
@@ -1766,6 +1794,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               // A generation too large to coexist with the outgoing slots will
               // use one static opaque draw, then black200 and existing bounded
               // reclamation. Do not fake a fade through repeated HTTP draws.
+              this.traceDisplay("motion_fallback", {
+                generation: s.generation,
+                reason:
+                  error.code === "SLOT_CAPACITY"
+                    ? "incoming_slot_count"
+                    : "incoming_slot_bytes",
+                ...nativeMotionCapacity(s, pinnedSlots(s)),
+              });
               s.serviceMotion!.mode = "fallback";
               cmd.elements = motionElements(100);
               slots = [];

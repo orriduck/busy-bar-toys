@@ -35,11 +35,17 @@ consume a new immutable slot extension or reduce the original 16-slot limit.
 
 All six current local registrations use the same 720 ms coin projection through
 the common cloud scene adapter: Agent status, Agent requests, ADSBao, World of
-Warcraft, WoW Forever and MapleStory. The full front turns about its vertical
-axis twice, slows and stops on its normal readable face. The reverse is darker
+Warcraft, WoW Forever and MapleStory. Only the icon rectangle turns about its
+vertical axis twice, slows and stops on its normal face. Agent icons occupy
+14×14 pixels at (14,1); notification/game icons occupy 16×14 pixels at (0,1).
+The service card, clock, counters and text never rotate. The reverse is darker
 and mirrored, and the edge remains at least one pixel wide. The pure projection
-function takes elapsed seconds; the native asset samples it at 25 FPS. Entrance
-completion is a duration/acknowledgement boundary, not a host frame counter.
+function takes elapsed seconds; the native icon asset samples it at 25 FPS.
+PR63 text motion remains independent: agent digit rolls and fades are unchanged;
+notifications retain the original character entrance, detail at 300 ms and native
+scrolling text. The notification entrance duration still follows its original
+text sequence and can exceed the icon's 720 ms. Entrance completion uses the
+scene duration/acknowledgement boundary, not a host frame counter.
 
 Complete recovery scenes retain the entry asset for actual re-entry. A later
 transparent replacement is the native renewal target, so a long-lived service
@@ -49,13 +55,14 @@ Third-party publishers that build their own scenes must provide their own entry
 asset or adopt the shared adapter; the control-plane exit still covers them.
 Standalone presenters retain their existing animations.
 
-![Shared coin projection timeline](images/shared-coin-timeline.png)
+![Six services: only the icon turns](images/icon-only-timeline.png)
 
-[Animated coin preview](images/shared-coin-preview.gif) ·
-[Exit/black/entry visual preview](images/exit-black-coin-preview.gif)
+[Animated six-service icon and original text preview](images/icon-only-six-services.gif)
 
-These previews are synthetic time-curve illustrations, not measurements of WAN
-latency. The ADSBao source and registration identity remain `adsbao`; its new
+These previews compose the actual icon/text assets with synthetic timing and a
+local approximation for firmware text widgets. Each sampled frame verifies that
+the icon compositor changes no pixels outside its icon rectangle. They are not
+measurements of WAN latency or physical device acceptance. The ADSBao source and registration identity remain `adsbao`; its new
 16×14 mark is a white top-view aircraft with jade radar arcs.
 
 ![ADSBao old and new mark](images/adsbao-icon-before-after.png)
@@ -68,11 +75,14 @@ unchanged. This release adds no data feed, hook or session-directory access.
 
 Temporary synthetic occurrences were sent through the existing binding and
 withdrawn or confirmed terminal afterwards. This did not install the new observer
-or control-plane code. Actual firmware captures confirmed native coin playback,
+or control-plane code. Earlier firmware captures confirmed the previous full-front coin asset playback,
 the new ADSBao mark and z-index 255 black masks on both service canvases.
 Firmware-owned status icons remained visible alongside the black back canvas.
 
-[Device coin capture](images/actual-service-coin.gif)
+[Historical full-front coin capture, superseded](images/actual-service-coin.gif)
+
+This historical capture does not validate the corrected icon-only entrance.
+New icon-only hardware acceptance remains separate from these offline previews.
 
 ![Actual back service canvas under the opaque mask](images/actual-service-black-back.png)
 

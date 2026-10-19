@@ -1,4 +1,5 @@
 import type { Element, State } from "./model";
+import { referencedHashes } from "./assets";
 
 export const FADE_MS = 200;
 export const BLACK_MS = 200;
@@ -190,21 +191,59 @@ export function cacheNativeMotionAssets(state: State, now: number): boolean {
     missing = assets.filter((a) => !state.assets[a.hash]);
   if (
     assets.some(
-      (a) => state.assets[a.hash] && state.assets[a.hash].data !== a.data,
-    ) ||
-    Object.keys(state.assets).length + missing.length > 64 ||
-    Object.values(state.assets).reduce((n, a) => n + a.bytes, 0) +
-      missing.reduce((n, a) => n + a.bytes, 0) >
-      4 * 1024 * 1024
+      (a) =>
+        state.assets[a.hash] &&
+        (state.assets[a.hash].data !== a.data ||
+          state.assets[a.hash].type !== a.type ||
+          state.assets[a.hash].bytes !== a.bytes),
+    )
   )
     return false;
+  // Use the same reference/LRU policy as producer uploads. Plan atomically:
+  // failure must not discard cached assets, and existing motion assets stay.
+  const plan = { ...state.assets },
+    pinned = referencedHashes(state),
+    missingBytes = missing.reduce((n, a) => n + a.bytes, 0);
+  for (const asset of assets) pinned.add(asset.hash);
+  while (
+    Object.keys(plan).length + missing.length > 64 ||
+    Object.values(plan).reduce((n, a) => n + a.bytes, 0) + missingBytes >
+      4 * 1024 * 1024
+  ) {
+    const evict = Object.values(plan)
+      .filter((a) => !pinned.has(a.hash))
+      .sort((a, b) => a.usedAt - b.usedAt)[0];
+    if (!evict) return false;
+    delete plan[evict.hash];
+  }
   for (const asset of assets)
-    state.assets[asset.hash] = {
+    plan[asset.hash] = {
       ...asset,
       owners: state.assets[asset.hash]?.owners ?? [],
       usedAt: now,
     };
+  state.assets = plan;
   return true;
+}
+
+/** Counts only: diagnostics never include content, asset hashes or item keys. */
+export function nativeMotionCapacity(state: State, pins: Set<number>) {
+  return {
+    cachedAssets: Object.keys(state.assets).length,
+    cachedAssetBytes: Object.values(state.assets).reduce(
+      (n, a) => n + a.bytes,
+      0,
+    ),
+    missingMotionAssets: nativeMotionAssets().filter(
+      (a) => !state.assets[a.hash],
+    ).length,
+    slotCount: state.slots.length,
+    slotBytes: state.slots.reduce((n, s) => n + s.bytes, 0),
+    pinnedSlotCount: pins.size,
+    reusableAnimationSlots: state.slots.filter(
+      (s) => s.type === "anim" && !pins.has(s.slot),
+    ).length,
+  };
 }
 
 /** Reuse historical unpinned anim slots only; never fragment a pure-PNG device. */
