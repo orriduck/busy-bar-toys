@@ -29,14 +29,17 @@ The layout matches the device calendar.
 
 The source icon identifies the agent app of the task.
 
-The two numbers show input and output tokens per second for the selected session.
-They are not network speeds or task totals.
-Each app reports cumulative session totals.
-The observer samples every live session about once a second, including sessions that are not on screen.
-The rate uses an approximately ten-second observation window.
+The two numbers show the latest completed reply of the selected session, in tokens per second.
+They are an observed elapsed-time average for that reply, not live decoding or prefill speed, network speed, or a task total.
+The value stays until the next reply completes, so it does not drop to 0 while a reply is generating.
 
-During startup, the observer uses the available interval after the first second.
-A session with no new usage shows 0.
+Claude Code writes a reply's final usage once, when the reply ends.
+A reply starts at the record its first row points to through `parentUuid`, usually the request context written just before the request, and ends at its last row.
+In observed sessions, the start always follows the preceding tool result, so the duration excludes tool execution.
+It includes first-token latency and thinking. The input value is counted input divided by the same duration.
+A reply without a known start or with a non-positive duration is skipped; the previous value stays.
+
+Codex shows `--`. Its rollout records do not yet have verified per-reply start and end times, so the program does not derive a speed from them.
 
 Input includes new input and first-time cache writes.
 It excludes cache reads.
@@ -52,10 +55,9 @@ For example, `.1M` means 100,000 tokens per second.
 
 Compact values round down. The back display shows whole tokens per second.
 
-`--` means that the rate is unknown.
-Unavailable usage, a decreasing counter, or a sample gap longer than ten seconds restarts measurement.
-The rate then needs a new observation interval.
+`--` means that the rate is unknown: no reply has completed yet, the source has no trustworthy reply timing, the transcript is unavailable or was rewritten, or the session ended or went stale.
 The program does not estimate missing usage.
+The view repaints when a shown rate or the clock changes, and at least every five seconds.
 
 ## Return to the calendar
 

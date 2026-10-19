@@ -17,7 +17,7 @@ import time
 from busybar_shared.api import BusyAPI, APIError, AuthError, ConnectionError
 from busybar_shared.credentials import read_token
 from busybar_shared.lease import DisplayLease
-from busybar_agents.display import make_payload, render, source_icon
+from busybar_agents.display import make_payload, render, source_icon, view_key
 from busybar_agents.events import Task
 from busybar_agents import profiles
 from busybar_apps import load_agents
@@ -156,6 +156,7 @@ def watch(args):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     next_draw = 0.0
+    shown_key = None
     last_scan = 0.0
     last_dot_refresh = 0.0
     last_spool = {}
@@ -214,6 +215,9 @@ def watch(args):
                 if succeeded:
                     queue.dismiss(item_id)
             task = registry.select(now)
+            key = view_key([task] if task else [], now)
+            if key != shown_key:
+                next_draw = min(next_draw, now)
             turns = registry.active_turns(now)
             known_turns = registry.known_turns()
             was_calendar = view.calendar
@@ -326,6 +330,7 @@ def watch(args):
                     if not (notice and notice.active) and not shared_paused and now >= next_draw:
                         if allowed:
                             motion.show(task, now, registry.active_count(now))
+                            shown_key = key
                         elif motion.visible:
                             motion.hide()
                         next_draw = now + 5

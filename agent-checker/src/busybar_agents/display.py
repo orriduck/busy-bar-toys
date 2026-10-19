@@ -23,6 +23,11 @@ def token_labels(usage):
             compact_tokens(usage.output_tokens if usage else None))
 
 
+def view_key(tasks, now):
+    """What the agent view shows: repaint when this changes, not on a fixed interval."""
+    return clock_text(now), tuple(sorted((t.session_id, t.state, token_labels(task_usage(t))) for t in tasks))
+
+
 def token_fields(usage):
     # Four pixels per tiny glyph. Reserve three glyphs in each direction.
     return tuple(zip(('input','output'), token_labels(usage), (TEXT_X+3,TEXT_X+19)))
