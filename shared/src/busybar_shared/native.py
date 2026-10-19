@@ -91,3 +91,61 @@ def fade_asset(size, *, reveal, frames):
         alpha=round(255*((1-progress) if reveal else progress))
         images.append(Image.new('RGBA',size,(0,0,0,alpha)))
     return encode_sections(size,{'fade':images},rgba=True)
+
+
+def prefix_native_section(data, section='default', *, lead_ms=200):
+    """Prepend opaque black records to one independently playable section.
+
+    Original raw/RLE records (including pixel alpha and duration) are copied
+    byte-for-byte. Only the selected section is retained, with a default alias;
+    no decompression/re-encoding or producer metadata is involved. At30FPS,
+    six frames use the firmware's integer33ms timer (198ms); a separate50FPS
+    compositor mask owns the complete200ms reveal boundary.
+    """
+    if not isinstance(data,bytes) or len(data)<36 or not isinstance(lead_ms,int) or not 0<lead_ms<=1000:
+        raise ValueError('Invalid native prefix input')
+    header=list(struct.unpack_from('<8sBBBBBHBIIIII',data))
+    magic,version,width,height,mode,fps,_,flags,section_bytes,body_bytes,count,frames,_=header
+    if (magic!=b'bicycle0' or version!=0 or mode not in (0,2) or not width or not height or not fps
+            or not count or not frames or 36+section_bytes+body_bytes!=len(data)):
+        raise ValueError('Invalid native prefix header')
+    sections={};offset=36;body_start=36+section_bytes
+    try:
+        for _ in range(count):
+            if offset+14>body_start:raise ValueError()
+            first,last,record_offset,period=struct.unpack_from('<IIIB',data,offset)
+            end_name=data.index(b'\0',offset+13,body_start)
+            name=data[offset+13:end_name].decode('ascii')
+            if not name or name in sections or not 0<=first<=last<frames:raise ValueError()
+            sections[name]=(first,last,record_offset,period)
+            offset=end_name+1
+        if offset!=body_start or section not in sections:raise ValueError()
+        records=[];starts=[];offset=body_start
+        for _ in range(frames):
+            if offset+4>len(data):raise ValueError()
+            encoding,duration,size=struct.unpack_from('<BBH',data,offset)
+            if encoding not in (0,1) or duration<1 or size<1 or offset+4+size>len(data):raise ValueError()
+            if encoding==0 and size!=width*height*(4 if mode==2 else 3):raise ValueError()
+            starts.append(offset);records.append(data[offset:offset+4+size]);offset+=4+size
+        if offset!=len(data):raise ValueError()
+        first,last,record_offset,period=sections[section]
+        if record_offset!=starts[first]:raise ValueError()
+    except (ValueError,UnicodeError,struct.error):
+        raise ValueError('Invalid native prefix section or frame records') from None
+    original=records[first:last+1]
+    lead_frames=max(1,round(lead_ms*fps/1000))
+    pixel=b'\0\0\0\xff' if mode==2 else b'\0\0\0'
+    black=pixel*(width*height)
+    if len(black)>65535:raise ValueError('Native prefix frame is too large')
+    black_record=struct.pack('<BBH',0,1,len(black))+black
+    records=[black_record]*lead_frames+original
+    names=['default'] if section=='default' else ['default',section]
+    section_bytes=sum(14+len(name) for name in names)
+    body=b''.join(records)
+    section_chunk=b''.join(struct.pack('<IIIB',0,len(records)-1,36+section_bytes,period)
+                          +name.encode('ascii')+b'\0' for name in names)
+    header[6]=max(len(record)-4 for record in records)
+    header[8:]=[section_bytes,len(body),len(names),len(records),sum(record[1] for record in records)]
+    result=struct.pack('<8sBBBBBHBIIIII',*header)+section_chunk+body
+    if len(result)>262144:raise ValueError('Prefixed native asset exceeds256KiB')
+    return result

@@ -19,12 +19,23 @@ import {
 } from "./computers";
 import { PreviewRelay } from "./preview";
 import {
+  PREPARED_ENTRY_PREFIX,
+  PREPARED_BLACK_MS,
+  PREPARED_NATIVE_ELEMENT_LIMIT,
+  preparedBlackAssets,
+  preparedBlackElements,
+  materializePreparedElements,
+  setPreparedEntryIds,
+  hideObsoleteElement,
+} from "./prepared-handoff";
+import {
   BLACK_MS,
   FADE_MS,
   ServiceMotionClock,
   motionFenceTimer,
   waitForMotionFence,
   cacheNativeMotionAssets,
+  cacheInternalAssets,
   isMotionElement,
   motionElements,
   nativeMotionElements,
@@ -153,6 +164,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       | "command_ack"
       | "command_failed"
       | "motion_fallback"
+      | "prepared_handoff"
       | "retirement_expired",
     data: {
       generation: number;
@@ -163,7 +175,15 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         | "asset_cache"
         | "animation_slots"
         | "incoming_slot_count"
-        | "incoming_slot_bytes";
+        | "incoming_slot_bytes"
+        | "prepared_type_conflict"
+        | "prepared_draw_capacity"
+        | "prepared_native_capacity";
+      stage?: "prepare" | "commit" | "retire";
+      expectedBlackMs?: number;
+      pendingUploads?: number;
+      requestMs?: number;
+      preRequestMs?: number;
       cachedAssets?: number;
       cachedAssetBytes?: number;
       missingMotionAssets?: number;
@@ -215,6 +235,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     this.motionClock.reset();
     s.commands = [];
     s.generation++;
+    setPreparedEntryIds(s);
     s.displaying = null;
     s.applying = s.selected;
     s.visibleSince = null;
@@ -223,12 +244,15 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     s.nativeElements = {};
     enqueue(s, { generation: s.generation, kind: "clear", dueAt: now });
     if (item)
-      for (const c of item.scene.commands)
+      for (const [index, c] of item.scene.commands.entries())
         enqueue(s, {
           generation: s.generation,
           kind: "draw",
           dueAt: now + c.offsetMs,
           elements: c.elements,
+          ...(index === 0 && item.scene.entryLeadMs === 200
+            ? { handoff: true, prepared: "pending" as const }
+            : {}),
         });
     s.revision++;
   }
@@ -662,7 +686,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           403,
         );
         response = json({
-          implementation: "shared-service-motion-v1",
+          implementation: "shared-service-motion-v2-prepared",
           generation: s.generation,
           nativeElements: Object.keys(s.nativeElements).length,
           earliestExpiryMs: Object.keys(s.nativeElements).length
@@ -798,17 +822,19 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           const oldElements = this.projectedNativeElements(s);
           const newElements = new Map<string, Element>();
           for (const c of item.scene.commands)
-            for (const e of c.elements) newElements.set(e.id, e);
+            for (const e of materializePreparedElements(s, c.elements))
+              newElements.set(e.id, e);
+          const entryId =
+            s.preparedEntryIds?.["shared-service-entry"] ??
+            "shared-service-entry";
           const changed = [...newElements.values()].filter(
             (e) =>
-              e.id !== "shared-service-entry" &&
+              e.id !== entryId &&
               JSON.stringify(e) !== JSON.stringify(oldElements.get(e.id)),
           );
           const removed = [...oldElements.keys()].filter(
             (id) =>
-              !newElements.has(id) &&
-              !isMotionElement(id) &&
-              id !== "shared-service-entry",
+              !newElements.has(id) && !isMotionElement(id) && id !== entryId,
           );
           const transitioned = changed
             .filter(
@@ -907,14 +933,18 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           elements = validateElements(body.elements);
         requireThat(
           elements.every(
-            (e) => !isMotionElement(e.id) && Number(e.z_index ?? 0) < 255,
+            (e) =>
+              !isMotionElement(e.id) &&
+              !e.id.startsWith(PREPARED_ENTRY_PREFIX) &&
+              Number(e.z_index ?? 0) < 255,
           ),
           "COMPOSITOR_LAYER_RESERVED",
         );
         const recoveryScene =
           body.scene === undefined ? undefined : validateScene(body.scene);
         const latest = this.projectedNativeElements(s);
-        const changed = elements.filter(
+        const wireElements = materializePreparedElements(s, elements);
+        const changed = wireElements.filter(
           (e) => JSON.stringify(e) !== JSON.stringify(latest.get(e.id)),
         );
         requireThat(
@@ -941,7 +971,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               "ASSET_NOT_AUTHORIZED",
               403,
             );
-        const transitioned = elements
+        const transitioned = wireElements
           .filter((e) => latest.has(e.id) && latest.get(e.id)!.type !== e.type)
           .map((e) => e.id);
         if (transitioned.length)
@@ -1264,7 +1294,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     if (!futureEntrance && batchComplete && live.selected) {
       const item = live.items[live.selected];
       const validUntil = Math.min(
-        ...this.latestElements(item).map(
+        ...this.latestElements(live, item).map(
           (e) => live.elementExpiries[e.id]?.expiresAt ?? 0,
         ),
       );
@@ -1387,6 +1417,76 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     s.commands.splice(s.commands.indexOf(command), 0, ...prefix);
   }
   private prepareHandoff(s: State, command: Command, now: number) {
+    if (command.prepared === "pending" || command.prepared === "fallback") {
+      const nativeHold = command.prepared === "pending";
+      const incoming = new Map((command.elements ?? []).map((e) => [e.id, e])),
+        old = Object.values(s.nativeElements),
+        conflicts = old.some(
+          (e) => incoming.has(e.id) && incoming.get(e.id)!.type !== e.type,
+        ),
+        hide = old.filter((e) => !incoming.has(e.id)).map(hideObsoleteElement),
+        masks = nativeHold ? preparedBlackElements(s.generation) : [];
+      const elements = [...hide, ...(command.elements ?? []), ...masks];
+      if (
+        !conflicts &&
+        elements.length <= 32 &&
+        new Set([
+          ...Object.keys(s.nativeElements),
+          ...elements.map((e) => e.id),
+        ]).size <= PREPARED_NATIVE_ELEMENT_LIMIT
+      ) {
+        command.handoff = false;
+        command.prepared = nativeHold ? "commit" : "fallback";
+        command.elements = elements;
+        const item = s.selected ? s.items[s.selected] : undefined;
+        if (item) this.bindContentAcknowledgement(s, item);
+        // These masks clear themselves on-device after 200ms. Do not retire
+        // them over HTTP before that point; the next handoff or TTL retires them.
+        const retired = hide.map((e) => e.id);
+        const after: Command[] = [];
+        for (let offset = 0; offset < retired.length; offset += 64) {
+          enqueue(s, {
+            generation: s.generation,
+            kind: "clear",
+            dueAt: now,
+            elementIds: retired.slice(offset, offset + 64),
+            refresh: true,
+            itemKey: command.itemKey,
+            itemVersion: command.itemVersion,
+            refreshBatch: command.refreshBatch,
+          });
+          after.push(s.commands.pop()!);
+        }
+        s.commands.splice(s.commands.indexOf(command) + 1, 0, ...after);
+        this.traceDisplay("prepared_handoff", {
+          generation: s.generation,
+          stage: "prepare",
+          expectedBlackMs: nativeHold ? PREPARED_BLACK_MS : 0,
+          pendingUploads: 0,
+          outgoingElements: old.length,
+          incomingElements: incoming.size,
+          elementCount: elements.length,
+        });
+        return;
+      }
+      this.preparedFallback(
+        s,
+        command,
+        conflicts ? "prepared_type_conflict" : "prepared_draw_capacity",
+      );
+      if (nativeHold) {
+        // Removing the optional masks can make an otherwise safe single draw
+        // fit. Never stage the original entrance under opaque old widgets.
+        this.prepareHandoff(s, command, now);
+        return;
+      }
+      command.attempts++;
+      command.dueAt =
+        now + Math.min(60000, 1000 * 2 ** Math.min(command.attempts, 6));
+      s.health.status = "blocked";
+      s.health.confirmedValidUntil = 0;
+      return;
+    }
     command.handoff = false;
     const incoming = new Map((command.elements ?? []).map((e) => [e.id, e]));
     const old = Object.values(s.nativeElements);
@@ -1524,12 +1624,36 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     const index = s.commands.indexOf(command);
     s.commands.splice(index, 1, ...before, command, ...after);
   }
+  private preparedFallback(
+    s: State,
+    command: Command,
+    reason:
+      | "asset_cache"
+      | "animation_slots"
+      | "incoming_slot_count"
+      | "incoming_slot_bytes"
+      | "prepared_type_conflict"
+      | "prepared_draw_capacity"
+      | "prepared_native_capacity",
+  ) {
+    command.prepared = "fallback";
+    delete command.preparedAssetHashes;
+    this.traceDisplay("motion_fallback", {
+      generation: s.generation,
+      command: "draw",
+      stage: "prepare",
+      reason,
+      expectedBlackMs: 0,
+      ...nativeMotionCapacity(s, pinnedSlots(s), preparedBlackAssets()),
+    });
+  }
   private queueRefresh(
     s: State,
     elements: Element[],
     now: number,
     metadata: Pick<Command, "itemKey" | "itemVersion" | "refreshBatch"> = {},
   ) {
+    elements = materializePreparedElements(s, elements);
     const projected = this.projectedNativeElements(s);
     for (const element of elements) projected.set(element.id, element);
     requireThat(
@@ -1552,10 +1676,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         refreshBatch: batch,
       });
   }
-  private latestElements(item: Item): Element[] {
+  private latestElements(s: State, item: Item): Element[] {
     const latest = new Map<string, Element>();
     for (const command of item.scene.commands)
-      for (const element of command.elements) latest.set(element.id, element);
+      for (const element of materializePreparedElements(s, command.elements))
+        latest.set(element.id, element);
     return [...latest.values()];
   }
   private renewalDeadlines(s: State, now: number) {
@@ -1573,7 +1698,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             s.visibleSince ?? s.entryAt ?? now + item.scene.entryDurationMs,
           ) + item.remainingMs;
     const deadline = (type: "text" | "widgets") => {
-      const values = this.latestElements(item)
+      const values = this.latestElements(s, item)
         .filter((e) =>
           type === "text" ? e.type === "text" : e.type !== "text",
         )
@@ -1592,7 +1717,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     const item = s.items[s.selected];
     if (!item) return;
     this.renewalDeadlines(s, now);
-    const latest = this.latestElements(item);
+    const latest = this.latestElements(s, item);
     const batch = s.commandSeq + 1;
     const renew = (type: "text" | "widgets", due: number | null) => {
       const matches = (e: Element) =>
@@ -1777,6 +1902,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                 ? []
                 : (cmd.elements ?? []);
           const priorSlots = structuredClone(s.slots);
+          if (cmd.kind === "draw" && cmd.prepared === "pending") {
+            const assets = preparedBlackAssets();
+            if (!cacheInternalAssets(s, now, assets))
+              this.preparedFallback(s, cmd, "asset_cache");
+            else if (!reuseNativeMotionSlots(s, pinnedSlots(s), assets))
+              this.preparedFallback(s, cmd, "animation_slots");
+            else cmd.preparedAssetHashes = assets.map((a) => a.hash);
+          }
           if (
             cmd.kind === "motion" &&
             s.serviceMotion?.mode === "native" &&
@@ -1794,17 +1927,74 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             ...incomingElements,
             ...(cmd.kind === "motion" ? (cmd.elements ?? []) : []),
           ].flatMap((e) => (e.assetHash ? [e.assetHash] : []));
+          hashes.push(...(cmd.preparedAssetHashes ?? []));
           let slots: Slot[];
           try {
             const union = new Set([
               ...Object.keys(s.nativeElements),
               ...(cmd.elements ?? []).map((e) => e.id),
+              ...(cmd.prepared === "pending"
+                ? preparedBlackElements(s.generation).map((e) => e.id)
+                : []),
             ]);
-            if (cmd.handoff && union.size > 128)
+            if (
+              cmd.handoff &&
+              union.size > (cmd.prepared ? PREPARED_NATIVE_ELEMENT_LIMIT : 128)
+            )
               throw new ProtocolError("NATIVE_ELEMENT_CAPACITY", 413);
             slots = reserveSlots(s, hashes, pinnedSlots(s), now);
           } catch (error) {
             s.slots = priorSlots;
+            if (
+              cmd.prepared === "pending" &&
+              error instanceof ProtocolError &&
+              [
+                "SLOT_CAPACITY",
+                "SLOT_BYTES_CAPACITY",
+                "NATIVE_ELEMENT_CAPACITY",
+              ].includes(error.code)
+            ) {
+              this.preparedFallback(
+                s,
+                cmd,
+                error.code === "SLOT_CAPACITY"
+                  ? "incoming_slot_count"
+                  : error.code === "SLOT_BYTES_CAPACITY"
+                    ? "incoming_slot_bytes"
+                    : "prepared_native_capacity",
+              );
+              this.save(s);
+              continue;
+            }
+            if (
+              cmd.prepared === "fallback" &&
+              error instanceof ProtocolError &&
+              [
+                "SLOT_CAPACITY",
+                "SLOT_BYTES_CAPACITY",
+                "NATIVE_ELEMENT_CAPACITY",
+              ].includes(error.code)
+            ) {
+              // A prepared generation must never reclaim the old file-backed
+              // view and then wait for uploads. Keep it intact and retry within
+              // the existing bounded schedule; no incoming proof is granted.
+              this.preparedFallback(
+                s,
+                cmd,
+                error.code === "SLOT_CAPACITY"
+                  ? "incoming_slot_count"
+                  : error.code === "SLOT_BYTES_CAPACITY"
+                    ? "incoming_slot_bytes"
+                    : "prepared_native_capacity",
+              );
+              cmd.attempts++;
+              cmd.dueAt =
+                now + Math.min(60000, 1000 * 2 ** Math.min(cmd.attempts, 6));
+              s.health.status = "blocked";
+              s.health.confirmedValidUntil = 0;
+              this.save(s);
+              break;
+            }
             if (
               cmd.kind === "motion" &&
               error instanceof ProtocolError &&
@@ -1917,6 +2107,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         let failed: unknown = null;
         let drawExpiresAt: number | undefined;
         let drawSentAt: number | undefined;
+        let requestMs = 0,
+          preRequestMs = 0;
+        const stage =
+          cmd.kind === "upload"
+            ? ("prepare" as const)
+            : cmd.kind === "clear"
+              ? ("retire" as const)
+              : cmd.prepared === "commit" || !cmd.refresh
+                ? ("commit" as const)
+                : ("prepare" as const);
         try {
           const token = await decrypt(
             s.tokenCipher,
@@ -1939,6 +2139,17 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               409,
             );
           });
+          const request = async (
+            ...args: Parameters<BusyClient["request"]>
+          ) => {
+            const startedAt = Date.now();
+            preRequestMs = Math.max(0, startedAt - now);
+            try {
+              return await client.request(...args);
+            } finally {
+              requestMs += Math.max(0, Date.now() - startedAt);
+            }
+          };
           if (cmd.kind === "clear" && cmd.elementIds?.length !== 0) {
             this.traceDisplay("clear", {
               generation: cmd.generation,
@@ -1946,7 +2157,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               elementCount: cmd.elementIds?.length ?? null,
               hasNextScene: !!s.selected,
             });
-            await client.request(
+            await request(
               "DELETE",
               "/display/draw?application_name=" + NAMESPACE,
               cmd.elementIds
@@ -1964,7 +2175,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               "ASSET_MISSING",
               409,
             );
-            await client.request(
+            await request(
               "POST",
               `/assets/upload?application_name=${NAMESPACE}&file=slot-${slot.slot}.${slot.type}`,
               unbase64(s.assets[cmd.hash].data),
@@ -1997,7 +2208,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             });
             drawSentAt = Date.now();
             drawExpiresAt = drawSentAt + ttl * 1000;
-            await client.request("POST", "/display/draw", {
+            await request("POST", "/display/draw", {
               application_name: NAMESPACE,
               priority: NATIVE_PRIORITY,
               ...(current?.scene.ledColor && cmd.kind !== "motion"
@@ -2030,6 +2241,9 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             generation: cmd.generation,
             command: cmd.kind,
             elapsedMs: Date.now() - now,
+            requestMs,
+            preRequestMs,
+            stage,
             code:
               failed instanceof ProtocolError ? failed.code : "UNKNOWN_FAILURE",
           });
@@ -2058,6 +2272,21 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           if (slot) slot.uploaded = true;
         }
         const acceptedAt = Date.now();
+        if (cmd.prepared === "commit" && cmd.refreshBatch !== undefined) {
+          // Reveal is local to the animation. Keep retirement HTTP out of its
+          // black interval even when the commit acknowledgement is immediate.
+          for (const retirement of live.commands)
+            if (
+              retirement.generation === cmd.generation &&
+              retirement.kind === "clear" &&
+              retirement.refreshBatch === cmd.refreshBatch &&
+              retirement.status === "pending"
+            )
+              retirement.dueAt = Math.max(
+                retirement.dueAt,
+                acceptedAt + PREPARED_BLACK_MS,
+              );
+        }
         if (
           (!cmd.refresh || cmd.kind !== "draw") &&
           !(cmd.kind === "clear" && cmd.elementIds?.length === 0)
@@ -2066,6 +2295,9 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             generation: cmd.generation,
             command: cmd.kind,
             elapsedMs: acceptedAt - now,
+            requestMs,
+            preRequestMs,
+            stage,
             elementCount:
               cmd.elements?.length ?? cmd.elementIds?.length ?? null,
           });

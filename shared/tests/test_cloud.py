@@ -442,6 +442,30 @@ class CloudTest(unittest.TestCase):
                 self.assertEqual(calls,[])
                 self.assertEqual(state.data['actions']['stale']['status'],'failed')
 
+    def test_receipt_history_indexes_scoped_keys_once_per_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            producer=cloud.Producer(directory,{'role':'notifier','serviceId':'n','instanceId':'m','epoch':'e'},
+                                    object(),clock=lambda:100,notify=lambda *args:None)
+            count=1000
+            producer.state.records.update({str(n):{'itemId':str(n),'version':2,'acked':2,'level':'info',
+                'kind':'event','firstRecognizedAt':1,'lastSourceAt':1,'tombstone':'expired',
+                'fallbackPending':False} for n in range(count)})
+            receipts=[{'itemKey':json.dumps(['n','m',str(n)],separators=(',',':')),'reason':'expired'}
+                      for n in range(count)]
+            # A receipt from another instance/service must never resolve ours.
+            producer.state.records['live']={'itemId':'live','version':1,'acked':0,'level':'info',
+                'kind':'event','firstRecognizedAt':1,'lastSourceAt':1}
+            receipts.extend({'itemKey':json.dumps(parts,separators=(',',':')),'reason':'expired'}
+                            for parts in (['other','m','live'],['n','other','live']))
+            receipts.extend({'itemKey':key,'reason':'expired'} for key in ([],{},None,3))
+            callbacks=[];producer.on_tombstone=lambda *args:callbacks.append(args)
+            with patch('busybar_shared.cloud.json.dumps',wraps=json.dumps) as dumps:
+                producer.accept({'protocol':1,'revision':1,'services':[{'id':'n'}],
+                                 'items':[],'tombstones':receipts})
+            self.assertLess(dumps.call_count,count*3,'history must not serialize every record per receipt')
+            self.assertNotIn('tombstone',producer.state.records['live'])
+            self.assertEqual(callbacks,[],'repeated receipts must retain existing no-op semantics')
+
     def test_bounded_sse_full_snapshot(self):
         raw=[b'event: snapshot\n',b'data: {"revision":1}\n',b'\n']
         self.assertEqual(list(cloud.parse_sse(raw)),[{'revision':1}])

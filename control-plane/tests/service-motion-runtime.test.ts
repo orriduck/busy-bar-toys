@@ -5,6 +5,12 @@ import { StateStore } from "../src/store";
 import { ServiceMotionClock, isMotionElement } from "../src/service-motion";
 import type { Element, State } from "../src/model";
 import { enrollTestBrowser } from "./helpers/computer";
+import {
+  preparedBlackAssets,
+  nativeBlackHoldAsset,
+  PREPARED_ENTRY_PREFIX,
+} from "../src/prepared-handoff";
+import { digest, base64 } from "../src/security";
 
 const devices = new Set<string>();
 let token: string;
@@ -258,6 +264,10 @@ async function fixture() {
     wait,
     observe,
     advance,
+    alarm: () =>
+      runInDurableObject(stub, async (instance) => {
+        await instance.alarm();
+      }),
     state,
     mutate,
     inlineWait: async (change?: (state: State) => void) => {
@@ -431,25 +441,20 @@ describe("acknowledged service exits", () => {
     expect(calendar).toBe(f.coldCalendar);
   });
 
-  it("holds black before the final empty clear even though there is no selected Item", async () => {
+  it("clears an empty queue directly without introducing a black interval", async () => {
     const f = await fixture();
+    const before = calls.length;
     await f.end("old");
-    await f.wait(
-      (s) =>
-        s.selected === null &&
-        !!s.serviceMotion &&
-        Object.keys(s.nativeElements).some(isMotionElement),
-    );
-    await f.advance(200);
-    await f.advance(399);
-    expect(native.size).toBeGreaterThan(0);
-    expect(calendar).toBe(f.coldCalendar);
-    await f.advance(400);
     const done = await f.wait((s) => !s.commands.length);
     expect(native.size).toBe(0);
     expect(calendar).toBe(f.coldCalendar + 1);
     expect(done.serviceMotion).toBeUndefined();
     expect(done.selected).toBeNull();
+    expect(
+      calls
+        .slice(before)
+        .filter((c) => c.method === "POST" && c.path.endsWith("/display/draw")),
+    ).toEqual([]);
   });
 
   it("waits conservatively after a slow native-start ACK without restarting the animation", async () => {
@@ -900,4 +905,454 @@ describe("acknowledged service exits", () => {
       expect(calendar).toBe(f.coldCalendar);
     },
   );
+});
+
+async function preparedFixture() {
+  const f = await fixture();
+  const assets = [];
+  for (const [width, height] of [
+    [16, 14],
+    [1, 1],
+  ]) {
+    const raw = nativeBlackHoldAsset(width, height),
+      hash = await digest(raw);
+    await f.send("/assets", { hash, type: "anim", data: base64(raw) });
+    assets.push(hash);
+  }
+  const scene = {
+    entryLeadMs: 200,
+    entryDurationMs: 740,
+    commands: [
+      {
+        offsetMs: 0,
+        elements: [
+          {
+            id: "prepared-text",
+            type: "text",
+            text: "prepared",
+            font: "small",
+            scroll_start_delay: 200,
+          },
+          {
+            id: "shared-service-entry",
+            type: "animation",
+            assetHash: assets[0],
+            section: "hold",
+            loop: false,
+          },
+        ],
+      },
+      {
+        offsetMs: 740,
+        elements: [
+          {
+            id: "shared-service-entry",
+            type: "animation",
+            assetHash: assets[1],
+            section: "clear",
+            loop: false,
+          },
+        ],
+      },
+    ],
+  };
+  const publishPrepared = (id: string, version = 1) =>
+    f.send("/publish", {
+      epoch: f.epoch,
+      instanceId: "mac",
+      itemId: id,
+      version,
+      firstRecognizedAt: Date.now(),
+      validUntil: Date.now() + 60_000,
+      kind: "event",
+      level: "urgent",
+      title: "Prepared",
+      detail: "",
+      scene,
+    });
+  const committed = () =>
+    f.wait(
+      (s) =>
+        s.nativeElements["prepared-text"] !== undefined &&
+        Object.keys(s.nativeElements).some((id) =>
+          id.startsWith(
+            "control-service-motion-prepared-" + s.generation + "-",
+          ),
+        ),
+    );
+  const finish = async () => {
+    await committed();
+    for (let n = 0; n < 10; n++) {
+      const state = await f.state();
+      if (state.displaying && !state.commands.length) return state;
+      await f.advance(740);
+    }
+    throw new Error("prepared suffix did not settle");
+  };
+  return { ...f, scene, assets, publishPrepared, committed, finish };
+}
+
+describe("prepared single native commit", () => {
+  it("does not exceed the installed firmware's 100-widget prepared union with fresh players", async () => {
+    const f = await preparedFixture();
+    await f.mutate((s) => {
+      for (let n = 1; n < 100; n++) {
+        const e: Element = {
+          id: "old-inline-" + n,
+          type: "text",
+          text: "old",
+          font: "small",
+        };
+        s.nativeElements[e.id] = e;
+        s.elementExpiries[e.id] = {
+          type: "text",
+          expiresAt: Date.now() + 60000,
+        };
+        native.set(e.id, e);
+      }
+    });
+    const before = calls.length;
+    await f.publishPrepared("blocked");
+    const blocked = await f.wait((s) => s.health.status === "blocked");
+    expect(Object.keys(blocked.nativeElements)).toHaveLength(100);
+    expect(calls.slice(before)).toEqual([]);
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "motion_fallback" &&
+          e.data.reason === "prepared_native_capacity" &&
+          e.data.expectedBlackMs === 0,
+      ),
+    ).toBe(true);
+  });
+  it("defers retirement HTTP until at least 200ms after a fast commit ACK without using it to reveal", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = Date.now(),
+        f = await preparedFixture(),
+        before = calls.length;
+      await f.publishPrepared("fast");
+      const committed = await f.committed();
+      expect(committed.commands[0].kind).toBe("clear");
+      expect(committed.commands[0].dueAt).toBeGreaterThanOrEqual(start + 200);
+      expect(calls.slice(before).some((c) => c.method === "DELETE")).toBe(
+        false,
+      );
+      vi.setSystemTime(start + 199);
+      await f.alarm();
+      expect(calls.slice(before).some((c) => c.method === "DELETE")).toBe(
+        false,
+      );
+      const afterCommit = calls.length;
+      vi.setSystemTime(start + 200);
+      await f.alarm();
+      await f.wait((s) => !s.nativeElements["old-text"]);
+      expect(calls.slice(afterCommit).map((c) => c.method)).toEqual(["DELETE"]);
+      expect(
+        [...native.keys()].filter((id) =>
+          id.startsWith("control-service-motion-prepared-"),
+        ),
+      ).toHaveLength(2);
+      expect(
+        calls
+          .slice(before)
+          .filter(
+            (c) =>
+              c.method === "POST" &&
+              c.body?.elements?.some((e) => isMotionElement(e.id)),
+          ),
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it.each(["type", "draw-capacity"])(
+    "does not stage an entrance under old widgets after a prepared %s conflict",
+    async (failure) => {
+      const f = await preparedFixture(),
+        before = calls.length;
+      if (failure === "type")
+        f.scene.commands[0].elements[0] = {
+          id: "old-text",
+          type: "rectangle",
+          width: 1,
+          height: 1,
+        } as never;
+      else
+        f.scene.commands[0].elements = Array.from({ length: 32 }, (_, n) => ({
+          id: "new-" + n,
+          type: "text",
+          text: "new",
+          font: "small",
+        })) as never;
+      await f.publishPrepared("blocked");
+      const blocked = await f.wait((s) => s.health.status === "blocked");
+      expect(native.get("old-text")?.text).toBe("old");
+      expect(
+        calls.slice(before).some((c) => c.path.endsWith("/display/draw")),
+      ).toBe(false);
+      expect(blocked.commands[0].attempts).toBeGreaterThan(0);
+      expect(
+        (await f.diagnostics()).events.some(
+          (e) =>
+            e.kind === "motion_fallback" &&
+            e.data.reason ===
+              (failure === "type"
+                ? "prepared_type_conflict"
+                : "prepared_draw_capacity") &&
+            e.data.expectedBlackMs === 0,
+        ),
+      ).toBe(true);
+    },
+  );
+  it("omits only the masks when their historical slots are unavailable, keeping the old view until the normal commit", async () => {
+    const f = await preparedFixture();
+    await f.mutate((s) => {
+      s.slots = [];
+    });
+    const before = calls.length;
+    await f.publishPrepared("fallback");
+    await f.wait(
+      (s) => native.has("prepared-text") && !s.commands.some((c) => c.handoff),
+    );
+    const sent = calls.slice(before),
+      firstDraw = sent.findIndex(
+        (c) => c.method === "POST" && c.path.endsWith("/display/draw"),
+      );
+    expect(
+      sent.slice(0, firstDraw).every((c) => c.path.endsWith("/assets/upload")),
+    ).toBe(true);
+    expect(
+      sent
+        .flatMap((c) => c.body?.elements ?? [])
+        .some((e) => e.id.startsWith("control-service-motion-prepared-")),
+    ).toBe(false);
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "motion_fallback" &&
+          e.data.reason === "animation_slots" &&
+          e.data.expectedBlackMs === 0,
+      ),
+    ).toBe(true);
+  });
+  it("keeps the outgoing view through every preload and releases masks locally without a later unmask draw", async () => {
+    const f = await preparedFixture(),
+      start = calls.length;
+    const upstream = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let preloads = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (new URL(request.url).pathname.endsWith("/assets/upload")) {
+        expect(native.get("old-text")?.text).toBe("old");
+        expect([...native.keys()].some(isMotionElement)).toBe(false);
+        preloads++;
+      }
+      return upstream(request);
+    });
+    await f.publishPrepared("one");
+    await f.finish();
+    const sent = calls.slice(start),
+      firstDraw = sent.findIndex(
+        (c) => c.method === "POST" && c.path.endsWith("/display/draw"),
+      );
+    expect(preloads).toBe(4);
+    expect(
+      sent.slice(0, firstDraw).every((c) => c.path.endsWith("/assets/upload")),
+    ).toBe(true);
+    const commit = sent[firstDraw].body!.elements!;
+    expect(commit.find((e) => e.id === "old-text")).toMatchObject({
+      text: " ",
+      scroll_rate: 0,
+    });
+    expect(commit.find((e) => e.id === "prepared-text")).toMatchObject({
+      scroll_start_delay: 200,
+    });
+    const masks = commit.filter((e) => isMotionElement(e.id));
+    expect(masks).toHaveLength(2);
+    expect(masks.map((e) => e.section)).toEqual(["hold", "hold"]);
+    expect(masks.map((e) => e.assetHash)).toEqual([undefined, undefined]); // Native paths only.
+    expect(
+      masks.every(
+        (e) => e.z_index === 255 && e.opacity === 100 && e.loop === false,
+      ),
+    ).toBe(true);
+    const ids = new Set(masks.map((e) => e.id));
+    expect(
+      sent.filter(
+        (c) =>
+          c.method === "POST" && c.body?.elements?.some((e) => ids.has(e.id)),
+      ),
+    ).toHaveLength(1);
+    expect(
+      sent.some(
+        (c) =>
+          c.method === "DELETE" &&
+          c.body?.element_ids?.some((id) => ids.has(id)),
+      ),
+    ).toBe(false);
+    const state = await f.state();
+    expect(state.serviceMotion).toBeUndefined();
+    expect(state.items[state.selected!].scene.commands[0].elements[1].id).toBe(
+      "shared-service-entry",
+    );
+    expect(state.slots.length).toBeLessThanOrEqual(16);
+    expect(state.slots.reduce((n, s) => n + s.bytes, 0)).toBeLessThanOrEqual(
+      2 * 1024 * 1024,
+    );
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "prepared_handoff" &&
+          e.data.expectedBlackMs === 200 &&
+          e.data.pendingUploads === 0,
+      ),
+    ).toBe(true);
+    expect(calendar).toBe(f.coldCalendar);
+  });
+
+  it("maps logical updates, renewal and recovery without replaying an already visible entrance", async () => {
+    const f = await preparedFixture();
+    await f.publishPrepared("one");
+    await f.finish();
+    const first = await f.state(),
+      physical = first.preparedEntryIds!["shared-service-entry"];
+    const before = calls.length;
+    await f.send("/update", {
+      epoch: f.epoch,
+      instanceId: "mac",
+      itemId: "one",
+      version: 2,
+      generation: first.generation,
+      elements: [f.scene.commands[1].elements[0]],
+      scene: f.scene,
+    });
+    await f.wait(
+      (s) => s.items[s.selected!].version === 2 && !s.commands.length,
+    );
+    expect(native.has("shared-service-entry")).toBe(false);
+    expect(native.get(physical)?.section).toBe("clear");
+    await f.mutate((s) => {
+      s.elementExpiries[physical].expiresAt = Date.now() + 1000;
+    });
+    await f.advance(740); // Renewal is scheduled by alarm(), not GET /snapshot.
+    await f.wait(
+      (s) => s.elementExpiries[physical].expiresAt > Date.now() + 50000,
+    );
+    expect(
+      calls
+        .slice(before)
+        .flatMap((c) => c.body?.elements ?? [])
+        .filter((e) => e.id === physical)
+        .every((e) => e.section === "clear"),
+    ).toBe(true);
+    await f.mutate((s) => {
+      s.nativeRecoveryRequired = true;
+    });
+    await f.advance(0);
+    await f.finish();
+    const recovered = await f.state();
+    expect(recovered.preparedEntryIds!["shared-service-entry"]).not.toBe(
+      physical,
+    );
+    expect(
+      native.has(recovered.preparedEntryIds!["shared-service-entry"]),
+    ).toBe(true);
+  });
+
+  it("drops the old physical entry mapping after a late old-generation commit acknowledgement", async () => {
+    const f = await preparedFixture(),
+      upstream = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let release!: () => void,
+      held = false;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (
+        !held &&
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/display/draw")
+      ) {
+        const body = (await request.clone().json()) as { elements: Element[] };
+        if (
+          body.elements.some((e) =>
+            e.id.startsWith("control-service-motion-prepared-"),
+          )
+        ) {
+          held = true;
+          await blocked;
+        }
+      }
+      return upstream(request);
+    });
+    await f.publishPrepared("one");
+    const first = await f.observe(
+      (s) => held && s.commands.some((c) => c.status === "inflight"),
+    );
+    const oldPhysical = first.preparedEntryIds!["shared-service-entry"];
+    // A peer in the same urgent source does not preempt its active occurrence.
+    // End that occurrence while its native ACK is still held, then select two.
+    await f.end("one");
+    await f.publishPrepared("two");
+    const newer = await f.state();
+    expect(newer.preparedEntryIds!["shared-service-entry"]).not.toBe(
+      oldPhysical,
+    );
+    release();
+    const done = await f.finish();
+    expect(done.items[done.selected!].itemId).toBe("two");
+    expect(native.has(oldPhysical)).toBe(false);
+    expect(native.has(done.preparedEntryIds!["shared-service-entry"])).toBe(
+      true,
+    );
+    expect(done.nativeRecoveryRequired).not.toBe(true);
+  });
+
+  it("keeps all sixteen pinned legacy PNGs when a prepared scene cannot coexist", async () => {
+    const f = await preparedFixture();
+    await f.mutate((s) => {
+      s.slots = Array.from({ length: 16 }, (_, slot) => ({
+        slot,
+        hash: slot.toString(16).padStart(64, "f"),
+        type: "png",
+        bytes: 1,
+        uploaded: true,
+      }));
+      for (const slot of s.slots) {
+        const e: Element = {
+          id: "legacy-" + slot.slot,
+          type: "image",
+          assetHash: slot.hash,
+        };
+        s.nativeElements[e.id] = e;
+        s.elementExpiries[e.id] = {
+          type: "image",
+          expiresAt: Date.now() + 60000,
+        };
+        native.set(e.id, e);
+      }
+    });
+    const before = calls.length,
+      old = structuredClone((await f.state()).slots);
+    await f.publishPrepared("blocked");
+    const blocked = await f.wait((s) => s.health.status === "blocked");
+    expect(blocked.slots).toEqual(old);
+    expect(native.get("old-text")?.text).toBe("old");
+    expect(
+      [...native.keys()].filter((id) => id.startsWith("legacy-")),
+    ).toHaveLength(16);
+    expect(calls.slice(before)).toEqual([]);
+    expect(blocked.commands[0].prepared).toBe("fallback");
+    expect(blocked.commands[0].attempts).toBeGreaterThan(0);
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "motion_fallback" &&
+          e.data.reason === "incoming_slot_count" &&
+          e.data.expectedBlackMs === 0,
+      ),
+    ).toBe(true);
+  });
 });

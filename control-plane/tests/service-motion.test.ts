@@ -468,7 +468,7 @@ function native(s: ReturnType<typeof fixture>) {
 }
 
 describe("service motion scheduling", () => {
-  it("does not animate cold start and creates an independent exit before an empty clear", () => {
+  it("does not animate cold start or delay an empty clear with a new exit", () => {
     const s = fixture();
     publish(s, "normal", item("one"), start);
     expect(s.serviceMotion).toBeUndefined();
@@ -476,8 +476,8 @@ describe("service motion scheduling", () => {
     native(s);
     finishItem(s, s.selected!, "resolved", 1, start + 1);
     expect(s.selected).toBeNull();
-    expect(s.commands.map((c) => c.kind)).toEqual(["motion", "clear"]);
-    expect(s.serviceMotion?.phase).toBe("fade");
+    expect(s.commands.map((c) => c.kind)).toEqual(["clear"]);
+    expect(s.serviceMotion).toBeUndefined();
   });
 
   it("keeps the original exit and elapsed progress during urgent candidate churn", () => {

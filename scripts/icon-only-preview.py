@@ -2,7 +2,7 @@
 """Offline composition of the actual six cloud scenes. No credentials or I/O.
 
 Native text uses a local font approximation; encoded animation frames and their
-coordinates/timing are exact. Every frame asserts that the coin changes no pixel
+coordinates/timing are exact. Preview time starts after the200ms reveal lead. Every frame asserts that the coin changes no pixel
 outside its icon rectangle. This is not physical device acceptance evidence.
 """
 import argparse
@@ -24,7 +24,7 @@ from busybar_service.cloud_adapter import AgentRenderer, AgentSignals, CloudQueu
 from busybar_service.game_watch import GameRenderer
 from busybar_shared.cloud import Producer
 from busybar_shared.graphics import draw_clock, tiny_text
-from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_FPS, coin_motion
+from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_FPS, ENTRY_LEAD_MS, coin_motion
 import math
 
 spec=importlib.util.spec_from_file_location('native_preview',Path(__file__).with_name('motion-preview.py'))
@@ -92,6 +92,8 @@ class Scene:
             image.paste(layer,(e.get('x',0),e.get('y',0)),layer if layer.mode=='RGBA' else None)
         return image
     def checked_frame(self,elapsed):
+        # Preview elapsed is relative to device-local reveal, not commit.
+        elapsed+=self.scene.get('entryLeadMs',0)/1000
         image=self.frame(elapsed);original=self.frame(elapsed,coin=False)
         x,y,r,b=self.box
         for rect in ((0,0,x,16),(r,0,72,16),(x,0,r,y),(x,b,r,16)):
@@ -125,6 +127,7 @@ def main():
         frames[0].save(args.output/'icon-only-six-services.gif',save_all=True,append_images=frames[1:],
                        duration=1000//ENTRY_FPS,loop=0,optimize=True,disposal=2)
         metadata={alias:{'iconBounds':scene.box,'entryDurationMs':scene.scene['entryDurationMs'],
+                        'entryLeadMs':scene.scene.get('entryLeadMs',0),
                         'coinDurationMs':round(ENTRY_SECONDS*1000)} for alias,scene in rows}
         table=[{'timeMs':round(t*1000),'remainingDegrees':round(math.degrees(coin_motion(t)[0]),3),
                 'speedDegreesPerSecond':round(math.degrees(coin_motion(t)[1]),3)}

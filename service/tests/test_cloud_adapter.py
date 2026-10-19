@@ -7,7 +7,7 @@ from busybar_apps import load_agents
 from busybar_notifier.model import Notification
 from busybar_service.cloud_adapter import CloudQueue, notification_scene, AgentRenderer
 from busybar_agents.events import Task
-from busybar_shared.service_entry import ENTRY_SECONDS
+from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_LEAD_MS
 
 load_agents()
 
@@ -30,7 +30,9 @@ class AdapterTest(unittest.TestCase):
             old=producer.state.records['source:x'];identity=old['itemId'];deadline=old['deadline']
             # Previous releases fingerprinted only content, so an unchanged
             # live notification would keep its old native assets after restart.
-            old['localFingerprint']=json.dumps(json.loads(old['localFingerprint'])['content'],sort_keys=True)
+            old_fingerprint=json.loads(old['localFingerprint'])
+            old_fingerprint['entry']=old_fingerprint['entry'][:2]
+            old['localFingerprint']=json.dumps(old_fingerprint,sort_keys=True)
             producer.state.save()
             resumed=self.producer(directory);queue=CloudQueue(resumed)
             with patch('busybar_service.cloud_adapter.notification_scene',wraps=notification_scene) as render:
@@ -38,7 +40,8 @@ class AdapterTest(unittest.TestCase):
             self.assertEqual(render.call_count,1)
             record=resumed.state.records['source:x']
             self.assertEqual(record['itemId'],identity);self.assertEqual(record['deadline'],deadline)
-            self.assertIn(round(ENTRY_SECONDS*1000),[c['offsetMs'] for c in record['scene']['commands']])
+            self.assertEqual(record['scene']['entryLeadMs'],200)
+            self.assertIn(round(ENTRY_SECONDS*1000)+ENTRY_LEAD_MS,[c['offsetMs'] for c in record['scene']['commands']])
 
     def test_all_group_members_publish_and_errors_do_not_resolve_urgent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -112,11 +115,11 @@ class AdapterTest(unittest.TestCase):
             offsets=[c['offsetMs'] for c in scene['commands']]
             self.assertEqual(offsets[0],0)
             from busybar_notifier.display import entrance_seconds
-            self.assertEqual(scene['entryDurationMs'],round(entrance_seconds(item)*1000))
+            self.assertEqual(scene['entryDurationMs'],round(entrance_seconds(item)*1000)+ENTRY_LEAD_MS)
             self.assertEqual(offsets[-1],scene['entryDurationMs'])
-            self.assertIn('notice-detail',{e['id'] for c in scene['commands'] if c['offsetMs']==300 for e in c['elements']})
+            self.assertIn('notice-detail',{e['id'] for c in scene['commands'] if c['offsetMs']==300+ENTRY_LEAD_MS for e in c['elements']})
             entry=next(e for e in scene['commands'][0]['elements'] if e['id']=='shared-service-entry')
-            final=next(e for c in scene['commands'] if c['offsetMs']==round(ENTRY_SECONDS*1000) for e in c['elements'] if e['id']=='shared-service-entry')
+            final=next(e for c in scene['commands'] if c['offsetMs']==round(ENTRY_SECONDS*1000)+ENTRY_LEAD_MS for e in c['elements'] if e['id']=='shared-service-entry')
             self.assertEqual(final['id'],entry['id'])
             self.assertNotEqual(final['assetHash'],entry['assetHash'])
             self.assertEqual((entry['x'],entry['y']),(0,1))
@@ -131,6 +134,45 @@ class AdapterTest(unittest.TestCase):
             self.assertNotIn('"path"',encoded); self.assertNotIn('"timeout"',encoded)
             self.assertIn('assetHash',encoded)
             self.assertTrue(all(a['type']=='anim' for a in producer.state.data['assets'].values()))
+
+    def test_prepared_lead_shifts_original_text_commands_but_not_loops_or_reduced_mode(self):
+        import base64
+        from busybar_notifier.display import entrance_seconds
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory)
+            item=Notification('demo','info','app','BRAND','TITLE ROLLS','Detail')
+            scene=notification_scene(producer,item)
+            self.assertEqual(scene['entryLeadMs'],200)
+            from unittest.mock import patch
+            with patch('busybar_service.cloud_adapter.wrap_scene',side_effect=lambda p,s,icon,**kwargs:s):
+                original=notification_scene(producer,item)
+            for command in original['commands']:
+                if command['offsetMs']:
+                    shifted=next(c for c in scene['commands'] if c['offsetMs']==command['offsetMs']+200)
+                    self.assertEqual(shifted['elements'],command['elements'])
+                else:
+                    import struct
+                    for old in command['elements']:
+                        new=next(e for e in scene['commands'][0]['elements'] if e['id']==old['id'])
+                        if old['type']=='animation' and not old.get('loop',False):
+                            before=base64.b64decode(producer.state.data['assets'][old['assetHash']]['data'])
+                            after=base64.b64decode(producer.state.data['assets'][new['assetHash']]['data'])
+                            a=struct.unpack_from('<8sBBBBBHBIIIII',before)
+                            b=struct.unpack_from('<8sBBBBBHBIIIII',after)
+                            self.assertEqual(after[36+b[8]:][-a[9]:],before[36+a[8]:])
+                            self.assertEqual(b[5],a[5])
+                        else:self.assertEqual(new,old)
+            self.assertEqual(scene['entryDurationMs'],round(entrance_seconds(item)*1000)+200)
+            self.assertIn(500,[c['offsetMs'] for c in scene['commands']])
+            self.assertIn(740,[c['offsetMs'] for c in scene['commands']])
+            thinking=next(e for e in scene['commands'][0]['elements'] if e['id']=='thinking')
+            self.assertTrue(thinking['loop'])
+            import struct
+            h=struct.unpack_from('<8sBBBBBHBIIIII',base64.b64decode(producer.state.data['assets'][thinking['assetHash']]['data']))
+            self.assertEqual(h[11],1,'Looping idle strip must not gain a repeated black prelude')
+            reduced=notification_scene(producer,item,reduced=True)
+            self.assertNotIn('entryLeadMs',reduced)
+            self.assertEqual(reduced['entryDurationMs'],0)
 
     def test_notification_renew_preserves_icon_and_text_scene_without_reentry(self):
         from copy import deepcopy
@@ -200,6 +242,18 @@ class AdapterTest(unittest.TestCase):
                 self.assertEqual((header[2],header[3]),size,alias)
                 latest={e['id']:e for c in scene['commands'] for e in c['elements']}
                 self.assertEqual(latest['shared-service-entry']['section'],'clear',alias)
+            # A prepared outgoing/incoming pair plus two worst-case compositor
+            # files stays within the unchanged16-slot/two-MiB native limits.
+            import itertools
+            needed=[]
+            for alias,scene,*_ in scenes:
+                hashes={e['assetHash'] for c in scene['commands'] for e in c['elements'] if 'assetHash' in e}
+                self.assertTrue(all(len(base64.b64decode(producer.state.data['assets'][h]['data']))<=262144 for h in hashes),alias)
+                needed.append(hashes)
+            for a,b in itertools.combinations(needed,2):
+                self.assertLessEqual(len(a|b)+2,16)
+                self.assertLessEqual(sum(len(base64.b64decode(producer.state.data['assets'][h]['data'])) for h in a|b)+2*262144,2*1024*1024)
+
 
     def test_agent_rate_update_does_not_replay_shared_entry(self):
         from dataclasses import replace
@@ -209,7 +263,7 @@ class AdapterTest(unittest.TestCase):
             task=Task('s','t','codex','project','working',90,100,token_rate=TokenUsage(1001,1001))
             renderer.show(task,100)
             record=producer.state.records['agent']; first=record['itemId']
-            self.assertEqual(record['scene']['entryDurationMs'],round(ENTRY_SECONDS*1000))
+            self.assertEqual(record['scene']['entryDurationMs'],round(ENTRY_SECONDS*1000)+ENTRY_LEAD_MS)
             self.assertTrue(any(e['id']=='shared-service-entry' for e in record['scene']['commands'][0]['elements']))
             producer.flush()
             key=json.dumps(['agent','mac',first],separators=(',',':'))

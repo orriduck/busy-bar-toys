@@ -1,53 +1,76 @@
 # Shared service motion
 
-Cloud service changes use one control-plane transition, independent of app,
-template or priority group. The target is a 200 ms fade to black followed by a
-200 ms black hold. The phase clock uses monotonic elapsed time, with persisted
-progress as a lower bound after eviction. The device plays a preuploaded native
-fade; the host sends one start draw rather than HTTP opacity samples. Following
-that acknowledgement, a conservative 200 ms monotonic completion fence precedes
-the 200 ms black hold. Device HTTP latency and retries can extend these targets;
-the WAN API cannot guarantee exact physical 200 ms intervals. Where existing
-unpinned animation slots or cache capacity are unavailable, a single opaque XPM
-draw and 200 ms black hold provide a bounded hard-cut fallback; that path does
-not satisfy smooth fading and is not labelled as a successful fade.
+## Prepared local handoff
 
-Short completion/black fences now wait inside the active dispatch, with a
-persisted recovery alarm. Each wake reloads the current generation and rechecks
-monotonic elapsed time; a timer callback alone cannot complete a phase. This
-avoids adding Durable Object alarm delivery latency to each 200 ms stage. It
-does not remove the incoming native HTTP request after black, so it is not a
-device-local 200 ms scene switch.
+The six local animated service adapters declare `entryLeadMs: 200`. The control
+plane keeps the outgoing picture visible while it reserves and uploads every
+asset needed by the incoming scene, including two small native black/reveal
+clips. One acknowledged native draw then hides obsolete widgets, starts the
+incoming elements and starts both black clips. Ten frames at50FPS are black;
+the next retained frame is transparent. The device reveals the already-loaded
+scene without another HTTP request, upload, host timer or layer deletion.
 
-Before this scheduling change, a read-only hardware framebuffer probe observed
-three complete black intervals of approximately 3.6–5.5 seconds on the front and
-back service regions. It retained only black/nonblack values and request time
-bounds, not private screen pixels. A matching control-plane trace showed a
-nominal 400 ms pair of fences taking about 2.7 seconds before the incoming draw;
-that draw then acknowledged about 3.9 seconds later. These are separate timing
-observations, not proof that ACK latency equals physical black duration. The
-revised deployment still requires a new hardware timing measurement.
+Every non-looping first-command animation contains a200ms black prefix. Its
+original selected RGB/RGBA raw/RLE frame records and frame rate are copied
+byte-for-byte after that prefix. Later scene commands move by200ms, and any
+first-command scrolling text gains200ms start delay. The original icon and text
+entrances therefore start at reveal rather than playing away behind the mask.
+At30FPS the six prefix frames use the firmware's33ms integer timer (198ms);
+the separate50FPS compositor mask owns the200ms reveal boundary. Looping status
+strips keep their existing assets and cadence.
 
-| Event | Behavior |
+The prepared path keeps the old picture until the incoming commit. It does not
+start the previous WAN-controlled outgoing fade: the device API cannot both
+fade the live old widgets and schedule an independent atomic scene switch in
+one request. This avoids adding a network round trip after the screen is black.
+When the queue becomes empty, a scoped DELETE keeps the old picture visible
+until the device applies the return to its own default; no host black hold is
+inserted before that request.
+
+| Event | Prepared-path behavior |
 | --- | --- |
-| Natural end or rotation | Stop charging the outgoing dwell budget; exit, black, then enter the next candidate. |
-| Higher group preempts | Change the pending candidate immediately. Reuse an exit already in progress, so candidate churn does not restart 400 ms. |
-| Interrupted service resumes | Keep its remaining dwell budget, and run a fresh entrance before charging it. |
-| Queue becomes empty | Finish exit and black before clearing this application's namespace and returning to the device default. |
-| Same occurrence changes content | Keep the occurrence, generation and current entry; send the latest content delta. |
-| Cold start | Enter directly; there is no outgoing content to fade. |
+| Natural end, rotation or preemption | Preload under the visible old scene; commit once; device black200ms then original entrance. |
+| Interrupted service resumes | Keep its remaining dwell budget and start fresh non-loop native players. |
+| Candidate changes during preparation | Discard obsolete pending generation commands; never commit a stale candidate. |
+| Queue becomes empty | Return through the existing scoped clear without first hiding the old view. |
+| Same occurrence changes content | Preserve generation and entrance; publish only the latest delta. |
+| Cold/recovery entry | Preload first, then use the same local black/reveal commit. |
 
-The compositor covers the 72×16 front and 160×80 back service canvas with black
-native animation masks, or XPM masks on the capacity fallback. Device-owned status icons may remain visible. Old native scrolling
-text is neutralized under black, then selectively retired. Normal incoming draws
-atomically make the masks transparent alongside the new content, so a delayed
-retirement request cannot hide the whole entrance. Crowded scenes use the
-bounded staged handoff. Existing generation, ownership and acknowledgement
-fences still determine what counts as displayed. Each new exit uses fresh native
-widget IDs: firmware does not restart a finished animation merely because its
-section changes on the same path. Unmasking explicitly sets opacity to zero.
-Native fade assets only reuse historical unpinned animation slots; they do not
-consume a new immutable slot extension or reduce the original 16-slot limit.
+First-command non-loop animation IDs are materialized to generation-specific
+native IDs. Updates, completion targets, renewal, recovery and acknowledgement
+inventory use the same mapping; logical producer IDs remain stable. This avoids
+reusing a finished same-path player without replaying entrances on ordinary
+value updates. Old widgets become invisible in the commit itself, so a later
+retirement DELETE cannot cover or postpone the new entrance.
+
+The16-slot/two-MiB native file budget and64-entry/four-MiB cloud cache remain
+unchanged. The current six local scene pairs plus both compositor files fit the
+budget in regression tests. Missing compositor capacity falls back explicitly;
+capacity that also prevents normal incoming/outgoing coexistence retains the
+old inventory and retries with a bound, without clearing old files or claiming
+the scene ready. Such capacity fallbacks are not a successful200ms transition.
+Native TTL/source validity still bound how long old content can be retained.
+
+The diagnostics implementation is `shared-service-motion-v2-prepared`.
+`prepared_handoff` records the commit preparation boundary and pending upload
+count. Native command acknowledgements separate `requestMs` from
+`preRequestMs`, with fixed prepare/commit/retire stages. These contain no scene
+content or private transcript data. API acknowledgement times are not physical
+pixel timestamps.
+
+A controlled hardware probe with fresh player IDs and explicit opacity captured
+black followed by both public gray canvases using a single scene command and
+no subsequent unmask draw. That probe extended the hold to1000ms so the LAN
+sampler could observe it. The200ms probe restored gray but did not capture the
+black interval; it does not prove physical200ms timing. Full prepared-path
+hardware timing remains a separate post-deployment acceptance step.
+
+Third-party scenes without `entryLeadMs: 200` retain the legacy outgoing
+transition. The earlier fade/host-black path and inline-fence patch observed
+multi-second actual black intervals; those observations are historical and do
+not validate this prepared path. Reduced-motion adapters remain static.
+
+## Icon and original text entrance
 
 All six current local registrations use the same 540 ms coin projection through
 the common cloud scene adapter: Agent status, Agent requests, ADSBao, World of
@@ -58,7 +81,7 @@ The service card, clock, counters and text never rotate. The reverse is darker
 and mirrored, and the edge remains at least one pixel wide. The pure projection
 function takes elapsed seconds; the native icon asset samples it at 50 FPS.
 PR63 text motion remains independent: agent digit rolls and fades are unchanged;
-notifications retain the original character entrance, detail at 300 ms and native
+notifications retain the original character entrance, detail at300ms after reveal and native
 scrolling text. The notification entrance duration still follows its original
 text sequence and can exceed the icon's 540 ms. Entrance completion uses the
 scene duration/acknowledgement boundary, not a host frame counter.
@@ -69,8 +92,9 @@ continuously to zero at 540ms. Sampling at50FPS uses the firmware's exact20ms
 integer timer period. The largest adjacent angle change is about77.1° (below
 90°), compared with about113.5° at the former25FPS/720ms setting; the fast
 front/reverse/edge sequence is therefore better resolved without adding turns.
-The largest16×14 raw icon animation stays below26KiB, with the same asset/slot
-count and unchanged16-slot/two-MiB device budget.
+The two-turn16×14 raw body stays below26KiB; its prepared file including the
+black prefix stays below34KiB. The asset/slot count and16-slot/two-MiB device
+budget are unchanged.
 
 | Time | Remaining angle | Angular speed |
 | --- | ---: | ---: |
@@ -95,7 +119,7 @@ transparent replacement is the native renewal target, so a long-lived service
 cannot restart its entrance during TTL renewal. Incremental value/clock updates
 do not contain that entry asset. Reduced-motion local scenes remain static.
 Third-party publishers that build their own scenes must provide their own entry
-asset or adopt the shared adapter; the control-plane exit still covers them.
+asset or adopt the shared adapter; scenes without the lead marker retain the legacy exit.
 Standalone presenters retain their existing animations.
 
 ![Six services: only the icon turns](images/icon-only-timeline.png)
@@ -114,7 +138,7 @@ Codex metadata access remains blocked and is outside this animation release.
 The existing Codex unknown-rate behavior and PR63 reply-throughput fixes remain
 unchanged. This release adds no data feed, hook or session-directory access.
 
-## Controlled device preview before deployment
+## Historical hardware probes before prepared handoff
 
 Temporary synthetic occurrences were sent through the existing binding and
 withdrawn or confirmed terminal afterwards. This did not install the new observer

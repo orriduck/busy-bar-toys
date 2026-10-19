@@ -1590,7 +1590,7 @@ it("retains bounded content-free display diagnostics across eviction for managem
     implementation: string;
     events: { at: number; kind: string; data: Record<string, unknown> }[];
   };
-  expect(diagnostic.implementation).toBe("shared-service-motion-v1");
+  expect(diagnostic.implementation).toBe("shared-service-motion-v2-prepared");
   expect(diagnostic.events.some((e) => e.kind === "command_ack")).toBe(true);
   const serialized = JSON.stringify(diagnostic);
   expect(serialized).not.toContain("Hello");
