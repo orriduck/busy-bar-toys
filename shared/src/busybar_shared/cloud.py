@@ -5,6 +5,7 @@ separate execution paths. Durable state contains presentation data, never secret
 """
 import base64
 import copy
+from collections import deque
 import hashlib
 from http.client import HTTPException
 import ipaddress
@@ -524,6 +525,7 @@ class Producer:
                       if type(asset.get('uploadedAt')) in (int,float) and 0<=now-asset['uploadedAt']<1800}
         self._heart=0; self.error=None; self.on_admitted=None; self.on_tombstone=None
         self._io_lock=threading.Lock()
+        self._request_lock=threading.Lock(); self._request_history=deque(maxlen=64); self._request_pending=None
 
     def accept(self,snapshot):
         if not isinstance(snapshot,dict) or snapshot.get('protocol')!=1: raise CloudError('invalid_snapshot')
@@ -632,10 +634,41 @@ class Producer:
             if self._stop.wait(backoff): return
             backoff=min(backoff*2,30)
 
+    def request_diagnostics(self):
+        """Bounded timing metadata only: no URLs, IDs, hashes or content."""
+        with self._request_lock:
+            pending=copy.deepcopy(self._request_pending)
+            if pending:pending['elapsedMs']=round((time.monotonic()-pending.pop('startedMono'))*1000,2)
+            return {'inFlight':pending,'recent':copy.deepcopy(list(self._request_history))}
+
+    def _request(self,method,path,body=None):
+        endpoint=path if path in ('/api/snapshot','/api/assets','/api/publish','/api/update','/api/heartbeat','/api/input','/api/end','/api/withdraw') else '/api/other'
+        row={'method':method if method in ('GET','POST') else 'other','endpoint':endpoint,
+             'startedAtMs':round(self.clock()*1000),'phase':'http'}
+        if endpoint=='/api/assets' and isinstance(body,dict) and isinstance(body.get('data'),str):
+            encoded=body['data'];row['assetBytes']=len(encoded)*3//4-(len(encoded)-len(encoded.rstrip('=')))
+        started=time.monotonic()
+        with self._request_lock:self._request_pending={**row,'startedMono':started}
+        try:
+            response=self.http.request(method,path,body);row['ok']=True;return response
+        except Exception:
+            row['ok']=False;raise
+        finally:
+            row['elapsedMs']=round((time.monotonic()-started)*1000,2)
+            with self._request_lock:
+                self._request_history.append(row);self._request_pending=None
+
     def _response(self,method,path,body=None):
-        response=self.http.request(method,path,body)
+        response=self._request(method,path,body)
         snapshot=response.get('snapshot',response)
-        if snapshot.get('protocol')==1: self.accept(snapshot)
+        if snapshot.get('protocol')==1:
+            started=time.monotonic();row={'phase':'accept','startedAtMs':round(self.clock()*1000)}
+            with self._request_lock:self._request_pending={**row,'startedMono':started}
+            try:self.accept(snapshot)
+            finally:
+                row['elapsedMs']=round((time.monotonic()-started)*1000,2)
+                with self._request_lock:
+                    self._request_history.append(row);self._request_pending=None
         return response
 
     def _upload_assets(self,hashes,asset_bodies,*,force=False):
@@ -643,7 +676,7 @@ class Producer:
             if not force and 0<=self.clock()-self._assets.get(digest,-float('inf'))<1800: continue
             asset=asset_bodies.get(digest)
             if asset is None: raise CloudError('local_asset_unavailable')
-            result=self.http.request('POST','/api/assets',asset)
+            result=self._request('POST','/api/assets',asset)
             if result.get('hash')!=digest: raise CloudError('asset_hash_mismatch')
             with self.state.lock:
                 self._assets[digest]=self.clock()
