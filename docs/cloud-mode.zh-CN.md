@@ -125,3 +125,5 @@ Register a separate Notifier before starting an upgraded observer:
 检查 `~/Library/Application Support/BusyBarAI/preview-status.json`。`lastCloudError` 只记录已知的服务器错误码。通过 `connected`、`sent` 和 `timestamp` 判断当前是否持续发送画面。旧版留下的 `protocol` 状态无法说明最初触发原因；重启本机服务前保留该报告，供后续排查。
 
 发布前延迟可查看同目录的 `publisher-status.json`：每五秒更新各服务最近最多64次请求的固定端点类别、素材字节数、HTTP调用耗时，以及正在等待的请求；`accept` 单独记录HTTP返回快照的本地处理耗时。该私有文件不含URL、动态路径、ID、hash、正文或凭据，也不上传。HTTP耗时包含主机调度，并非纯网络RTT；此处不计SSE线程的快照处理。诊断不改变ACK、重试或显示调度，写入失败不会停止采集。
+
+SSE及成功响应带来的有效快照可在接收后最多五秒内避免一次重复GET；仅服务器时间推进的快照刷新该计时，静默、旧revision、重放或本地单调时钟回退都会恢复轮询。此计时仅减少网络请求，不构成设备显示或队列覆盖证明，紧急通知期限和原五秒心跳规则不变。

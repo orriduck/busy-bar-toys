@@ -517,6 +517,7 @@ class Producer:
         self.guard=Watchdog(self.state,config,clock=self.clock,monotonic=time.monotonic if clock is None else clock,notify=notify,delay=fallback)
         self.actions=Actions(self.state,config,clock=self.clock)
         self.snapshot={}; self._snapshot_lock=threading.Lock(); self._stop=threading.Event()
+        self._snapshot_received_at=None; self._snapshot_server_now=None
         now=self.clock()
         self._threads=[]
         # Cache receipts are an optimization, never display/admission proof.
@@ -529,6 +530,7 @@ class Producer:
 
     def accept(self,snapshot):
         if not isinstance(snapshot,dict) or snapshot.get('protocol')!=1: raise CloudError('invalid_snapshot')
+        received_at=time.monotonic()
         if any(s.get('id')!=self.config['serviceId'] for s in snapshot.get('services',[])):
             raise CloudError('scope_violation')
         with self._snapshot_lock:
@@ -575,6 +577,15 @@ class Producer:
                         with self.state.lock:
                             live=next((r for r in self.state.records.values() if r['itemId']==ident),None)
                             if live: live['admitted']=False; self.state.save()
+        server_now=snapshot.get('serverNow')
+        if type(server_now)in(int,float) and math.isfinite(server_now):
+            with self._snapshot_lock:
+                if self._snapshot_server_now is None or server_now>self._snapshot_server_now:
+                    self._snapshot_server_now=server_now;self._snapshot_received_at=received_at
+
+    def _snapshot_due(self):
+        with self._snapshot_lock:received_at=self._snapshot_received_at
+        return received_at is None or not 0<=time.monotonic()-received_at<5
 
     def asset(self,name,data):
         suffix=Path(name).suffix.lstrip('.').lower()
@@ -816,7 +827,11 @@ class Producer:
         while not self._stop.is_set():
             try:
                 with self._io_lock:
-                    self._response('GET','/api/snapshot'); self.flush()
+                    # SSE and successful content/heartbeat responses already
+                    # carry scoped snapshots. Do not put another WAN round trip
+                    # ahead of fresh outbox work; retain a bounded poll fallback.
+                    if self._snapshot_due():self._response('GET','/api/snapshot')
+                    self.flush()
                 self.error=None; backoff=1
             except CloudError as error:
                 self.error=error.code
