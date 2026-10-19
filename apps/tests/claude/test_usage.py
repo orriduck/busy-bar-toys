@@ -1,19 +1,53 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import uuid as uuidlib
 
 from busybar_apps import load_agents
-from busybar_apps.claude.usage import TranscriptUsage, CHUNK
-from busybar_agents.events import TaskRegistry
+from busybar_apps.claude.usage import CHUNK, SETTLE_SECONDS, TranscriptUsage
+from busybar_agents.events import FLASH_SECONDS, TaskRegistry
 from busybar_agents.runtime import hook_event, read_spool, write_event
-from busybar_agents.tokens import TokenUsage
+from busybar_agents.tokens import TokenUsage, task_usage
 
 
-def assistant(message_id, *, fresh=1, read=0, created=0, out=0, text="secret reply"):
-    return json.dumps({"type": "assistant", "message": {"id": message_id, "content": [{"type": "text", "text": text}],
-                       "usage": {"input_tokens": fresh, "cache_read_input_tokens": read,
-                                 "cache_creation_input_tokens": created, "output_tokens": out}}})
+def stamp(seconds):
+    return datetime.fromtimestamp(1_800_000_000 + seconds, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+class Transcript:
+    """Synthetic records shaped like Claude Code transcripts; no real content."""
+
+    def __init__(self, path):
+        self.path = path
+        self.last = None
+
+    def _write(self, record):
+        record.setdefault("uuid", str(uuidlib.uuid4()))
+        record["timestamp"] = stamp(record.pop("at"))
+        with open(self.path, "a") as stream:
+            stream.write(json.dumps(record, separators=(",", ":")) + "\n")
+        self.last = record["uuid"]
+        return record["uuid"]
+
+    def context(self, at, kind="attachment"):
+        return self._write({"parentUuid": self.last, "isSidechain": False, "type": kind, "at": at,
+                            "message": {"content": "usage assistant"}})
+
+    def reply(self, message_id, start, rows, *, fresh=2, created=0, read=0, out=0, parent=None, sidechain=False):
+        """A reply whose context record is at `start`, with one row per content block at `rows`."""
+        parent = parent if parent is not None else self.context(start)
+        for at in rows:
+            parent = self._write({"parentUuid": parent, "isSidechain": sidechain, "type": "assistant", "at": at,
+                                  "message": {"id": message_id, "content": [{"type": "text", "text": "secret"}],
+                                              "usage": {"input_tokens": fresh, "cache_creation_input_tokens": created,
+                                                        "cache_read_input_tokens": read, "output_tokens": out}}})
+
+    def raw(self, text):
+        with open(self.path, "a") as stream:
+            stream.write(text)
 
 
 class TranscriptUsageTest(unittest.TestCase):
@@ -23,52 +57,110 @@ class TranscriptUsageTest(unittest.TestCase):
         self.root = Path(self.directory.name) / "projects"
         self.root.mkdir()
         self.path = self.root / "session.jsonl"
-        self.reader = TranscriptUsage(self.root)
+        self.now = [1_800_000_000 + 10_000.0]
+        self.reader = TranscriptUsage(self.root, clock=lambda: self.now[0])
+        self.transcript = Transcript(self.path)
 
     def tearDown(self):
         self.directory.cleanup()
 
-    def write(self, *lines, mode="a"):
-        with open(self.path, mode) as stream:
-            stream.write("".join(line + "\n" for line in lines))
+    def throughput(self):
+        result = self.reader(str(self.path))
+        return None if result is None else result.throughput
 
-    def test_input_counts_fresh_and_cache_writes_but_not_cache_reads(self):
-        self.write(json.dumps({"type": "user", "message": {"content": "usage assistant"}}),
-                   assistant("m1", fresh=2, read=400, created=100, out=10),
-                   assistant("m1", fresh=2, read=400, created=100, out=30),
-                   assistant("m2", fresh=1, read=500, out=5))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(103, 35))
+    def test_reference_reply_is_its_own_average_and_held_until_the_next(self):
+        self.transcript.reply("m1", 0, [30, 35, 37], fresh=2, created=1000, read=900000, out=938)
+        self.transcript.context(38, "user")
+        self.assertEqual(self.throughput(), TokenUsage(27, 25), "938 output over 37 s is 25/s, not 93.8/s")
+        self.transcript.context(40, "user")
+        self.assertEqual(self.throughput(), TokenUsage(27, 25), "Generation in progress keeps the last reply")
+        self.transcript.reply("m2", 41, [51], fresh=1, created=9, out=300)
+        self.transcript.context(52)
+        self.assertEqual(self.throughput(), TokenUsage(1, 30))
 
-    def test_reference_example_and_cache_read_growth_do_not_change_input(self):
-        self.write(assistant("m1", fresh=20, created=30, read=900, out=7))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(50, 7))
-        other = TranscriptUsage(self.root); path = self.root / "other.jsonl"
-        path.write_text(assistant("m1", fresh=20, created=30, read=5, out=7) + "\n")
-        self.assertEqual(other(str(path)), TokenUsage(50, 7), "Same new input, different cache read")
-        self.write(assistant("m2", fresh=10, read=950, out=1))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(60, 8), "Growing cache reads add nothing")
+    def test_cache_reads_are_excluded_and_a_cache_write_burst_stays_with_its_reply(self):
+        self.transcript.reply("m1", 0, [10], fresh=20, created=600000, read=5, out=100)
+        self.transcript.context(11)
+        self.assertEqual(self.throughput(), TokenUsage(60002, 10))
+        self.transcript.reply("m2", 11, [21], fresh=20, created=30, read=900, out=100)
+        self.transcript.context(22)
+        self.assertEqual(self.throughput(), TokenUsage(5, 10), "The burst does not carry into the next reply")
+
+    def test_no_completed_reply_is_unknown_and_the_last_reply_settles_without_a_follower(self):
+        self.assertIsNone(self.throughput(), "Missing file")
+        self.transcript.context(0, "user")
+        self.assertIsNone(self.throughput())
+        self.transcript.reply("m1", 0, [9, 10], out=200)
+        self.now[0] = 1_800_000_000 + 10 + SETTLE_SECONDS - 1
+        self.assertIsNone(self.throughput(), "Rows may still be arriving")
+        self.now[0] = 1_800_000_000 + 10 + SETTLE_SECONDS
+        self.assertEqual(self.throughput(), TokenUsage(0, 20))
+
+    def test_duplicate_rows_count_once_and_out_of_order_rows_extend_the_reply(self):
+        self.transcript.reply("m1", 0, [8, 10, 9], out=100)
+        self.transcript.reply("m1", 0, [10], out=100, parent=self.transcript.last)
+        self.transcript.context(11)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
+
+    def test_invalid_durations_and_missing_starts_keep_the_previous_value(self):
+        self.transcript.reply("m1", 0, [10], out=100)
+        self.transcript.context(11)
+        good = self.throughput()
+        self.transcript.reply("zero", 20, [20], out=50)
+        self.transcript.reply("negative", 30, [25], out=50)
+        self.transcript.reply("orphan", 40, [45], out=50, parent="00000000-0000-0000-0000-000000000000")
+        self.transcript.context(46)
+        self.assertEqual(self.throughput(), good)
+        self.assertEqual(good, TokenUsage(0, 10))
+
+    def test_resume_after_compaction_without_a_known_start_is_skipped(self):
+        self.transcript.reply("m1", 0, [10], out=100)
+        boundary = str(uuidlib.uuid4())
+        self.transcript.raw(json.dumps({"type": "system", "subtype": "compact_boundary", "uuid": boundary,
+                                        "content": "x", "timestamp": stamp(50)}) + "\n")
+        self.transcript.reply("m2", 60, [70], out=900, parent=boundary)
+        self.transcript.context(71)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10), "A start outside the visible records is not invented")
+
+    def test_child_agent_rows_are_ignored(self):
+        self.transcript.reply("m1", 0, [10], out=100)
+        self.transcript.reply("child", 11, [12], out=9000, sidechain=True)
+        self.transcript.context(13)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
 
     def test_reads_incrementally_and_waits_for_a_complete_line(self):
-        self.write(assistant("m1", out=10))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(1, 10))
-        with open(self.path, "a") as stream:
-            stream.write(assistant("m2", out=5)[:20])
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(1, 10))
-        with open(self.path, "a") as stream:
-            stream.write(assistant("m2", out=5)[20:] + "\n")
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(2, 15))
+        self.transcript.reply("m1", 0, [10], out=100)
+        self.transcript.context(11)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
+        self.transcript.context(12)
+        line = json.dumps({"parentUuid": self.transcript.last, "type": "assistant",
+                           "message": {"id": "m2", "usage": {"input_tokens": 0, "output_tokens": 80}},
+                           "uuid": str(uuidlib.uuid4()), "timestamp": stamp(16)}, separators=(",", ":"))
+        self.transcript.raw(line[:20])
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
+        self.transcript.raw(line[20:] + "\n")
+        self.transcript.context(17)
+        self.assertEqual(self.throughput(), TokenUsage(0, 20))
 
-    def test_oversized_lines_are_skipped_without_stalling(self):
-        self.write("x" * (CHUNK * 2 + 7), assistant("m1", out=3))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(1, 3))
+    def test_non_object_malformed_and_oversized_lines_are_ignored(self):
+        self.transcript.raw("\n".join(['["usage", "assistant"]', '"usage assistant"', '{"usage": "assistant"',
+                                       "[[[" * 10 + '"usage" "assistant"',
+                                       json.dumps({"type": "assistant", "message": ["usage"]}),
+                                       json.dumps({"type": "assistant", "message": {"id": "m0", "usage": "assistant"}}),
+                                       "x" * (CHUNK * 2 + 7)]) + "\n")
+        self.transcript.reply("m1", 0, [10], out=100)
+        self.transcript.context(11)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
 
     def test_rewritten_file_restarts_and_outside_paths_are_refused(self):
-        self.write(assistant("m1", out=50))
-        self.reader(str(self.path))
-        self.path.unlink(); self.write(assistant("m9", out=4))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(1, 4))
+        self.transcript.reply("m1", 0, [10], out=100)
+        self.transcript.context(11)
+        self.throughput()
+        self.path.unlink()
+        self.transcript.context(20, "user")
+        self.assertIsNone(self.throughput(), "A counter reset forgets the old reply")
         outside = Path(self.directory.name) / "other.jsonl"
-        outside.write_text(assistant("m1", out=1) + "\n")
+        outside.write_text("{}\n")
         self.assertIsNone(self.reader(str(outside)))
         self.assertIsNone(self.reader(str(self.root / "missing.jsonl")))
 
@@ -81,101 +173,55 @@ class TranscriptUsageTest(unittest.TestCase):
         write_event(spool, hook_event(payload, source="claude", now=100))
         self.assertEqual([e.get("transcript") for e in read_spool(spool, now=101)], [str(self.path)])
 
-    def test_registry_refreshes_totals_through_the_source_reader(self):
-        from unittest.mock import patch
-        self.write(assistant("m1", read=999, created=999, out=1))
-        registry = TaskRegistry()
-        with patch("busybar_agents.profiles.profile") as profile:
-            profile.return_value.usage_reader = self.reader
-            registry.ingest({"session_id": "s", "turn_id": "t", "source": "claude", "state": "working",
-                             "timestamp": 100, "transcript": str(self.path)}, 100)
-            registry.refresh_usage(101)
-        self.assertEqual(registry.task("s").token_usage, TokenUsage(1000, 1))
-        self.assertEqual(registry.task("s").updated_at, 100, "Usage refresh is not activity")
-
-
-    def test_non_object_and_malformed_lines_are_ignored_and_later_lines_still_count(self):
-        self.write('["usage", "assistant"]', '"usage assistant"', '{"usage": "assistant"', "[[[" * 10 + '"usage" "assistant"',
-                   json.dumps({"type": "assistant", "message": ["usage"]}),
-                   json.dumps({"type": "assistant", "message": {"id": "m0", "usage": "assistant"}}),
-                   assistant("m1", read=9, out=2))
-        self.assertEqual(self.reader(str(self.path)), TokenUsage(1, 2))
-
-    def registry(self):
-        from unittest.mock import patch
+    def registry(self, state="working"):
         registry = TaskRegistry()
         patcher = patch("busybar_agents.profiles.profile")
         profile = patcher.start(); self.addCleanup(patcher.stop)
-        profile.return_value.usage_reader = self.reader
-        registry.ingest({"session_id": "s", "turn_id": "t", "source": "claude", "state": "working",
+        profile.return_value.usage_reader = lambda ref: self.reader(ref)
+        registry.ingest({"session_id": "s", "turn_id": "t", "source": "claude", "state": state,
                          "timestamp": 100, "transcript": str(self.path)}, 100)
         return registry, profile
 
-    def test_unavailable_reader_shows_unknown_and_recovery_has_no_fake_delta(self):
-        from unittest.mock import patch
-        from busybar_agents.tokens import TokenRateMeter, task_usage
-        clock = [0.0]
-        with patch("busybar_agents.tokens.METER", TokenRateMeter(clock=lambda: clock[0])):
-            self.write(assistant("m1", fresh=10, out=20))
-            registry, _ = self.registry()
-            registry.refresh_usage(101)
-            self.assertEqual(registry.task("s").token_usage, TokenUsage(10, 20))
-            self.path.unlink()
-            clock[0] = 1; registry.refresh_usage(102)
-            self.assertIsNone(registry.task("s").token_usage)
-            self.assertIsNone(task_usage(registry.task("s")), "Unavailable is unknown, not idle")
-            self.write(assistant("m2", fresh=5000, out=900))
-            clock[0] = 2; registry.refresh_usage(103)
-            self.assertIsNone(task_usage(registry.task("s")), "Recovery warms up instead of inventing a delta")
+    def test_registry_shows_the_reply_throughput_and_lifecycle_clears_it(self):
+        registry, _ = self.registry()
+        registry.refresh_usage(101)
+        self.assertIsNone(task_usage(registry.task("s")), "Initially unknown")
+        self.transcript.reply("m1", 0, [10], out=100)
+        self.transcript.context(11)
+        registry.refresh_usage(102)
+        self.assertEqual(task_usage(registry.task("s")), TokenUsage(0, 10))
+        self.assertEqual(registry.task("s").updated_at, 100, "Usage refresh is not activity")
+        registry.ingest({"session_id": "s", "turn_id": "t", "source": "claude", "state": "stopped", "timestamp": 103}, 103)
+        self.assertIsNone(task_usage(registry.task("s")), "An ended session is unknown")
+        self.path.unlink()
+        registry.ingest({"session_id": "s", "turn_id": "t2", "source": "claude", "state": "working",
+                         "timestamp": 104, "transcript": str(self.path)}, 104)
+        registry.refresh_usage(105)
+        self.assertIsNone(task_usage(registry.task("s")), "An unavailable transcript is unknown")
 
     def test_a_failing_reader_does_not_stop_observation(self):
         registry, profile = self.registry()
         profile.return_value.usage_reader = lambda ref: (_ for _ in ()).throw(RuntimeError("broken source"))
         registry.refresh_usage(101)
-        self.assertIsNone(registry.task("s").token_usage)
+        self.assertIsNone(task_usage(registry.task("s")))
 
-    def test_sessions_are_sampled_while_off_screen_so_switching_back_shows_the_last_window(self):
-        from unittest.mock import patch
-        from busybar_agents.tokens import TokenRateMeter, task_usage
-        clock = [0.0]
-        with patch("busybar_agents.tokens.METER", TokenRateMeter(window=10, clock=lambda: clock[0])):
-            registry, _ = self.registry()
-            for t in range(0, 101):
-                clock[0] = t
-                with open(self.path, "a") as stream:
-                    stream.write(assistant(f"m{t}", fresh=0 if t < 90 else 100, out=0) + "\n")
-                registry.refresh_usage(100 + t)
-            self.assertEqual(task_usage(registry.task("s")), TokenUsage(100, 0),
-                             "Only the last 10 seconds count, though the task was never rendered")
+    def test_sessions_are_independent(self):
+        other = Transcript(self.root / "other.jsonl")
+        self.transcript.reply("m1", 0, [10], out=100); self.transcript.context(11)
+        other.reply("m1", 0, [10], out=500); other.context(11)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
+        self.assertEqual(self.reader(str(self.root / "other.jsonl")).throughput, TokenUsage(0, 50))
 
-    def test_only_live_sessions_are_read_sampled_and_retained(self):
-        from unittest.mock import patch
-        from busybar_agents.events import FLASH_SECONDS
-        from busybar_agents.tokens import TokenRateMeter
-        clock = [0.0]
-        meter = TokenRateMeter(clock=lambda: clock[0])
+    def test_only_live_sessions_are_read(self):
         reads = []
-        self.write(assistant("m1", out=1))
-        with patch("busybar_agents.tokens.METER", meter):
-            registry, profile = self.registry()
-            profile.return_value.usage_reader = lambda ref: reads.append(ref) or TokenUsage(5, 5)
-            for i in range(100):
-                registry.ingest({"session_id": f"done{i}", "turn_id": "t", "source": "chatgpt", "state": "done", "timestamp": 100}, 100)
-                registry.set_usage(f"done{i}", TokenUsage(1000, 100))
-            registry.ingest({"session_id": "busy", "turn_id": "t", "source": "chatgpt", "state": "working", "timestamp": 1990}, 1990)
-            registry.set_usage("busy", TokenUsage(10, 10))
-            registry.ingest({"session_id": "s", "turn_id": "t", "source": "claude", "state": "done",
-                             "timestamp": 1995, "transcript": str(self.path)}, 1995)
-            registry.refresh_usage(2000)
-            self.assertEqual(set(meter._samples), {"busy", "s"}, "Ended sessions are not sampled; off-screen and flashing ones are")
-            self.assertEqual(len(reads), 1)
-            clock[0] = 1
-            registry.refresh_usage(1995 + FLASH_SECONDS + 1)
-            self.assertEqual(set(meter._samples), {"busy"}, "The flash grace ends, so its samples are released")
-            self.assertEqual(len(reads), 1, "An ended session's reader is no longer polled")
-            self.assertEqual(sum(len(v) for v in meter._samples.values()), 2)
-        self.assertIsNotNone(registry.task("done0"), "Turn history is kept")
-        self.assertIn(("done0", "t"), registry.known_turns())
+        registry, profile = self.registry(state="done")
+        profile.return_value.usage_reader = lambda ref: reads.append(ref) or self.reader(ref)
+        registry.refresh_usage(100 + FLASH_SECONDS - 1)
+        self.assertEqual(len(reads), 1, "Read during the completion flash")
+        registry.refresh_usage(100 + FLASH_SECONDS + 1)
+        self.assertEqual(len(reads), 1, "An ended session's reader is no longer polled")
+        self.assertIsNotNone(registry.task("s"), "Turn history is kept")
+
 
 if __name__ == "__main__":
     unittest.main()

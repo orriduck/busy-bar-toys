@@ -147,7 +147,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(r.select(epoch+2).state, "working")
         r.ingest({"session_id":"s", "type":"event_msg", "payload":{"type":"turn_aborted", "turn_id":"turn", "completed_at":epoch+3}})
         self.assertEqual(r.select(epoch+3).state, "stopped")
-        self.assertEqual(set(vars(r.select(epoch+3))), {"session_id","turn_id","source","project","state","started_at","updated_at","token_usage"})
+        self.assertEqual(set(vars(r.select(epoch+3))), {"session_id","turn_id","source","project","state","started_at","updated_at","token_usage","token_rate"})
 
     def test_subagent_ignored_and_metadata_recognizes_dot(self):
         r = TaskRegistry()
