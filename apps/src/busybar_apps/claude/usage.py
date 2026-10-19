@@ -2,14 +2,15 @@
 
 Usage fields and record timestamps only, never message text. Observed in real
 transcripts: every row of an assistant message carries the same final usage and
-a non-null stop_reason. A reply that may continue with tool calls (tool_use,
-pause_turn) can receive tool results on earlier rows while later rows are still
-being written, but all of its rows precede the next assistant message; so it
-completes when the next main-chain assistant message begins. Any other stopped
-reply (end_turn, max_tokens, ...) never had an outside child before its last
-row, so it completes when a later record outside the message points to one of
-its rows; only user and attachment records count, as observed, never progress
-or child-agent records. There is no inactivity timeout. Completion order is the order in which
+a non-null stop_reason; only "tool_use" and "end_turn" were observed. A
+"tool_use" reply can receive tool results on earlier rows while later rows are
+still being written, but all of its rows precede the next assistant message, so
+it completes when the next main-chain assistant message begins; its value
+appears after the tool runs, not immediately. An "end_turn" reply never had an
+outside child before its last row, so it completes when a later user or
+attachment record (not progress or child-agent) points to one of its rows. Any
+other or malformed stop_reason completes on either signal but has no
+trustworthy measurement and shows unknown. There is no inactivity timeout. Completion order is the order in which
 messages first appear in the file. A reply starts at the record its first row points to
 through parentUuid (the request context, usually an attachment or the user/tool
 result) and ends at its last row. The duration includes first-token latency and
@@ -29,7 +30,8 @@ ROOT = Path.home() / ".claude" / "projects"
 MAX_MESSAGES = 4096
 MAX_RECORDS = 16384
 CHUNK = 1 << 20
-CONTINUING = frozenset({"tool_use", "pause_turn"})
+CONTINUING = frozenset({"tool_use"})
+SUPPORTED = frozenset({"tool_use", "end_turn"})
 FOLLOWERS = frozenset({"user", "attachment"})
 
 
@@ -109,7 +111,8 @@ class TranscriptUsage:
     @staticmethod
     def _throughput(state):
         entry = state["messages"].get(state["latest"])
-        if not entry or entry["usage"] is None or entry["start"] is None or entry["end"] is None:
+        if (not entry or entry["stop"] not in SUPPORTED or entry["usage"] is None
+                or entry["start"] is None or entry["end"] is None):
             return None
         duration = entry["end"] - entry["start"]
         if duration <= 0:
@@ -157,8 +160,9 @@ class TranscriptUsage:
                 max(a, b) for a, b in zip(entry["usage"], usage))
             if stamp is not None and (entry["end"] is None or stamp > entry["end"]):
                 entry["end"] = stamp
-            if message.get("stop_reason") is not None:
-                entry["stop"] = str(message.get("stop_reason"))
+            reason = message.get("stop_reason")
+            if reason is not None:
+                entry["stop"] = reason if isinstance(reason, str) and reason in SUPPORTED else "unsupported"
             if uuid:
                 state["owners"][uuid] = key
                 _bounded(state["owners"], MAX_RECORDS)
