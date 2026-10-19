@@ -1,4 +1,4 @@
-"""One elapsed-time coin projection for every local cloud service.
+"""One elapsed-time icon-only coin projection for every local cloud service.
 
 The pure curve takes seconds, independent of preview cadence. Native assets are
 samples of this curve; the control plane uses entryDurationMs, never a count of
@@ -51,15 +51,23 @@ def transparent_asset(size=(72,16)):
     return encode_sections(size, {'clear':[Image.new('RGBA',size,(0,0,0,0))]}, rgba=True)
 
 
-def wrap_scene(producer, scene, front):
-    """Add entry only to complete recovery scenes, never incremental updates."""
+def wrap_scene(producer, scene, icon, *, position=(0,1)):
+    """Turn only the icon rectangle; preserve independent text/scene animation.
+
+    Complete recovery scenes retain the entrance. Numeric updates and renewal
+    use the original transparent completion, never another entrance command.
+    """
+    x,y=position
+    if not (0 < icon.width <= 16 and 0 < icon.height <= 14
+            and 0 <= x <= 72-icon.width and 0 <= y <= 16-icon.height):
+        raise ValueError('The service coin must fit only its front icon rectangle')
     from copy import deepcopy
     result = deepcopy(scene)
     milliseconds = round(ENTRY_SECONDS*1000)
-    layer = {'id':ENTRY_ID,'type':'animation','display':'front','x':0,'y':0,
+    layer = {'id':ENTRY_ID,'type':'animation','display':'front','x':x,'y':y,
              'z_index':90,'loop':False,'await_previous_end':False}
-    entry = producer.asset('service-entry.anim',coin_asset(front))
-    clear = producer.asset('service-entry-clear.anim',transparent_asset(front.size))
+    entry = producer.asset('service-entry.anim',coin_asset(icon))
+    clear = producer.asset('service-entry-clear.anim',transparent_asset(icon.size))
     result['commands'][0]['elements'].append({**layer,'assetHash':entry,'section':'enter'})
     # A later transparent replacement is the renewal target, so long-lived
     # services cannot replay their entrance when the native TTL is renewed.

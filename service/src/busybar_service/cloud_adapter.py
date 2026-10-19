@@ -8,6 +8,9 @@ import threading
 from busybar_agents.motion import MotionDirector, visual_state
 from busybar_agents.motion_assets import REGIONS, FPS
 from busybar_notifier.model import status_color, Notification
+from busybar_notifier.presenter import NotificationPresenter
+from busybar_notifier.display import entrance_seconds
+from busybar_shared.native import encode_sections
 from busybar_shared.cloud import CloudError
 from busybar_shared.activity import ActivityPublisher
 from busybar_shared.service_entry import wrap_scene
@@ -45,15 +48,49 @@ class Capture:
     def clear(self): pass
 
 
+def notification_entry_frame(item, progress):
+    """PR63 text frame, with only the sliding icon replaced by a fixed face.
+
+    The shared local coin owns x0..15/y1..14. Text pixels and their existing
+    per-character roll timing are identical to the standalone renderer.
+    """
+    from busybar_notifier.display import render, icon_image
+    front=render(item,progress=progress)[0]
+    front.paste(icon_image(item),(0,1))
+    return front
+
+
+class _NotificationCapture(Capture):
+    def __init__(self,producer,item):
+        super().__init__(producer)
+        self.item=item
+
+    def upload_asset(self,name,data):
+        if name.startswith('notice-entry-'):
+            from busybar_notifier.display import entrance_frames
+            total=entrance_frames(self.item)
+            data=encode_sections((72,16),{'enter':[
+                notification_entry_frame(self.item,index/(total-1))
+                for index in range(total)]})
+        super().upload_asset(name,data)
+
+
 def notification_scene(producer,item,*,reduced=False):
-    """All local notification/game sources share the service entry compositor."""
-    from busybar_notifier.display import payload, render
-    capture=Capture(producer)
-    capture.draw(payload(item,reduced=True,settled=True))
+    """Preserve PR63 text entrance/detail/scroll; turn only the 16x14 icon."""
+    from busybar_notifier.display import icon_image
+    tick=[0.0]; capture=_NotificationCapture(producer,item)
+    presenter=NotificationPresenter(capture,reduced=reduced,clock=lambda:tick[0])
+    presenter.start(item)
     commands=[{'offsetMs':0,'elements':capture.draws[-1]}]
+    duration=0 if reduced else round(entrance_seconds(item)*1000)
+    if not reduced:
+        capture.draws.clear(); tick[0]=.3; presenter.advance()
+        for elements in capture.draws: commands.append({'offsetMs':300,'elements':elements})
+        capture.draws.clear(); tick[0]=duration/1000+.001; presenter.advance()
+        for elements in capture.draws: commands.append({'offsetMs':duration,'elements':elements})
     color=status_color(item.level,item.accent)
-    scene={'entryDurationMs':0,'commands':commands,'ledColor':'#{:02X}{:02X}{:02X}FF'.format(*color)}
-    return scene if reduced else wrap_scene(producer,scene,render(item)[0])
+    scene={'entryDurationMs':duration,'commands':commands,'ledColor':'#{:02X}{:02X}{:02X}FF'.format(*color)}
+    return scene if reduced else wrap_scene(producer,scene,icon_image(item),position=(0,1))
 
 
 class CloudQueue:
@@ -217,8 +254,9 @@ class AgentRenderer:
         scene={'entryDurationMs':0 if self.reduced else round(REGIONS['view'][2]/FPS*1000),
                'commands':[{'offsetMs':0,'elements':complete.draws[-1]}]}
         if not self.reduced:
-            from busybar_agents.display import render
-            scene=wrap_scene(self.producer,scene,render(*self._args)[0])
+            from busybar_agents.display import ICON_X, ICON_SIZE, source_icon
+            scene=wrap_scene(self.producer,scene,
+                source_icon(getattr(self._task,'source',None),ICON_SIZE),position=(ICON_X,1))
         elements={e['id']:e for draw in self.capture.draws for e in draw}
         self.capture.draws.clear()
         changed={key:value for key,value in elements.items() if self._last_elements.get(key)!=value}
@@ -263,6 +301,7 @@ class AgentSignals:
 
     def show_tasks(self, tasks, now, count=1, usage=None):
         from hashlib import sha256
+        from busybar_agents.display import source_icon
         waiting=[task for task in tasks if task.state == 'waiting']
         notices=[]
         for task in waiting:
@@ -270,7 +309,7 @@ class AgentSignals:
             ident = sha256((task.session_id+'\0'+task.turn_id).encode()).hexdigest()[:32]
             notices.append(Notification(ident, 'attention', app, app.upper(),
                 'Input required', getattr(task, 'project', '')[:2048],
-                source=self.SOURCE, exit='source'))
+                icon=source_icon(app,16), source=self.SOURCE, exit='source'))
         self.notifier.set_state(self.SOURCE, notices)
         self.notifier.source_ok(self.SOURCE, 5)
         status_tasks=[task for task in tasks if task.state != 'waiting']

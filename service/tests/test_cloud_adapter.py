@@ -91,17 +91,95 @@ class AdapterTest(unittest.TestCase):
             scene=notification_scene(producer,item)
             offsets=[c['offsetMs'] for c in scene['commands']]
             self.assertEqual(offsets[0],0)
-            self.assertEqual(scene['entryDurationMs'],720)
+            from busybar_notifier.display import entrance_seconds
+            self.assertEqual(scene['entryDurationMs'],round(entrance_seconds(item)*1000))
             self.assertEqual(offsets[-1],scene['entryDurationMs'])
-            self.assertIn('notice-detail',{e['id'] for e in scene['commands'][0]['elements']})
+            self.assertIn('notice-detail',{e['id'] for c in scene['commands'] if c['offsetMs']==300 for e in c['elements']})
             entry=next(e for e in scene['commands'][0]['elements'] if e['id']=='shared-service-entry')
-            final=scene['commands'][-1]['elements'][0]
+            final=next(e for c in scene['commands'] if c['offsetMs']==720 for e in c['elements'] if e['id']=='shared-service-entry')
             self.assertEqual(final['id'],entry['id'])
             self.assertNotEqual(final['assetHash'],entry['assetHash'])
+            self.assertEqual((entry['x'],entry['y']),(0,1))
+            import struct,base64
+            raw=base64.b64decode(producer.state.data['assets'][entry['assetHash']]['data'])
+            header=struct.unpack_from('<8sBBBBBHBIIIII',raw)
+            self.assertEqual((header[2],header[3]),(16,14))
+            title=next(e for c in scene['commands'] if c['offsetMs']==scene['entryDurationMs']
+                       for e in c['elements'] if e['id']=='notice-title')
+            self.assertEqual(title['scroll_rate'],1500)
             encoded=json.dumps(scene)
             self.assertNotIn('"path"',encoded); self.assertNotIn('"timeout"',encoded)
             self.assertIn('assetHash',encoded)
             self.assertTrue(all(a['type']=='anim' for a in producer.state.data['assets'].values()))
+
+    def test_notification_renew_preserves_icon_and_text_scene_without_reentry(self):
+        from copy import deepcopy
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory);queue=CloudQueue(producer)
+            item=Notification('demo','info','app','BRAND','OLD TEXT MOTION','Detail',source='source')
+            queue.push([item]);record=next(iter(producer.state.records.values()))
+            scene=deepcopy(record['scene']);version=record['version']
+            producer.clock=lambda:101
+            queue.push([item]);queue.source_ok('source',5)
+            self.assertEqual(record['version'],version)
+            self.assertEqual(record['scene'],scene)
+            self.assertEqual(record['lastSourceAt'],101000)
+
+    def test_notifier_preserves_pr63_text_frames_outside_the_icon(self):
+        from PIL import Image,ImageDraw
+        from busybar_notifier.display import render,icon_image,TEXT_X
+        from busybar_service.cloud_adapter import notification_entry_frame
+        icon=Image.new('RGB',(16,14));ImageDraw.Draw(icon).rectangle((2,1,11,12),fill='white')
+        item=Notification('demo','info','app','BRAND','TITLE ROLL','DETAIL',icon=icon)
+        for progress in (0,.05,.2,.4,.6,.8,1):
+            original=render(item,progress=progress)[0]
+            actual=notification_entry_frame(item,progress)
+            self.assertEqual(original.crop((TEXT_X,0,72,16)).tobytes(),
+                             actual.crop((TEXT_X,0,72,16)).tobytes())
+            self.assertEqual(actual.crop((0,1,16,15)).tobytes(),icon_image(item).tobytes())
+
+    def test_all_six_local_services_flip_only_their_icon_rectangles(self):
+        import base64,struct
+        from types import SimpleNamespace
+        from busybar_agents.display import ICON_X,ICON_SIZE,source_icon
+        from busybar_service.cloud_adapter import AgentSignals
+        from busybar_service.game_watch import GameRenderer
+        from busybar_apps.gaming import GAMES
+        from busybar_apps.adsbao.display import notification
+        from busybar_apps.adsbao.proximity import NearbyAircraft,MILE
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory,'agent')
+            renderer=AgentRenderer(producer)
+            renderer.show(Task('s','t','codex','DEMO','working',90,100),100)
+            scenes=[('codex',producer.state.records['agent']['scene'],(ICON_X,1),(ICON_SIZE,ICON_SIZE))]
+            plane=SimpleNamespace(hex='abc123',identity='DEMO123',kind='B738')
+            ads=notification(NearbyAircraft(plane,MILE))
+            scenes.append(('adsbao',notification_scene(producer,ads),(0,1),(16,14)))
+            notices=[]
+            signals=AgentSignals(SimpleNamespace(hide=lambda:None),SimpleNamespace(
+                set_state=lambda source,items:notices.extend(items),source_ok=lambda *args:None))
+            signals.show_tasks([Task('s','wait','codex','DEMO','waiting',90,100)],100)
+            self.assertEqual(notices[0].icon.tobytes(),source_icon('codex',16).tobytes())
+            scenes.append(('agent-notifier',notification_scene(producer,notices[0]),(0,1),(16,14)))
+            for game in GAMES:
+                game_renderer=GameRenderer(producer,game)
+                game_renderer.show('demo-'+game.source,59)
+                record=producer.state.records['game']
+                record['acked']=record['version']
+                game_renderer.show('demo-'+game.source,60)
+                self.assertEqual([e['id'] for e in record['update']],['notice-detail'])
+                version=record['version']
+                game_renderer.show('demo-'+game.source,60)
+                self.assertEqual(record['version'],version)
+                scenes.append((game.source,record['scene'],(0,1),(16,14)))
+            self.assertEqual(len(scenes),6)
+            for alias,scene,position,size in scenes:
+                entry=next(e for e in scene['commands'][0]['elements'] if e['id']=='shared-service-entry')
+                self.assertEqual((entry['x'],entry['y']),position,alias)
+                header=struct.unpack_from('<8sBBBBBHBIIIII',base64.b64decode(producer.state.data['assets'][entry['assetHash']]['data']))
+                self.assertEqual((header[2],header[3]),size,alias)
+                latest={e['id']:e for c in scene['commands'] for e in c['elements']}
+                self.assertEqual(latest['shared-service-entry']['section'],'clear',alias)
 
     def test_agent_rate_update_does_not_replay_shared_entry(self):
         from dataclasses import replace
@@ -157,7 +235,7 @@ class AdapterTest(unittest.TestCase):
 
     def test_unchanged_agent_scene_still_renews_local_source_liveness(self):
         with tempfile.TemporaryDirectory() as directory:
-            producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer,reduced=True)
+            producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer)
             task=Task('s','t','codex','project','working',90,100)
             renderer.show(task,100)
             version=producer.state.records['agent']['version']

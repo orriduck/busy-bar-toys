@@ -246,6 +246,10 @@ async function fixture() {
     advance,
     state,
     mutate,
+    diagnostics: async () =>
+      (await admin("/diagnostics/display")).json() as Promise<{
+        events: { kind: string; data: Record<string, unknown> }[];
+      }>,
     setClock: (now: number) => {
       clock.now = now;
     },
@@ -796,6 +800,17 @@ describe("acknowledged service exits", () => {
       });
       const current = await f.wait((s) => s.serviceMotion?.phase === "black");
       expect(current.serviceMotion?.mode).toBe("fallback");
+      const diagnostics = await f.diagnostics();
+      expect(
+        diagnostics.events.some(
+          (event) =>
+            event.kind === "motion_fallback" &&
+            event.data.reason ===
+              (failure === "no-animation-slots"
+                ? "animation_slots"
+                : "incoming_slot_bytes"),
+        ),
+      ).toBe(true);
       expect(Object.keys(current.nativeElements)).toHaveLength(128);
       expect(
         [...native.values()].filter((e) => isMotionElement(e.id)),

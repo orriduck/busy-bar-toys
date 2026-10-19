@@ -19,12 +19,104 @@ import {
   nativeMotionElements,
   reuseNativeMotionSlots,
   cacheNativeMotionAssets,
+  nativeMotionCapacity,
   unmaskMotionElement,
   type ServiceMotion,
 } from "../src/service-motion";
 import { digest } from "../src/security";
 
 describe("native device fade assets", () => {
+  it.each(["type", "bytes", "data"] as const)(
+    "rejects a conflicting existing native asset %s without changing cache",
+    (field) => {
+      const state = createState("conflict"),
+        asset = nativeMotionAssets()[0];
+      state.assets[asset.hash] = { ...asset, owners: ["test"], usedAt: 1 };
+      if (field === "type") state.assets[asset.hash].type = "png";
+      if (field === "bytes") state.assets[asset.hash].bytes++;
+      if (field === "data") state.assets[asset.hash].data = "eA==";
+      const before = structuredClone(state.assets);
+      expect(cacheNativeMotionAssets(state, 100)).toBe(false);
+      expect(state.assets).toEqual(before);
+    },
+  );
+
+  function fullCache(bytes = 1) {
+    const state = createState("cache-capacity");
+    for (let n = 0; n < 64; n++) {
+      const hash = n.toString(16).padStart(64, "0");
+      state.assets[hash] = {
+        hash,
+        type: "png",
+        bytes,
+        data: "eA==",
+        owners: ["test"],
+        usedAt: n,
+      };
+    }
+    return state;
+  }
+
+  it("evicts only unreferenced LRU assets from a full cache for both native masks", () => {
+    const state = fullCache(),
+      hashes = Object.keys(state.assets);
+    state.nativeElements.retained = {
+      id: "retained",
+      type: "image",
+      assetHash: hashes[0],
+    };
+    state.elementExpiries.retained = {
+      type: "image",
+      expiresAt: Date.now() + 60_000,
+    };
+    expect(cacheNativeMotionAssets(state, 100)).toBe(true);
+    expect(Object.keys(state.assets)).toHaveLength(64);
+    expect(state.assets[hashes[0]]).toBeDefined();
+    expect(state.assets[hashes[1]]).toBeUndefined();
+    expect(state.assets[hashes[2]]).toBeUndefined();
+    expect(
+      nativeMotionAssets().every((a) => state.assets[a.hash]?.data === a.data),
+    ).toBe(true);
+    expect(state.slots).toEqual([]);
+  });
+
+  it("obeys the cache byte budget as well as the asset count", () => {
+    const state = fullCache(65536);
+    expect(cacheNativeMotionAssets(state, 100)).toBe(true);
+    expect(
+      nativeMotionCapacity(state, new Set()).cachedAssetBytes,
+    ).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(Object.keys(state.assets)).toHaveLength(64);
+  });
+
+  it("leaves a referenced full cache unchanged when both masks cannot fit", () => {
+    const state = fullCache();
+    for (const [n, hash] of Object.keys(state.assets).entries()) {
+      if (n === 63) continue; // One evictable entry is insufficient for two masks.
+      const id = "retained-" + n;
+      state.nativeElements[id] = { id, type: "image", assetHash: hash };
+      state.elementExpiries[id] = {
+        type: "image",
+        expiresAt: Date.now() + 60_000,
+      };
+    }
+    const before = structuredClone(state.assets);
+    expect(cacheNativeMotionAssets(state, 100)).toBe(false);
+    expect(state.assets).toEqual(before);
+  });
+
+  it("does not evict an existing native mask while caching its missing peer", () => {
+    const state = fullCache(),
+      asset = nativeMotionAssets()[0];
+    delete state.assets[Object.keys(state.assets)[63]];
+    state.assets[asset.hash] = { ...asset, owners: [], usedAt: -1 };
+    expect(cacheNativeMotionAssets(state, 100)).toBe(true);
+    expect(
+      nativeMotionAssets().every((a) => state.assets[a.hash]?.data === a.data),
+    ).toBe(true);
+    expect(Object.keys(state.assets)).toHaveLength(64);
+  });
+
   it("matches the hardware-preview bytes, seven time samples and transparent clear section", async () => {
     for (const [width, height, hash, length] of [
       [
