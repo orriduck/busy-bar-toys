@@ -37,7 +37,13 @@ Claude Code writes a reply's final usage once, when the reply ends.
 A reply starts at the record its first row points to through `parentUuid`, usually the request context written just before the request, and ends at its last row.
 In observed sessions, the start always follows the preceding tool result, so the duration excludes tool execution.
 It includes first-token latency and thinking. The input value is counted input divided by the same duration.
-A reply without a known start or with a non-positive duration is skipped; the previous value stays.
+
+A reply counts as completed only on terminal evidence observed in real transcripts:
+- `end_turn` replies complete when a later user or attachment record points to one of their rows. Progress and child-agent records do not count.
+- `tool_use` replies can receive tool results before their last row is written, so they complete only when the next assistant message begins. Their value appears after the tool runs, not immediately.
+- Any other or malformed `stop_reason` completes but has no trustworthy measurement.
+
+If the newest completed reply has no known start, a non-positive duration, missing or invalid usage, a missing timestamp, or an unsupported `stop_reason`, the value is `--`. An older reply's value is not reused. A reply that is still generating keeps the previous completed value.
 
 Codex shows `--`. Its rollout records do not yet have verified per-reply start and end times, so the program does not derive a speed from them.
 
@@ -45,8 +51,8 @@ Input includes new input and first-time cache writes.
 It excludes cache reads.
 Output includes reasoning tokens.
 Codex reads usage from local rollout records.
-Claude Code reads transcript usage through the path supplied by its hook.
-The usage reader does not read message text.
+Claude Code reads its transcript through the path supplied by its hook.
+The reader parses each transcript line in memory but extracts only usage counts, record IDs, timestamps and stop reasons. It does not store, log or publish message content.
 
 The front display uses decimal abbreviations.
 K means one thousand. M means one million.
