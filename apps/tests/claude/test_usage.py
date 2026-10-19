@@ -182,6 +182,22 @@ class TranscriptUsageTest(unittest.TestCase):
         transcript.context(31)
         self.assertEqual(self.reader(str(path)).throughput, TokenUsage(0, 50), "A late older row does not replace m2")
 
+    def test_unsupported_or_malformed_stop_reasons_have_no_trustworthy_measurement(self):
+        for reason in ("max_tokens", "pause_turn", "future_reason", 7, ["end_turn"], {"x": 1}):
+            for signal in ("follower", "next reply"):
+                with self.subTest(reason=reason, signal=signal):
+                    path = self.root / f"r{abs(hash((str(reason), signal)))}.jsonl"
+                    transcript = Transcript(path)
+                    transcript.reply("m1", 0, [10], out=100)
+                    self.assertEqual(self.reader(str(path)).throughput, TokenUsage(0, 10))
+                    transcript.context(20)
+                    transcript.row("m2", 30, parent=transcript.last, out=900, stop=reason)
+                    if signal == "follower":
+                        transcript.context(31, "user")
+                    else:
+                        transcript.row("m3", 40, parent=transcript.last, out=1, stop=None)
+                    self.assertIsNone(self.reader(str(path)).throughput, "Unknown, not end_turn semantics or m1")
+
     def test_equivalent_serializations_and_nested_lookalikes(self):
         spaced = Transcript(self.root / "spaced.jsonl", spaced=True)
         spaced.reply("m1", 0, [30, 37], fresh=2, created=1000, out=938)
