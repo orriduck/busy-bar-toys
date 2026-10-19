@@ -51,6 +51,41 @@ class IdleWatchTests(LocalDisplayTest):
             api.clear.assert_called_once()
 
 
+
+class RepaintWatchTests(LocalDisplayTest):
+    def test_standalone_repaints_when_the_exact_back_rate_changes(self):
+        from busybar_agents.events import Task
+        from busybar_agents.tokens import TokenUsage
+        base=1_800_000_000.0-(1_800_000_000%60)+20
+        clock=[base]
+        task=Task('s','t','claude','p','working',base-10,base-1,None,TokenUsage(0,1001))
+        registry=Mock(); registry.select.side_effect=lambda now:task
+        registry.active_turns.return_value=set(); registry.known_turns.return_value=set(); registry.active_count.return_value=1
+        motion=Mock(due=False,visible=True,pending=False)
+        def sleep(_):
+            clock[0]+=0.25
+            if abs(clock[0]-(base+1))<1e-9: task.token_rate=TokenUsage(0,1999)
+            if clock[0]>=base+3: raise KeyboardInterrupt
+        fixture=SimpleNamespace(time=lambda:clock[0],monotonic=lambda:clock[0],sleep=sleep)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch('busybar_service.cli.RUNTIME',Path(directory)), \
+                 patch('busybar_service.cli.read_token',return_value='test-only'), \
+                 patch('busybar_service.cli.BusyAPI',return_value=Mock()), \
+                 patch('busybar_service.cli.TaskRegistry',return_value=registry), \
+                 patch('busybar_service.cli.MotionDirector',return_value=motion), \
+                 patch('busybar_service.cli.RolloutWatcher'), \
+                 patch('busybar_service.cli.configured_input_monitor') as monitor, \
+                 patch('busybar_service.cli.load_dot_thread_ids',return_value=set()), \
+                 patch('busybar_service.cli.read_spool',return_value=[]), \
+                 patch('busybar_service.cli.time',fixture), \
+                 patch('busybar_service.cli.signal.signal'):
+                monitor.return_value.pop_start_pressed.return_value=False
+                with self.assertRaises(KeyboardInterrupt):
+                    watch(SimpleNamespace(dot_thread=[],reduced_motion=True))
+        shown=[round(c.args[1]-base,2) for c in motion.show.call_args_list]
+        self.assertEqual(shown,[0,1],'1001 to 1999 keeps the front label 1K but changes the back')
+
+
 if __name__=='__main__': unittest.main()
 
 class ButtonWatchTests(LocalDisplayTest):

@@ -48,14 +48,14 @@ class AgentRepaintTest(unittest.TestCase):
         monitor=Mock(); monitor.pop_start_pressed.return_value=False
         base=1_800_000_000.0 - (1_800_000_000 % 60) + 50
         clock=[base]
-        task=Task('s','t','claude','p','working',base-10,base-1,None,TokenUsage(10,20))
+        task=Task('s','t','claude','p','working',base-10,base-1,None,TokenUsage(10,1001))
         registry=Mock(); registry.visible_tasks.side_effect=lambda now:[task]
         registry.known_turns.return_value=set(); registry.active_turns.return_value=set(); registry.active_count.return_value=1
         calls=[]
         def sleep(_):
             calls.append(clock[0])
             clock[0]+=0.25
-            if abs(clock[0]-(base+1)) < 1e-9: task.token_rate=TokenUsage(30,40)
+            if abs(clock[0]-(base+1)) < 1e-9: task.token_rate=TokenUsage(10,1999)
             if clock[0] >= base+16: raise KeyboardInterrupt
         with tempfile.TemporaryDirectory() as runtime:
             with patch.object(cloud_watch,'producers',return_value=clients), \
@@ -77,4 +77,4 @@ class AgentRepaintTest(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     cloud_watch.watch(SimpleNamespace(),Path(runtime),Path(runtime))
         shown=[round(c.args[1]-base,2) for c in agents.return_value.show_tasks.call_args_list]
-        self.assertEqual(shown,[0,1,6,10,15],'first draw, rate change, 5 s fallback, minute change, fallback')
+        self.assertEqual(shown,[0,1,6,10,15],'first draw, exact back-rate change (front stays 1K), 5 s fallback, minute change, fallback')

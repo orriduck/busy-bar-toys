@@ -7,7 +7,7 @@ from unittest.mock import patch
 import uuid as uuidlib
 
 from busybar_apps import load_agents
-from busybar_apps.claude.usage import CHUNK, SETTLE_SECONDS, TranscriptUsage
+from busybar_apps.claude.usage import CHUNK, TranscriptUsage
 from busybar_agents.events import FLASH_SECONDS, TaskRegistry
 from busybar_agents.runtime import hook_event, read_spool, write_event
 from busybar_agents.tokens import TokenUsage, task_usage
@@ -20,15 +20,18 @@ def stamp(seconds):
 class Transcript:
     """Synthetic records shaped like Claude Code transcripts; no real content."""
 
-    def __init__(self, path):
+    def __init__(self, path, *, spaced=False):
         self.path = path
         self.last = None
+        self.spaced = spaced
 
     def _write(self, record):
         record.setdefault("uuid", str(uuidlib.uuid4()))
         record["timestamp"] = stamp(record.pop("at"))
+        if self.spaced:
+            record = dict(reversed(list(record.items())), extra={"uuid": "nested", "timestamp": stamp(-999)})
         with open(self.path, "a") as stream:
-            stream.write(json.dumps(record, separators=(",", ":")) + "\n")
+            stream.write(json.dumps(record, separators=None if self.spaced else (",", ":")) + "\n")
         self.last = record["uuid"]
         return record["uuid"]
 
@@ -36,14 +39,23 @@ class Transcript:
         return self._write({"parentUuid": self.last, "isSidechain": False, "type": kind, "at": at,
                             "message": {"content": "usage assistant"}})
 
-    def reply(self, message_id, start, rows, *, fresh=2, created=0, read=0, out=0, parent=None, sidechain=False):
-        """A reply whose context record is at `start`, with one row per content block at `rows`."""
+    def reply(self, message_id, start, rows, *, fresh=2, created=0, read=0, out=0, parent=None, sidechain=False,
+              stop="end_turn", follow=True):
+        """A reply whose context record is at `start`, one row per content block at `rows`, then a follower."""
         parent = parent if parent is not None else self.context(start)
         for at in rows:
-            parent = self._write({"parentUuid": parent, "isSidechain": sidechain, "type": "assistant", "at": at,
-                                  "message": {"id": message_id, "content": [{"type": "text", "text": "secret"}],
-                                              "usage": {"input_tokens": fresh, "cache_creation_input_tokens": created,
-                                                        "cache_read_input_tokens": read, "output_tokens": out}}})
+            parent = self.row(message_id, at, parent=parent, fresh=fresh, created=created, read=read, out=out,
+                              sidechain=sidechain, stop=stop)
+        if follow:
+            self.context(rows[-1] + 0.1)
+
+    def row(self, message_id, at, *, parent=None, fresh=2, created=0, read=0, out=0, sidechain=False, stop="end_turn"):
+        return self._write({"parentUuid": parent if parent is not None else self.last, "isSidechain": sidechain,
+                            "type": "assistant", "at": at,
+                            "message": {"id": message_id, "stop_reason": stop,
+                                        "content": [{"type": "text", "text": "secret"}],
+                                        "usage": {"input_tokens": fresh, "cache_creation_input_tokens": created,
+                                                  "cache_read_input_tokens": read, "output_tokens": out}}})
 
     def raw(self, text):
         with open(self.path, "a") as stream:
@@ -57,8 +69,7 @@ class TranscriptUsageTest(unittest.TestCase):
         self.root = Path(self.directory.name) / "projects"
         self.root.mkdir()
         self.path = self.root / "session.jsonl"
-        self.now = [1_800_000_000 + 10_000.0]
-        self.reader = TranscriptUsage(self.root, clock=lambda: self.now[0])
+        self.reader = TranscriptUsage(self.root)
         self.transcript = Transcript(self.path)
 
     def tearDown(self):
@@ -86,15 +97,16 @@ class TranscriptUsageTest(unittest.TestCase):
         self.transcript.context(22)
         self.assertEqual(self.throughput(), TokenUsage(5, 10), "The burst does not carry into the next reply")
 
-    def test_no_completed_reply_is_unknown_and_the_last_reply_settles_without_a_follower(self):
+    def test_completion_needs_a_stop_reason_and_a_follower_not_a_timeout(self):
         self.assertIsNone(self.throughput(), "Missing file")
         self.transcript.context(0, "user")
         self.assertIsNone(self.throughput())
-        self.transcript.reply("m1", 0, [9, 10], out=200)
-        self.now[0] = 1_800_000_000 + 10 + SETTLE_SECONDS - 1
-        self.assertIsNone(self.throughput(), "Rows may still be arriving")
-        self.now[0] = 1_800_000_000 + 10 + SETTLE_SECONDS
+        self.transcript.reply("m1", 0, [9, 10], out=200, follow=False)
+        self.assertIsNone(self.throughput(), "No follower yet: rows may still be arriving")
+        self.transcript.context(30)
         self.assertEqual(self.throughput(), TokenUsage(0, 20))
+        self.transcript.reply("m2", 30, [40], out=900, stop=None)
+        self.assertEqual(self.throughput(), TokenUsage(0, 20), "A reply without stop_reason has not completed")
 
     def test_duplicate_rows_count_once_and_out_of_order_rows_extend_the_reply(self):
         self.transcript.reply("m1", 0, [8, 10, 9], out=100)
@@ -102,25 +114,50 @@ class TranscriptUsageTest(unittest.TestCase):
         self.transcript.context(11)
         self.assertEqual(self.throughput(), TokenUsage(0, 10))
 
-    def test_invalid_durations_and_missing_starts_keep_the_previous_value(self):
+    def test_newest_completed_reply_without_usable_timing_is_unknown(self):
         self.transcript.reply("m1", 0, [10], out=100)
-        self.transcript.context(11)
-        good = self.throughput()
-        self.transcript.reply("zero", 20, [20], out=50)
-        self.transcript.reply("negative", 30, [25], out=50)
-        self.transcript.reply("orphan", 40, [45], out=50, parent="00000000-0000-0000-0000-000000000000")
-        self.transcript.context(46)
-        self.assertEqual(self.throughput(), good)
-        self.assertEqual(good, TokenUsage(0, 10))
+        self.assertEqual(self.throughput(), TokenUsage(0, 10))
+        self.transcript.reply("orphan", 20, [25], out=50, parent="00000000-0000-0000-0000-000000000000")
+        self.assertIsNone(self.throughput(), "Not the older reply's value")
+        for name, start, rows in (("zero", 30, [30]), ("negative", 40, [35])):
+            self.transcript.reply("ok-" + name, start - 9, [start - 5], out=40)
+            self.assertEqual(self.throughput(), TokenUsage(0, 10))
+            self.transcript.reply(name, start, rows, out=50)
+            self.assertIsNone(self.throughput(), name)
+        self.transcript.reply("ok", 50, [60], out=100)
+        self.transcript.reply("bad-usage", 61, [70], out=-1)
+        self.assertIsNone(self.throughput(), "Unusable usage is unknown")
+        self.transcript.reply("ok2", 71, [81], out=100)
+        self.transcript.reply("generating", 82, [90], out=999, stop=None, follow=False)
+        self.assertEqual(self.throughput(), TokenUsage(0, 10), "Active generation keeps the last completed reply")
 
-    def test_resume_after_compaction_without_a_known_start_is_skipped(self):
+    def test_rows_arriving_across_polls_recompute_instead_of_freezing(self):
+        self.transcript.context(0)
+        context = self.transcript.last
+        first = self.transcript.row("m", 30, parent=context, out=938, created=1000)
+        self.assertIsNone(self.throughput(), "One row without a follower is not a completed reply")
+        self.transcript._write({"parentUuid": first, "type": "progress", "at": 31})
+        self.throughput()
+        self.transcript.row("m", 37, parent=first, out=938, created=1000)
+        self.transcript.context(38)
+        self.assertEqual(self.throughput(), TokenUsage(27, 25), "Later rows extend the reply: 938/37, not 938/30")
+
+    def test_equivalent_serializations_and_nested_lookalikes(self):
+        spaced = Transcript(self.root / "spaced.jsonl", spaced=True)
+        spaced.reply("m1", 0, [30, 37], fresh=2, created=1000, out=938)
+        self.assertEqual(self.reader(str(self.root / "spaced.jsonl")).throughput, TokenUsage(27, 25),
+                         "Key order, whitespace and extra properties do not matter")
+        lookalike = str(uuidlib.uuid4())
+        self.transcript.raw(json.dumps({"type": "attachment", "content": {"uuid": lookalike, "timestamp": stamp(0)}}) + "\n")
+        self.transcript.reply("m2", 0, [10], out=100, parent=lookalike)
+        self.assertIsNone(self.throughput(), "A nested uuid/timestamp is not a record boundary")
+
+    def test_reply_after_a_compaction_boundary_measures_from_its_own_context(self):
         self.transcript.reply("m1", 0, [10], out=100)
-        boundary = str(uuidlib.uuid4())
-        self.transcript.raw(json.dumps({"type": "system", "subtype": "compact_boundary", "uuid": boundary,
-                                        "content": "x", "timestamp": stamp(50)}) + "\n")
-        self.transcript.reply("m2", 60, [70], out=900, parent=boundary)
-        self.transcript.context(71)
-        self.assertEqual(self.throughput(), TokenUsage(0, 10), "A start outside the visible records is not invented")
+        self.transcript._write({"parentUuid": None, "type": "system", "subtype": "compact_boundary", "at": 50})
+        self.transcript.context(80, "user")
+        self.transcript.reply("m2", 90, [100], out=900)
+        self.assertEqual(self.throughput(), TokenUsage(0, 90), "From its request context at 90, not the boundary at 50")
 
     def test_child_agent_rows_are_ignored(self):
         self.transcript.reply("m1", 0, [10], out=100)
@@ -130,15 +167,15 @@ class TranscriptUsageTest(unittest.TestCase):
 
     def test_reads_incrementally_and_waits_for_a_complete_line(self):
         self.transcript.reply("m1", 0, [10], out=100)
-        self.transcript.context(11)
         self.assertEqual(self.throughput(), TokenUsage(0, 10))
         self.transcript.context(12)
         line = json.dumps({"parentUuid": self.transcript.last, "type": "assistant",
-                           "message": {"id": "m2", "usage": {"input_tokens": 0, "output_tokens": 80}},
+                           "message": {"id": "m2", "stop_reason": "end_turn", "usage": {"input_tokens": 0, "output_tokens": 80}},
                            "uuid": str(uuidlib.uuid4()), "timestamp": stamp(16)}, separators=(",", ":"))
         self.transcript.raw(line[:20])
         self.assertEqual(self.throughput(), TokenUsage(0, 10))
         self.transcript.raw(line[20:] + "\n")
+        self.transcript.last = json.loads(line)["uuid"]
         self.transcript.context(17)
         self.assertEqual(self.throughput(), TokenUsage(0, 20))
 
