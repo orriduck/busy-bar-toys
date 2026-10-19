@@ -181,8 +181,12 @@ def watch(args,runtime,repo):
                 else: agent.hide()
             if now>=next_status:
                 monitor.write_status(runtime/'input-status.json')
+                from busybar_shared.cloud import atomic_json
+                try:
+                    atomic_json(runtime/'publisher-status.json',{'updatedAt':now,
+                                'services':{alias:client.request_diagnostics()for alias,client in clients.items()}})
+                except OSError:pass  # Optional diagnostics must not stop collection.
                 if gaming:
-                    from busybar_shared.cloud import atomic_json
                     atomic_json(runtime/'gaming-status.json',{'updatedAt':now,**gaming.diagnostics()})
                 next_status=now+5
             time.sleep(.05 if agent and agent.pending else .25)

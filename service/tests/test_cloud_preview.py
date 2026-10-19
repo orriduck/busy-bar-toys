@@ -10,6 +10,7 @@ class PreviewWatchTest(unittest.TestCase):
         producer=Mock(snapshot={}); producer.config={'serviceId':'service'}
         notifier=Mock(snapshot={}); notifier.config={'serviceId':'notifier'}
         clients={'agent':producer,'notifier':notifier}
+        for client in clients.values():client.request_diagnostics.return_value={'inFlight':None,'recent':[]}
         monitor=Mock(); monitor.pop_start_pressed.return_value=False
         with tempfile.TemporaryDirectory() as runtime:
             with patch.object(cloud_watch,'producers',return_value=clients), \
@@ -36,6 +37,10 @@ class PreviewWatchTest(unittest.TestCase):
                 bridge.return_value.start.assert_called_once_with()
                 bridge.return_value.stop.assert_called_once_with()
                 producer.stop.assert_called_once_with()
+                import json,stat
+                path=Path(runtime)/'publisher-status.json'
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o600)
+                self.assertEqual(set(json.loads(path.read_text())['services']),{'agent','notifier'})
 
 
 class AgentRepaintTest(unittest.TestCase):
@@ -45,6 +50,7 @@ class AgentRepaintTest(unittest.TestCase):
         producer=Mock(snapshot={}); producer.config={'serviceId':'service'}
         notifier=Mock(snapshot={}); notifier.config={'serviceId':'notifier'}
         clients={'agent':producer,'notifier':notifier}
+        for client in clients.values():client.request_diagnostics.return_value={'inFlight':None,'recent':[]}
         monitor=Mock(); monitor.pop_start_pressed.return_value=False
         base=1_800_000_000.0 - (1_800_000_000 % 60) + 50
         clock=[base]
