@@ -21,11 +21,13 @@ import { PreviewRelay } from "./preview";
 import {
   BLACK_MS,
   FADE_MS,
-  MOTION_SAMPLE_MS,
   ServiceMotionClock,
+  cacheNativeMotionAssets,
   isMotionElement,
   motionElements,
-  motionOpacity,
+  nativeMotionElements,
+  reuseNativeMotionSlots,
+  unmaskMotionElement,
   visibleHandoff,
 } from "./service-motion";
 import { DurableObject } from "cloudflare:workers";
@@ -1457,7 +1459,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       }));
     const unmask = old
       .filter((e) => isMotionElement(e.id))
-      .map((e) => ({ ...e, opacity: 0 }));
+      .map(unmaskMotionElement);
     if (
       textToHide.length + unmask.length + (command.elements?.length ?? 0) <=
       32
@@ -1636,9 +1638,26 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             continue;
           }
           const elapsed =
-            motion.phase === "black"
+            motion.phase === "black" || motion.nativeStarted
               ? this.motionClock.elapsed(motion)
               : motion.elapsedMs;
+          if (motion.phase === "fade" && motion.nativeStarted) {
+            if (elapsed < FADE_MS) {
+              cmd.dueAt = now + FADE_MS - elapsed;
+              this.save(s);
+              break;
+            }
+            // The device has played its local fade independently of HTTP.
+            // ACK+duration is a conservative opaque assurance, then black200.
+            motion.phase = "black";
+            motion.elapsedMs = 0;
+            motion.nextSampleMs = BLACK_MS;
+            this.motionClock.reset();
+            this.motionClock.elapsed(motion);
+            cmd.dueAt = now + BLACK_MS;
+            this.save(s);
+            break;
+          }
           if (motion.phase === "black") {
             if (elapsed < BLACK_MS) {
               cmd.dueAt = now + BLACK_MS - elapsed;
@@ -1668,28 +1687,13 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             this.save(s);
             continue;
           }
-          cmd.elements = motionElements(motionOpacity(elapsed));
-          // Very crowded legacy scenes may have occupied all 128 native IDs.
-          // Free only the few IDs needed for masks, retaining the application.
-          const union = new Set([
-            ...Object.keys(s.nativeElements),
-            ...cmd.elements.map((e) => e.id),
-          ]);
-          if (union.size > 128) {
-            const retired = Object.keys(s.nativeElements)
-              .filter((id) => !isMotionElement(id))
-              .slice(0, union.size - 128);
-            enqueue(s, {
-              generation: s.generation,
-              kind: "clear",
-              dueAt: now,
-              elementIds: retired,
-              refresh: true,
-            });
-            s.commands.unshift(s.commands.pop()!);
-            this.save(s);
-            continue;
-          }
+          motion.mode ??= cacheNativeMotionAssets(s, now)
+            ? "native"
+            : "fallback";
+          cmd.elements =
+            motion.mode === "native"
+              ? nativeMotionElements(motion.id)
+              : motionElements(100);
         }
         if (cmd.kind === "clear" && cmd.elementIds) {
           // tick has removed ACKed widgets whose finite device TTL has ended.
@@ -1723,13 +1727,26 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           continue;
         }
         // Reserve all assets for the generation before any draw. Playing/pending slots stay pinned.
-        if (cmd.kind === "draw" || (cmd.kind === "motion" && s.selected)) {
-          const hashes = (
+        if (cmd.kind === "draw" || cmd.kind === "motion") {
+          const incomingElements =
             (cmd.handoff || cmd.kind === "motion") && s.selected
               ? s.items[s.selected].scene.commands.flatMap((c) => c.elements)
-              : (cmd.elements ?? [])
-          ).flatMap((e) => (e.assetHash ? [e.assetHash] : []));
+              : cmd.kind === "motion"
+                ? []
+                : (cmd.elements ?? []);
           const priorSlots = structuredClone(s.slots);
+          if (
+            cmd.kind === "motion" &&
+            s.serviceMotion?.mode === "native" &&
+            !reuseNativeMotionSlots(s, pinnedSlots(s))
+          ) {
+            s.serviceMotion.mode = "fallback";
+            cmd.elements = motionElements(100);
+          }
+          const hashes = [
+            ...incomingElements,
+            ...(cmd.kind === "motion" ? (cmd.elements ?? []) : []),
+          ].flatMap((e) => (e.assetHash ? [e.assetHash] : []));
           let slots: Slot[];
           try {
             const union = new Set([
@@ -1747,7 +1764,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               ["SLOT_CAPACITY", "SLOT_BYTES_CAPACITY"].includes(error.code)
             ) {
               // A generation too large to coexist with the outgoing slots will
-              // use the existing bounded reclamation once it is under black.
+              // use one static opaque draw, then black200 and existing bounded
+              // reclamation. Do not fake a fade through repeated HTTP draws.
+              s.serviceMotion!.mode = "fallback";
+              cmd.elements = motionElements(100);
               slots = [];
             } else if (
               cmd.handoff &&
@@ -1772,6 +1792,46 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               continue;
             } else throw error;
           }
+          // Mode can change from two native widgets to five inline fallback
+          // masks above. Capacity must use that final set, after both fallback
+          // decisions and before any upload or draw is dispatched.
+          if (cmd.kind === "motion") {
+            // Very crowded legacy scenes may have occupied all 128 native IDs.
+            // Free only the few IDs needed for masks, retaining the application.
+            const union = new Set([
+              ...Object.keys(s.nativeElements),
+              ...(cmd.elements ?? []).map((e) => e.id),
+            ]);
+            if (union.size > 128) {
+              const retired = Object.keys(s.nativeElements)
+                // Prefer already transparent masks from a completed visible
+                // handoff; never accumulate per-exit IDs beyond native capacity.
+                .sort(
+                  (a, b) =>
+                    Number(
+                      isMotionElement(b) && s.nativeElements[b].opacity === 0,
+                    ) -
+                    Number(
+                      isMotionElement(a) && s.nativeElements[a].opacity === 0,
+                    ),
+                )
+                .filter(
+                  (id) =>
+                    !isMotionElement(id) || s.nativeElements[id].opacity === 0,
+                )
+                .slice(0, union.size - 128);
+              enqueue(s, {
+                generation: s.generation,
+                kind: "clear",
+                dueAt: now,
+                elementIds: retired,
+                refresh: true,
+              });
+              s.commands.unshift(s.commands.pop()!);
+              this.save(s);
+              continue;
+            }
+          }
           const pending = slots.filter((slot) => !slot.uploaded);
           if (pending.length) {
             for (const slot of pending.reverse())
@@ -1794,10 +1854,6 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           this.save(s);
           continue;
         }
-        if (cmd.kind === "motion" && s.serviceMotion?.phase === "fade")
-          cmd.elements = motionElements(
-            motionOpacity(this.motionClock.elapsed(s.serviceMotion)),
-          );
         cmd.status = "inflight";
         cmd.startedAt = now;
         cmd.attempts++;
@@ -1988,33 +2044,20 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           live.serviceMotion.id === cmd.motionId
         ) {
           const motion = live.serviceMotion;
+          const native = motion.mode === "native";
+          motion.nativeStarted = native;
+          motion.phase = native ? "fade" : "black";
+          motion.elapsedMs = 0;
+          this.motionClock.reset();
           this.motionClock.elapsed(motion);
-          const opaque = cmd.elements?.every((e) => e.opacity === 100);
-          if (opaque) {
-            // The black interval starts only after the device acknowledged an
-            // opaque draw, not after an assumed number of frames or requests.
-            motion.phase = "black";
-            motion.elapsedMs = 0;
-            this.motionClock.reset();
-            this.motionClock.elapsed(motion);
-          }
-          motion.nextSampleMs = opaque
-            ? BLACK_MS
-            : Math.min(FADE_MS, motion.elapsedMs + MOTION_SAMPLE_MS);
+          motion.nextSampleMs = native ? FADE_MS : BLACK_MS;
           const pending = live.commands.find(
             (c) =>
               c.kind === "motion" &&
               c.motionId === motion.id &&
               c.generation === live.generation,
           );
-          const dueAt =
-            acceptedAt +
-            (opaque
-              ? BLACK_MS
-              : Math.min(
-                  MOTION_SAMPLE_MS,
-                  Math.max(0, FADE_MS - motion.elapsedMs),
-                ));
+          const dueAt = acceptedAt + (native ? FADE_MS : BLACK_MS);
           if (pending) pending.dueAt = dueAt;
           else
             enqueue(live, {

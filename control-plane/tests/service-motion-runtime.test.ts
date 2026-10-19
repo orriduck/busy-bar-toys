@@ -2,11 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { StateStore } from "../src/store";
-import {
-  ServiceMotionClock,
-  isMotionElement,
-  motionElements,
-} from "../src/service-motion";
+import { ServiceMotionClock, isMotionElement } from "../src/service-motion";
 import type { Element, State } from "../src/model";
 import { enrollTestBrowser } from "./helpers/computer";
 
@@ -14,6 +10,7 @@ const devices = new Set<string>();
 let token: string;
 let calls: {
   method: string;
+  path: string;
   body?: { elements?: Element[]; element_ids?: string[] };
 }[];
 let native: Map<string, Element>;
@@ -34,13 +31,16 @@ beforeEach(() => {
     }
     if (new URL(request.url).pathname === "/busybar/status")
       return Response.json({ device: { serial_number: crypto.randomUUID() } });
-    const body = request.body
-      ? ((await request.json()) as {
-          elements?: Element[];
-          element_ids?: string[];
-        })
-      : undefined;
-    calls.push({ method: request.method, body });
+    const path = new URL(request.url).pathname;
+    const body =
+      request.body && path.endsWith("/display/draw")
+        ? ((await request.json()) as {
+            elements?: Element[];
+            element_ids?: string[];
+          })
+        : undefined;
+    calls.push({ method: request.method, path, body });
+    if (!path.endsWith("/display/draw")) return Response.json({ ok: true });
     if (request.method === "DELETE") {
       if (body?.element_ids)
         for (const id of body.element_ids) native.delete(id);
@@ -225,6 +225,17 @@ async function fixture() {
     );
   await publish("old");
   await wait((s) => !!s.displaying);
+  // Historical unused animation slots are safe to reuse. The compositor must
+  // not allocate new file types merely to animate a pure-PNG device.
+  await mutate((s) => {
+    s.slots = [0, 1].map((slot) => ({
+      slot,
+      hash: String(slot).padStart(64, "a"),
+      type: "anim",
+      bytes: 1,
+      uploaded: true,
+    }));
+  });
   const coldCalendar = calendar;
   return {
     epoch,
@@ -255,11 +266,23 @@ describe("acknowledged service exits", () => {
         Object.keys(s.nativeElements).some(isMotionElement),
     );
     await f.advance(199);
+    expect((await f.state()).serviceMotion?.phase).toBe("fade");
+    const fadeDraws = () =>
+      calls.filter((c) =>
+        c.body?.elements?.some(
+          (e) =>
+            isMotionElement(e.id) && e.section === "fade" && e.opacity === 100,
+        ),
+      );
+    expect(fadeDraws()).toHaveLength(1);
+    const firstFadeIndex = calls.findIndex((c) =>
+      c.body?.elements?.some((e) => e.section === "fade"),
+    );
     expect(
-      [...native.values()]
-        .filter((e) => isMotionElement(e.id))
-        .every((e) => e.opacity === 99),
-    ).toBe(true);
+      calls
+        .slice(0, firstFadeIndex)
+        .filter((c) => c.path.endsWith("/assets/upload")),
+    ).toHaveLength(2);
     expect((await f.state()).displaying).toBeNull();
     await f.advance(200);
     expect((await f.state()).serviceMotion?.phase).toBe("black");
@@ -270,6 +293,7 @@ describe("acknowledged service exits", () => {
     ).toBe(true);
     await f.advance(399);
     expect((await f.state()).serviceMotion?.phase).toBe("black");
+    expect(fadeDraws()).toHaveLength(1);
     await f.advance(400);
     const done = await f.wait(
       (s) => !!s.displaying && s.items[s.selected!].itemId === "incoming",
@@ -287,7 +311,7 @@ describe("acknowledged service exits", () => {
       calls[entrance].body?.elements
         ?.filter((e) => isMotionElement(e.id))
         .map((e) => e.opacity),
-    ).toEqual([0, 0, 0, 0, 0]);
+    ).toEqual([0, 0]);
     expect(
       calls
         .slice(entrance + 1)
@@ -355,38 +379,48 @@ describe("acknowledged service exits", () => {
     expect(done.selected).toBeNull();
   });
 
-  it("starts the black hold after an opaque ACK, even when that ACK is delayed", async () => {
+  it("waits conservatively after a slow native-start ACK without restarting the animation", async () => {
     const f = await fixture();
-    await f.publish("incoming", "urgent");
-    await f.wait(
-      (s) =>
-        !!s.serviceMotion &&
-        Object.keys(s.nativeElements).some(isMotionElement),
-    );
     const upstream = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
       const request =
         input instanceof Request ? input : new Request(input, init);
       const body =
-        request.method === "POST"
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/display/draw")
           ? ((await request.clone().json()) as { elements?: Element[] })
           : undefined;
       const result = await upstream(request);
       if (
         body?.elements?.length &&
-        body.elements.every((e) => isMotionElement(e.id) && e.opacity === 100)
+        body.elements.every(
+          (e) =>
+            isMotionElement(e.id) && e.section === "fade" && e.opacity === 100,
+        )
       ) {
         f.setClock(500);
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       return result;
     });
-    await f.advance(200);
-    expect((await f.state()).serviceMotion?.phase).toBe("black");
+    await f.publish("incoming", "urgent");
+    await f.wait((s) => !!s.serviceMotion?.nativeStarted);
     await f.advance(699);
-    expect((await f.state()).displaying).toBeNull();
+    expect((await f.state()).serviceMotion?.phase).toBe("fade");
     await f.advance(700);
+    expect((await f.state()).serviceMotion?.phase).toBe("black");
+    await f.advance(899);
+    expect((await f.state()).displaying).toBeNull();
+    await f.advance(900);
     await f.wait((s) => !!s.displaying);
+    expect(
+      calls.filter((c) =>
+        c.body?.elements?.some(
+          (e) =>
+            isMotionElement(e.id) && e.section === "fade" && e.opacity === 100,
+        ),
+      ),
+    ).toHaveLength(1);
   });
 
   it("unmasks the incoming draw atomically before a delayed retirement DELETE", async () => {
@@ -497,7 +531,7 @@ describe("acknowledged service exits", () => {
         elements.some((e) => isMotionElement(e.id) && e.opacity === 0),
       );
     expect(unmask?.find((e) => e.id === helper.id)?.opacity).toBe(100);
-    expect(unmask).toHaveLength(6);
+    expect(unmask).toHaveLength(3);
     const clear = pending.commands.find((c) =>
       c.elements?.some((e) => e.id === helper.id && e.opacity === 0),
     );
@@ -614,21 +648,35 @@ describe("acknowledged service exits", () => {
     await f.mutate((s) => {
       s.serviceMotion!.phase = "handoff";
       s.commands = s.commands.filter((c) => c.kind !== "motion");
-      for (const e of motionElements(0)) {
-        s.nativeElements[e.id] = e;
-        s.elementExpiries[e.id] = {
-          type: "xpmbitmap",
-          expiresAt: Date.now() + 60_000,
-        };
-        native.set(e.id, e);
+      for (const e of Object.values(s.nativeElements).filter((e) =>
+        isMotionElement(e.id),
+      )) {
+        e.opacity = 0;
+        native.set(e.id, { ...e });
       }
     });
+    const previousMaskIds = [...native.keys()].filter(isMotionElement);
     await f.advance(0);
     expect((await f.state()).serviceMotion?.id).not.toBe(oldId);
     expect((await f.state()).serviceMotion?.phase).toBe("fade");
+    const replay = calls
+      .filter((c) =>
+        c.body?.elements?.some(
+          (e) => isMotionElement(e.id) && e.opacity === 100,
+        ),
+      )
+      .at(-1)!.body!.elements!;
+    expect(
+      replay.every(
+        (e) => e.type === "animation" && !previousMaskIds.includes(e.id),
+      ),
+    ).toBe(true);
+    expect(previousMaskIds.every((id) => native.get(id)?.opacity === 0)).toBe(
+      true,
+    );
     expect(native.get("incoming-text")).toBeUndefined();
     await f.advance(199);
-    expect(native.get("control-service-motion-front")?.opacity).toBe(99);
+    expect((await f.state()).serviceMotion?.phase).toBe("fade");
     await f.advance(200);
     await f.advance(400);
     await f.wait(
@@ -636,4 +684,136 @@ describe("acknowledged service exits", () => {
     );
     expect(calendar).toBe(f.coldCalendar);
   });
+
+  it("reclaims transparent previous-exit widgets before ordinary content at the 128-ID bound", async () => {
+    const f = await fixture();
+    await f.publish("incoming", "urgent");
+    await f.wait((s) => !!s.serviceMotion?.nativeStarted);
+    const previousMaskIds = [...native.keys()].filter(isMotionElement);
+    await f.mutate((s) => {
+      s.serviceMotion!.phase = "handoff";
+      s.commands = s.commands.filter((c) => c.kind !== "motion");
+      for (const id of previousMaskIds) {
+        s.nativeElements[id].opacity = 0;
+        native.set(id, { ...s.nativeElements[id] });
+      }
+      for (let n = Object.keys(s.nativeElements).length; n < 128; n++) {
+        const e: Element = {
+          id: "capacity-old-" + n,
+          type: "text",
+          text: "old",
+          font: "small",
+          z_index: 40,
+        };
+        s.nativeElements[e.id] = e;
+        s.elementExpiries[e.id] = {
+          type: "text",
+          expiresAt: Date.now() + 60_000,
+        };
+        native.set(e.id, e);
+      }
+    });
+    const firstDelete = calls.length;
+    await f.advance(0);
+    const current = await f.wait((s) => !!s.serviceMotion?.nativeStarted);
+    expect(
+      calls
+        .slice(firstDelete)
+        .filter((c) => c.method === "DELETE")
+        .flatMap((c) => c.body?.element_ids ?? []),
+    ).toEqual(expect.arrayContaining(previousMaskIds));
+    expect(previousMaskIds.every((id) => !native.has(id))).toBe(true);
+    expect(native.has("old-text")).toBe(true);
+    expect(Object.keys(current.nativeElements)).toHaveLength(128);
+    expect(calendar).toBe(f.coldCalendar);
+  });
+  it.each(["no-animation-slots", "incoming-slot-bytes"])(
+    "rechecks all five fallback masks after %s at 126 existing IDs",
+    async (failure) => {
+      const f = await fixture();
+      const hash = "f".repeat(64);
+      await f.mutate((s) => {
+        s.slots =
+          failure === "no-animation-slots"
+            ? []
+            : [
+                ...[0, 1].map((slot) => ({
+                  slot,
+                  hash: String(slot).padStart(64, "a"),
+                  type: "anim",
+                  bytes: 1,
+                  uploaded: true,
+                })),
+                ...Array.from({ length: 13 }, (_, n) => ({
+                  slot: n + 2,
+                  hash: String(n + 2).padStart(64, "b"),
+                  type: "png",
+                  bytes: Math.floor((2 * 1024 * 1024 - 6000) / 13),
+                  uploaded: true,
+                })),
+              ];
+        if (failure === "incoming-slot-bytes")
+          s.assets[hash] = {
+            hash,
+            type: "png",
+            bytes: 10000,
+            data: btoa("x".repeat(10000)),
+            owners: ["urgent"],
+            usedAt: Date.now(),
+          };
+        for (let n = Object.keys(s.nativeElements).length; n < 126; n++) {
+          const e: Element = {
+            id: "fallback-old-" + n,
+            type: "text",
+            text: "old",
+            font: "small",
+            z_index: 40,
+          };
+          s.nativeElements[e.id] = e;
+          s.elementExpiries[e.id] = {
+            type: "text",
+            expiresAt: Date.now() + 60_000,
+          };
+          native.set(e.id, e);
+        }
+      });
+      const elements: Element[] =
+        failure === "incoming-slot-bytes"
+          ? [{ id: "incoming-image", type: "image", assetHash: hash }]
+          : [{ id: "incoming-text", type: "text", text: "new", font: "small" }];
+      await f.send("/publish", {
+        epoch: f.epoch,
+        instanceId: "mac",
+        itemId: "fallback",
+        version: 1,
+        firstRecognizedAt: Date.now(),
+        validUntil: Date.now() + 60_000,
+        kind: "event",
+        level: "urgent",
+        title: "fallback",
+        detail: "",
+        scene: { entryDurationMs: 0, commands: [{ offsetMs: 0, elements }] },
+      });
+      const current = await f.wait((s) => s.serviceMotion?.phase === "black");
+      expect(current.serviceMotion?.mode).toBe("fallback");
+      expect(Object.keys(current.nativeElements)).toHaveLength(128);
+      expect(
+        [...native.values()].filter((e) => isMotionElement(e.id)),
+      ).toHaveLength(5);
+      expect(
+        calls
+          .filter((c) => c.method === "DELETE")
+          .flatMap((c) => c.body?.element_ids ?? []),
+      ).toHaveLength(3);
+      expect(
+        calls.some((c) =>
+          c.body?.elements?.some(
+            (e) => isMotionElement(e.id) && e.type === "animation",
+          ),
+        ),
+      ).toBe(false);
+      expect(current.nativeRecoveryRequired).not.toBe(true);
+      expect(calendar).toBe(f.coldCalendar);
+    },
+  );
 });
