@@ -55,7 +55,10 @@ Mobile pages use a floating navigation bar with icons.
 You can add BTC to the Home Screen as a PWA.
 
 Live preview requires a configured Wi-Fi bridge and an enabled **Live preview** switch.
-Its target is 30 fps. Device shows measured rates.
+The local bridge caps preview at 2 fps with one device read in flight, and pauses
+while a display change is unconfirmed. Hidden, unfocused and offscreen previews
+release their viewer lease. Device shows measured rates; physical display takes
+priority over preview smoothness.
 A preview failure does not stop cloud scheduling.
 
 <details>

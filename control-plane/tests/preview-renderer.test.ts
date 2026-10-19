@@ -50,11 +50,14 @@ it("clears expired shown pixels without losing a fresh frame waiting after a mai
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => callbacks.delete(id));
   const events = new EventTarget();
+  const close = vi.fn();
+  const fetch = vi.fn().mockResolvedValue({});
+  vi.stubGlobal("fetch", fetch);
   vi.stubGlobal(
     "EventSource",
     class {
       addEventListener = events.addEventListener.bind(events);
-      close() {}
+      close = close;
     },
   );
   const advance = (time: number) => {
@@ -94,6 +97,7 @@ it("clears expired shown pixels without losing a fresh frame waiting after a mai
           connected: true,
           demand: true,
           streamId: "one",
+          viewerId: "viewer-one",
         }),
       }),
     );
@@ -120,7 +124,43 @@ it("clears expired shown pixels without losing a fresh frame waiting after a mai
     expect(hooks.messages.at(-1)).toBe("");
     advance(2300);
     expect(hooks.surface.dataset.drawnFrames).toBe("2");
+    window.dispatchEvent(new Event("blur"));
+    expect(close).toHaveBeenCalled();
+    expect(JSON.parse(fetch.mock.lastCall?.[1].body)).toEqual({
+      viewerId: "viewer-one",
+      operation: "close",
+    });
+    const frames = hooks.surface.dataset.receivedFrames;
+    sendFrame(3);
+    expect(hooks.surface.dataset.receivedFrames).toBe(frames);
   } finally {
     for (const stop of cleanup.reverse()) stop?.();
   }
 });
+
+it.each([
+  { hidden: true, hasFocus: () => true },
+  { hidden: false, hasFocus: () => false },
+])(
+  "opens no preview lease when the page is hidden or unfocused: %j",
+  (page) => {
+    hooks.surface = {
+      width: 720,
+      height: 160,
+      getContext: () => ({ clearRect: vi.fn() }),
+    } as unknown as HTMLCanvasElement;
+    vi.stubGlobal("document", Object.assign(new EventTarget(), page));
+    vi.stubGlobal("window", new EventTarget());
+    const open = vi.fn();
+    vi.stubGlobal("EventSource", open);
+    Preview({
+      deviceId: "device",
+      active: true,
+      onSessionEnd: vi.fn(),
+      onStats: vi.fn(),
+    });
+    const cleanup = hooks.effects.map((effect) => effect());
+    expect(open).not.toHaveBeenCalled();
+    for (const stop of cleanup.reverse()) stop?.();
+  },
+);

@@ -33,6 +33,8 @@ class PreviewValidationTest(unittest.TestCase):
     def test_demand_is_strictly_bound_to_credential_device(self):
         demand={'type':'demand','enabled':True,'targetFps':30,'streamId':'stream-1','deviceId':DEVICE}
         self.assertTrue(preview.parse_demand(json.dumps(demand),DEVICE)['enabled'])
+        self.assertEqual(preview.parse_demand(json.dumps({**demand,'targetFps':2}),DEVICE)['targetFps'],2)
+        with self.assertRaises(preview.PreviewError):preview.parse_demand(json.dumps({**demand,'targetFps':60}),DEVICE)
         for change in ({'deviceId':'b'*64},{'enabled':1},{'targetFps':True},{'streamId':''},{'extra':True}):
             with self.subTest(change=change),self.assertRaises(preview.PreviewError):
                 preview.parse_demand(json.dumps({**demand,**change}),DEVICE)
@@ -153,7 +155,8 @@ class LocalHTTPTest(unittest.TestCase):
 def client_for(url):
     from types import SimpleNamespace
     config={'role':'agent','serviceId':'service','instanceId':'mac','epoch':'epoch'}
-    snapshot={'protocol':1,'deviceId':DEVICE,'services':[{'id':'service',
+    snapshot={'protocol':1,'deviceId':DEVICE,'selected':None,'applying':None,'displaying':None,
+              'generation':0,'items':[],'health':{'status':'healthy','confirmedValidUntil':9999999999999},'services':[{'id':'service',
               'epoch':'epoch','epochExpiresAt':9999999999999,'config':{'enabled':True,'allowPreview':True}}]}
     return SimpleNamespace(config=config,snapshot=snapshot,_snapshot_lock=threading.Lock(),
                            http=Transport(url,DEVICE+'.service.publisher-secret'))
@@ -196,10 +199,10 @@ class PreviewBridgeTest(unittest.IsolatedAsyncioTestCase):
                 frames=[m for m in messages if m['type']=='frame']
                 self.assertGreaterEqual(len(frames),3)
                 self.assertEqual(device.verified,[DEVICE])
-                self.assertLessEqual(device.max_active,4)
+                self.assertEqual(device.max_active,1)
                 self.assertTrue(all(len(json.dumps(m))<6144 for m in frames))
                 self.assertEqual([f['sequence'] for f in frames],sorted({f['sequence'] for f in frames}))
-                self.assertGreaterEqual(min(b-a for a,b in zip(device.calls,device.calls[1:])),.024)
+                self.assertGreaterEqual(min(b-a for a,b in zip(device.calls,device.calls[1:])),1/preview.FPS-.001)
                 await sockets[-1].send(json.dumps({**demand,'enabled':False}))
                 await asyncio.sleep(.04); count=len(messages); reads=len(device.calls)
                 await asyncio.sleep(.16)
@@ -335,7 +338,7 @@ class PreviewProtocolTest(unittest.IsolatedAsyncioTestCase):
             task=asyncio.create_task(bridge.run())
             try:
                 await self.wait_until(lambda:len(frames)>=5)
-                self.assertNotIn(1,[f['sequence'] for f in frames])
+                self.assertIn(1,[f['sequence'] for f in frames])
                 self.assertEqual([f['sequence'] for f in frames],sorted({f['sequence'] for f in frames}))
                 await sockets[-1].close()
                 await asyncio.sleep(.08); reads=len(device.calls); count=len(frames)
@@ -431,6 +434,101 @@ class PreviewProtocolTest(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(asyncio.CancelledError): await task
 
 
+class PreviewDisplayPriorityTest(unittest.IsolatedAsyncioTestCase):
+    wait_until=PreviewBridgeTest.wait_until
+
+    @staticmethod
+    def confirmed(client,version=1):
+        client.snapshot.update(selected='own',applying=None,generation=3,
+            displaying={'itemKey':'own','generation':3,'confirmedValidUntil':9999999999999},
+            items=[{'itemKey':'own','version':version,'state':'displaying',
+                'coverageProof':{'version':version,'validUntil':9999999999999,
+                    'controller':{'itemKey':'own','generation':3}}}])
+
+    async def test_display_fence_requires_confirmed_current_version_and_healthy_device(self):
+        import copy
+        client=client_for('http://localhost:1234')
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        self.confirmed(client)
+        stable=copy.deepcopy(client.snapshot)
+        self.assertEqual(bridge._display_fence(client),(3,'own',1))
+        for mutation in (
+                lambda s:s.update(applying='own'),
+                lambda s:s['health'].update(status='unknown'),
+                lambda s:s['displaying'].update(generation=2),
+                lambda s:s['displaying'].update(confirmedValidUntil=0),
+                lambda s:s['items'][0].update(version=2),
+                lambda s:s['items'][0].update(state='applying'),
+                lambda s:s['items'][0]['coverageProof'].update(validUntil=0),
+                lambda s:s.pop('applying')):
+            client.snapshot=copy.deepcopy(stable);mutation(client.snapshot)
+            self.assertIsNone(bridge._display_fence(client))
+        client.snapshot=stable;client.snapshot['items']=[]
+        # A scoped producer may only see the opaque global display confirmation.
+        self.assertEqual(bridge._display_fence(client),(3,'own',None))
+
+    async def test_applying_pauses_before_device_factory_then_resumes_single_worker(self):
+        from concurrent.futures import ThreadPoolExecutor
+        client=client_for('http://localhost:1234');client.snapshot['applying']='pending'
+        device=FakeDevice();created=[]
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None,
+            device_factory=lambda _:created.append(True) or device)
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
+        bridge._client=client;bridge._demand=True
+        task=asyncio.create_task(bridge._capture(client,DEVICE))
+        try:
+            await self.wait_until(lambda:bridge.diagnostics()['pausedForDisplay'])
+            await asyncio.sleep(.06)
+            self.assertEqual(created,[]);self.assertEqual(device.verified,[]);self.assertEqual(device.calls,[])
+            client.snapshot['applying']=None
+            await self.wait_until(lambda:bridge.diagnostics()['captured']==1)
+            self.assertEqual(created,[True]);self.assertEqual(device.verified,[DEVICE])
+            client.snapshot['applying']='pending'
+            await self.wait_until(lambda:bridge.diagnostics()['pausedForDisplay'])
+            reads=len(device.calls)
+            await asyncio.sleep(.55)
+            self.assertEqual(len(device.calls),reads);self.assertTrue(bridge._latest.empty())
+            self.assertEqual(bridge.diagnostics()['actualTargetFps'],2)
+            self.assertEqual(bridge.diagnostics()['maxInFlight'],1)
+        finally:
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+            await bridge.aclose()
+
+    async def test_inflight_capture_is_discarded_after_display_change_and_rate_gate_is_hard(self):
+        from concurrent.futures import ThreadPoolExecutor
+        client=client_for('http://localhost:1234');self.confirmed(client)
+        device=FakeDevice()
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
+        bridge._client=client;bridge._demand=True
+        try:
+            self.assertTrue(bridge._submit_frame(device,0,client,0))
+            await self.wait_until(lambda:bool(device.calls))
+            client.snapshot['items'][0]['version']=2
+            await asyncio.gather(*list(bridge._pending));await asyncio.sleep(0)
+            self.assertTrue(bridge._latest.empty())
+            self.assertEqual(bridge.diagnostics()['invalidatedDropped'],1)
+            self.confirmed(client,2)
+            self.assertFalse(bridge._submit_frame(device,0,client,0))
+            self.assertEqual(bridge.diagnostics()['rateLimitedSkipped'],1)
+            await asyncio.sleep(.5)
+            self.assertTrue(bridge._submit_frame(device,0,client,0))
+            await asyncio.gather(*list(bridge._pending));await asyncio.sleep(0)
+            self.assertEqual(bridge._latest._queue[0][1]['_displayFence'],(3,'own',2))
+            client.snapshot['applying']='own'
+            from types import SimpleNamespace
+            sent=[]
+            async def send(raw):sent.append(raw)
+            sending=asyncio.create_task(bridge._send(SimpleNamespace(send=send),client))
+            try:
+                await self.wait_until(lambda:bridge.diagnostics()['displayPausedDropped']==1)
+                self.assertEqual(sent,[])
+            finally:
+                sending.cancel();await asyncio.gather(sending,return_exceptions=True)
+        finally:await bridge.aclose()
+
+
 class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
     wait_until=PreviewBridgeTest.wait_until
 
@@ -438,14 +536,16 @@ class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
         from concurrent.futures import ThreadPoolExecutor
         client=client_for('http://localhost:1234'); device=FakeDevice()
         bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
-        bridge._executor=ThreadPoolExecutor(max_workers=4)
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
         bridge._client=client; bridge._demand=True
         try:
             for _ in range(2):
+                bridge._last_capture_started=-float('inf')
                 bridge._submit_frame(device,0,client,0)
                 await asyncio.gather(*list(bridge._pending))
             bridge._latest.get_nowait()
             bridge._latest.put_nowait((0,{'sequence':100}))
+            bridge._last_capture_started=-float('inf')
             bridge._submit_frame(device,0,client,0)
             await asyncio.gather(*list(bridge._pending))
             bridge._invalidate()
@@ -458,40 +558,40 @@ class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await bridge.aclose()
 
-    async def test_latest_queue_keeps_newer_completion_when_callbacks_arrive_together(self):
+    async def test_single_flight_refuses_second_read_and_preserves_newer_queued_frame(self):
         from concurrent.futures import ThreadPoolExecutor
-        device=FakeDevice(); release=threading.Event()
+        device=FakeDevice();release=threading.Event()
         def frame(slot):
             release.wait(timeout=1)
             return base64.b64encode(bytes((slot,0,0))*1152).decode()
         device.frame=frame
         client=client_for('http://localhost:1234')
         bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
-        bridge._executor=ThreadPoolExecutor(max_workers=2)
-        bridge._client=client; bridge._demand=True
-        self.assertTrue(bridge._valid(client,0))
-        bridge._submit_frame(device,0,client,0)
-        bridge._submit_frame(device,1,client,0)
-        # Force completion callbacks in reverse request order in one loop tick.
-        futures=list(bridge._pending)
-        release.set()
-        await asyncio.gather(*futures)
-        # Exercise pending-queue ordering separately from already-sent guard.
-        bridge._latest=asyncio.Queue(maxsize=1)
-        bridge._latest.put_nowait((0,{'sequence':100}))
-        bridge._submit_frame(device,0,client,0)
-        await asyncio.gather(*list(bridge._pending))
-        await self.wait_until(lambda:bridge.diagnostics()['captured']==3)
-        self.assertEqual(bridge.diagnostics()['captureErrors'],0)
-        _,frame=bridge._latest.get_nowait()
-        self.assertEqual(frame['sequence'],100)
-        await bridge.aclose()
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
+        bridge._client=client;bridge._demand=True
+        try:
+            self.assertTrue(bridge._submit_frame(device,0,client,0))
+            self.assertFalse(bridge._submit_frame(device,0,client,0))
+            self.assertFalse(bridge._submit_frame(device,1,client,0))
+            self.assertEqual(len(bridge._pending),1)
+            release.set();await asyncio.gather(*list(bridge._pending))
+            bridge._latest=asyncio.Queue(maxsize=1)
+            bridge._latest.put_nowait((0,{'sequence':100}))
+            bridge._last_capture_started=-float('inf')
+            self.assertTrue(bridge._submit_frame(device,0,client,0))
+            await asyncio.gather(*list(bridge._pending))
+            await self.wait_until(lambda:bridge.diagnostics()['captured']==2)
+            _,latest=bridge._latest.get_nowait()
+            self.assertEqual(latest['sequence'],100)
+            self.assertEqual(bridge.diagnostics()['captureErrors'],0)
+        finally:
+            release.set();await bridge.aclose()
 
     async def test_identity_read_reserves_slot_until_worker_exits_after_cancellation(self):
         from concurrent.futures import ThreadPoolExecutor
         started=threading.Event(); release=threading.Event()
         bridge=preview.PreviewBridge('.',{},status_path=None)
-        bridge._executor=ThreadPoolExecutor(max_workers=4)
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
         def identify():
             started.set(); release.wait(timeout=1)
         task=asyncio.create_task(bridge._offload(identify))
@@ -509,26 +609,26 @@ class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
             await bridge.aclose()
         self.assertFalse(bridge._busy[0])
 
-    async def test_four_busy_slots_skip_ticks_and_cancellation_discards_all_late_frames(self):
+    async def test_one_busy_slot_skips_ticks_and_cancellation_discards_late_frame(self):
         from concurrent.futures import ThreadPoolExecutor
         class SlowDevice(FakeDevice):
             def frame(self,slot):
                 with self.lock:
                     self.calls.append(time.monotonic()); self.active+=1; self.max_active=max(self.max_active,self.active)
                 try:
-                    time.sleep(.2)
+                    time.sleep(.8)
                     return base64.b64encode(bytes((slot,0,0))*1152).decode()
                 finally:
                     with self.lock: self.active-=1
         device=SlowDevice(); client=client_for('http://localhost:1234')
         bridge=preview.PreviewBridge('.',{'agent':client},status_path=None,device_factory=lambda _:device)
-        bridge._executor=ThreadPoolExecutor(max_workers=4)
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
         bridge._client=client; bridge._demand=True
         task=asyncio.create_task(bridge._capture(client,DEVICE))
         try:
             await self.wait_until(lambda:bridge.diagnostics()['busySkipped']>1)
-            self.assertEqual(device.max_active,4)
-            self.assertGreaterEqual(min(b-a for a,b in zip(device.calls,device.calls[1:])),.024)
+            self.assertEqual(device.max_active,1)
+            self.assertEqual(len(device.calls),1)
         finally:
             bridge._invalidate(); task.cancel()
             with self.assertRaises(asyncio.CancelledError): await task
@@ -794,49 +894,50 @@ class PreviewCaptureClockTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(sleeps),len(started)-1,'Capture must yield between ticks, including overruns')
         return started
 
-    async def test_bounded_positive_wake_jitter_does_not_accumulate_cadence_drift(self):
+    async def test_positive_wake_jitter_never_exceeds_two_fps_or_repays_missed_time(self):
         started=await self.simulated_samples()
-        # Four seconds of 30 Hz phase, plus only the final wake's bounded
-        # lateness. Resetting every deadline from now accumulates every wake.
-        self.assertAlmostEqual(started[-1]-started[0],120/preview.FPS+.006,places=8)
-        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),.025-1e-9)
+        # A late wake can reduce throughput; preserving a strict500ms gap is
+        # more important than recovering the nominal phase or average rate.
+        self.assertGreaterEqual(started[-1]-started[0],120/preview.FPS)
+        self.assertLessEqual(started[-1]-started[0],120/preview.FPS+.006*122)
+        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),1/preview.FPS-1e-9)
 
     async def test_late_wake_preserves_minimum_gap_and_long_stall_skips_ticks(self):
         for lateness,stall in (((0,0,.021,0),0),((0,),.12)):
             with self.subTest(lateness=lateness,stall=stall):
                 started=await self.simulated_samples(wake_lateness=lateness,stall=stall)
                 intervals=[b-a for a,b in zip(started,started[1:])]
-                self.assertGreaterEqual(min(intervals),.025-1e-9)
+                self.assertGreaterEqual(min(intervals),1/preview.FPS-1e-9)
                 if stall: self.assertGreater(intervals[3],.12)
 
     async def test_resumed_demand_reverifies_and_resets_phase_with_minimum_gap(self):
         started=await self.simulated_samples(wake_lateness=(0,),restart=True)
-        self.assertAlmostEqual(started[4]-started[3],.025,places=8)
-        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),.025-1e-9)
+        self.assertAlmostEqual(started[4]-started[3],1/preview.FPS,places=8)
+        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),1/preview.FPS-1e-9)
 
     async def test_overrun_bookkeeping_yields_to_session_tasks_between_ticks(self):
         started=await self.simulated_samples(wake_lateness=(0,),bookkeeping=.04)
-        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),.025-1e-9)
+        self.assertGreaterEqual(min(b-a for a,b in zip(started,started[1:])),1/preview.FPS-1e-9)
 
     async def scheduled_samples(self,*,bookkeeping=0,stall=False,partial_stall=False):
         from concurrent.futures import ThreadPoolExecutor
         loop=asyncio.get_running_loop(); started=[]
         client=client_for('http://localhost:1234'); device=FakeDevice()
         bridge=preview.PreviewBridge('.',{'agent':client},status_path=None,device_factory=lambda _:device)
-        bridge._executor=ThreadPoolExecutor(max_workers=4)
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
         bridge._client=client; bridge._demand=True
         def submit(*args):
             started.append(loop.time())
             # Model synchronous scheduler/callback bookkeeping without replacing
             # either global clock. The transport is outside this timing test.
             if bookkeeping: time.sleep(bookkeeping)
-            if stall and len(started)==4: loop.call_later(.01,time.sleep,.12)
-            if partial_stall and len(started)==4: loop.call_later(.01,time.sleep,.04)
+            if stall and len(started)==4: loop.call_later(.01,time.sleep,.7)
+            if partial_stall and len(started)==4: loop.call_later(.01,time.sleep,.54)
         bridge._submit_frame=submit
         old_warning=loop.slow_callback_duration; loop.slow_callback_duration=.5
         task=asyncio.create_task(bridge._capture(client,DEVICE))
         try:
-            await self.wait_until(lambda:len(started)>=12)
+            await self.wait_until(lambda:len(started)>=6,timeout=5)
         finally:
             bridge._invalidate(); task.cancel()
             with self.assertRaises(asyncio.CancelledError): await task
@@ -849,19 +950,19 @@ class PreviewCaptureClockTest(unittest.IsolatedAsyncioTestCase):
         started=await self.scheduled_samples(bookkeeping=.018)
         intervals=[b-a for a,b in zip(started,started[1:])]
         self.assertLess(statistics.median(intervals),1/preview.FPS+.009)
-        self.assertGreaterEqual(min(intervals),.025)
+        self.assertGreaterEqual(min(intervals),1/preview.FPS-.001)
 
     async def test_partial_tick_lateness_does_not_create_a_short_catchup_interval(self):
         started=await self.scheduled_samples(partial_stall=True)
         intervals=[b-a for a,b in zip(started,started[1:])]
-        self.assertGreater(intervals[3],.04)
-        self.assertGreaterEqual(intervals[4],.025)
+        self.assertGreater(intervals[3],.54)
+        self.assertGreaterEqual(intervals[4],1/preview.FPS-.001)
 
     async def test_stalled_event_loop_skips_missed_ticks_without_catchup_burst(self):
         started=await self.scheduled_samples(stall=True)
         intervals=[b-a for a,b in zip(started,started[1:])]
-        self.assertGreater(intervals[3],.1)
-        self.assertGreaterEqual(min(intervals[4:]),.025)
+        self.assertGreater(intervals[3],.7)
+        self.assertGreaterEqual(min(intervals[4:]),1/preview.FPS-.001)
 
 
 

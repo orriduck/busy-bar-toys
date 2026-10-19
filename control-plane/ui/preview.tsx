@@ -25,19 +25,47 @@ export function Preview({
   onStats: (stats: PreviewStats) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const [visible, setVisible] = useState(!document.hidden);
+  const [visible, setVisible] = useState(
+    !document.hidden && document.hasFocus?.() !== false,
+  );
   const [attempt, setAttempt] = useState(0);
   const [message, setMessage] = useState("Waiting for preview");
   useEffect(() => {
-    const change = () => setVisible(!document.hidden);
+    let inView = true;
+    let focused = document.hasFocus?.() !== false;
+    const change = () => setVisible(!document.hidden && focused && inView);
+    const focus = () => {
+      focused = true;
+      change();
+      // A blur closes the lease immediately. Reconnect even if a very quick
+      // blur/focus pair was batched without an intermediate React render.
+      setAttempt((n) => n + 1);
+    };
+    const blur = () => {
+      focused = false;
+      change();
+    };
     const restore = (event: PageTransitionEvent) => {
       if (event.persisted) setAttempt((n) => n + 1);
     };
     document.addEventListener("visibilitychange", change);
     window.addEventListener("pageshow", restore);
+    window.addEventListener("focus", focus);
+    window.addEventListener("blur", blur);
+    const observer =
+      typeof IntersectionObserver === "function"
+        ? new IntersectionObserver(([entry]) => {
+            inView = entry?.isIntersecting === true;
+            change();
+          })
+        : null;
+    if (canvas.current) observer?.observe(canvas.current);
     return () => {
       document.removeEventListener("visibilitychange", change);
       window.removeEventListener("pageshow", restore);
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("blur", blur);
+      observer?.disconnect();
     };
   }, []);
   useEffect(() => {
@@ -270,6 +298,7 @@ export function Preview({
       connection.close();
     };
     window.addEventListener("pagehide", leave);
+    window.addEventListener("blur", leave);
     return () => {
       live = false;
       closeLease();
@@ -278,6 +307,7 @@ export function Preview({
       clearTimeout(restarting);
       cancelAnimationFrame(raf);
       window.removeEventListener("pagehide", leave);
+      window.removeEventListener("blur", leave);
       playout.clear();
       ctx.clearRect(0, 0, surface.width, surface.height);
     };

@@ -29,7 +29,8 @@ from .frames import decode_frame
 FRAME_BYTES = 3456
 MAX_MESSAGE = 6143
 READ_TIMEOUT = .3
-FPS = 30
+FPS = 2
+MAX_IN_FLIGHT = 1
 _HEX = re.compile(r'^[a-f0-9]{64}$')
 _STREAM = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
 # A fresh authenticated socket resets frame sequence and discards stale work.
@@ -71,7 +72,7 @@ def parse_demand(raw,device_id):
         value=json.loads(raw)
         if (not isinstance(value,dict) or set(value)!={'type','enabled','targetFps','streamId','deviceId'}
                 or value['type']!='demand' or type(value['enabled']) is not bool
-                or type(value['targetFps']) is not int or value['targetFps']!=FPS
+                or type(value['targetFps']) is not int or value['targetFps'] not in (2,30)
                 or not isinstance(value['streamId'],str) or not _STREAM.fullmatch(value['streamId'])
                 or not isinstance(device_id,str) or not _HEX.fullmatch(device_id)
                 or value['deviceId']!=device_id): raise ValueError()
@@ -125,16 +126,16 @@ class _DeadlineSocket:
 
 
 class LocalDevice:
-    """Four exclusive HTTP slots; one bounded read per slot, no proxy/redirect."""
+    """One exclusive HTTP slot; bounded reads yield device capacity to display writes."""
     def __init__(self,addr,token):
         self._host,self._port=private_address(addr)
         if not isinstance(token,str) or not token or any(c.isspace() for c in token):
             raise PreviewError('auth')
         self._token=token
-        self._connections=[None]*4
+        self._connections=[None]*MAX_IN_FLIGHT
 
     def _get(self,slot,path,limit):
-        if slot not in range(4) or path not in ('/api/status','/api/status/device','/api/screen?display=0'):
+        if slot not in range(MAX_IN_FLIGHT) or path not in ('/api/status','/api/status/device','/api/screen?display=0'):
             raise PreviewError('protocol')
         deadline=time.monotonic()+READ_TIMEOUT
         connection=self._connections[slot]
@@ -197,7 +198,7 @@ class LocalDevice:
     def close(self):
         for connection in self._connections:
             if connection: connection.close()
-        self._connections=[None]*4
+        self._connections=[None]*MAX_IN_FLIGHT
 
 
 def local_device(runtime):
@@ -230,15 +231,18 @@ class PreviewBridge:
         self.device_factory=device_factory
         self.status_path=self.runtime/'preview-status.json' if status_path is True else status_path
         self._stop=threading.Event(); self._thread=None; self._loop=None; self._task=None
-        self._executor=None; self._pending=set(); self._busy=[False]*4; self._devices=[]; self._device_future=None
+        self._executor=None; self._pending=set(); self._busy=[False]*MAX_IN_FLIGHT; self._devices=[]; self._device_future=None
         self._blocked={}; self._generation=0; self._demand=False; self._client=None
         self._capture_error=None; self._active_send=None
+        self._last_capture_started=-float('inf')
         self._capture_failures=0; self._capture_retry_at=0
         self._latest=asyncio.Queue(maxsize=1); self._sequence=0; self._last_sent=0
         self._diag_lock=threading.Lock(); self._started=time.monotonic()
         self._diag={'status':'idle','connected':False,'demand':False,'captureRequested':0,
                     'captured':0,'sent':0,'dropped':0,'busySkipped':0,'captureErrors':0,
                     'invalidatedDropped':0,'outOfOrderDropped':0,'supersededDropped':0,'noDemandDropped':0,
+                    'rateLimitedSkipped':0,'displayPausedDropped':0,
+                    'targetFps':FPS,'actualTargetFps':FPS,'maxInFlight':MAX_IN_FLIGHT,'pausedForDisplay':False,
                     'captureRetries':0,'connections':0,'disconnects':0,'lastCaptureError':None,'lastCloudError':None}
 
     def _update(self,**values):
@@ -290,13 +294,59 @@ class PreviewBridge:
         return (not self._stop.is_set() and self._demand and self._generation==generation
                 and self._client is client and self._eligible(client))
 
+    def _display_fence(self,client):
+        """A RAM-only confirmation fence; no extra network status polling.
+
+        Pause during pending/applying/unknown writes. A stable selected view can
+        still preview at 2 FPS; pausing every selected item would disable preview
+        for the entire lifetime of a source-ended service.
+        """
+        try:
+            with client._snapshot_lock:
+                s=client.snapshot
+                if (not {'selected','applying','generation','health','displaying'}<=s.keys()
+                        or s['applying'] is not None or s['health'].get('status')!='healthy'
+                        or type(s['generation']) is not int):return None
+                selected=s['selected']
+                if selected is None:
+                    return (s['generation'],None,None) if s['displaying'] is None else None
+                if not isinstance(selected,str) or not selected:return None
+                d=s['displaying']
+                now=time.time()*1000
+                if (not isinstance(d,dict) or d.get('itemKey')!=selected
+                        or d.get('generation')!=s['generation']
+                        or type(d.get('confirmedValidUntil')) not in (int,float)
+                        or type(s['health'].get('confirmedValidUntil')) not in (int,float)
+                        or min(d['confirmedValidUntil'],s['health']['confirmedValidUntil'])<=now):return None
+                item=next((i for i in s.get('items',[]) if i.get('itemKey')==selected),None)
+                version=None
+                if item is not None:
+                    proof=item.get('coverageProof') or {}
+                    controller=proof.get('controller') or {}
+                    if (item.get('state')=='applying' or proof.get('version')!=item.get('version')
+                            or not isinstance(item.get('version'),int)
+                            or controller.get('itemKey')!=selected
+                            or controller.get('generation')!=s['generation']
+                            or proof.get('validUntil',0)<=now):return None
+                    version=item['version']
+                return (s['generation'],selected,version)
+        except (KeyError,TypeError,AttributeError):return None
+
+    def _capture_ready(self,client,generation,fence=None):
+        current=self._display_fence(client)
+        return self._valid(client,generation) and current is not None and (fence is None or current==fence)
+
+    def _discard_for_display(self):
+        while not self._latest.empty():
+            self._latest.get_nowait();self._drop('displayPausedDropped')
+
     def _invalidate(self):
         self._generation+=1; self._demand=False
         if self._active_send is not None and not self._active_send.done():
             self._active_send.cancel()
         while not self._latest.empty():
             self._latest.get_nowait(); self._drop('invalidatedDropped')
-        self._update(demand=False)
+        self._update(demand=False,pausedForDisplay=False)
 
     async def _offload(self,work):
         # Identity uses the same exclusive slot as framebuffer reads, even
@@ -328,11 +378,21 @@ class PreviewBridge:
         self._invalidate()
 
     def _submit_frame(self,device,slot,client,generation):
+        fence=self._display_fence(client)
+        if not self._capture_ready(client,generation,fence) or fence is None:
+            self._update(pausedForDisplay=fence is None)
+            return False
+        if slot!=0 or any(self._busy) or self._pending:
+            self._count('busySkipped');return False
+        now=asyncio.get_running_loop().time()
+        if now-self._last_capture_started<1/FPS:
+            self._count('rateLimitedSkipped');return False
+        self._last_capture_started=now
         self._busy[slot]=True; self._sequence+=1
         sequence=self._sequence; captured_at=int(time.time()*1000)
         self._count('captureRequested')
         future=asyncio.get_running_loop().run_in_executor(
-            self._executor,lambda:device.frame(slot) if self._valid(client,generation) else None)
+            self._executor,lambda:device.frame(slot) if self._capture_ready(client,generation,fence) else None)
         self._pending.add(future)
         def complete(done):
             self._pending.discard(done); self._busy[slot]=False
@@ -344,7 +404,7 @@ class PreviewBridge:
             if pixels is None:
                 self._drop('invalidatedDropped'); return
             self._count('captured')
-            if not self._valid(client,generation):
+            if not self._capture_ready(client,generation,fence):
                 self._drop('invalidatedDropped'); return
             self._capture_failures=0; self._capture_retry_at=0
             self._update(status='capturing')
@@ -357,70 +417,69 @@ class PreviewBridge:
                     self._latest.put_nowait((queued_generation,queued)); return
                 self._drop('supersededDropped' if queued_generation==generation else 'invalidatedDropped')
             self._latest.put_nowait((generation,{'type':'frame','sequence':sequence,
-                                              'capturedAt':captured_at,'pixels':pixels}))
+                                              'capturedAt':captured_at,'pixels':pixels,'_displayFence':fence}))
         future.add_done_callback(complete)
+        return True
 
     async def _capture(self,client,device_id):
-        device=None; verified=-1
-        loop=asyncio.get_running_loop(); period=1/FPS
-        next_tick=None; last_tick=None
+        device=None;verified=-1
+        loop=asyncio.get_running_loop();period=1/FPS
+        next_tick=None;last_tick=None
         while True:
-            if self._capture_error is not None: raise self._capture_error
+            if self._capture_error is not None:raise self._capture_error
             generation=self._generation
             if not self._valid(client,generation):
-                next_tick=None
-                await asyncio.sleep(.02); continue
+                next_tick=None;self._update(pausedForDisplay=False)
+                await asyncio.sleep(.02);continue
+            fence=self._display_fence(client)
+            if fence is None:
+                self._update(pausedForDisplay=True,status='paused-for-display')
+                self._discard_for_display();next_tick=None
+                await asyncio.sleep(.02);continue
+            self._update(pausedForDisplay=False)
             if loop.time()<self._capture_retry_at:
                 await asyncio.sleep(min(.05,self._capture_retry_at-loop.time()))
-                next_tick=None
-                continue
+                next_tick=None;continue
             if device is None:
                 if self._device_future is None:
-                    self._device_future=asyncio.get_running_loop().run_in_executor(
-                        self._executor,lambda:self.device_factory(self.runtime) if self._valid(client,generation) else None)
+                    self._device_future=loop.run_in_executor(self._executor,
+                        lambda:self.device_factory(self.runtime) if self._capture_ready(client,generation,fence) else None)
                     self._pending.add(self._device_future)
                     def remember(done):
                         self._pending.discard(done)
                         if not done.cancelled() and done.exception() is None:
-                            if done.result() is not None: self._devices.append(done.result())
-                            elif self._device_future is done: self._device_future=None
+                            if done.result() is not None:self._devices.append(done.result())
+                            elif self._device_future is done:self._device_future=None
                     self._device_future.add_done_callback(remember)
                 device=await asyncio.shield(self._device_future)
-                if device is None: continue
-            if not self._valid(client,generation): continue
+                if device is None:continue
+            if not self._capture_ready(client,generation,fence):continue
             if verified!=generation:
-                # Slot 0 may still contain an old-generation request. Wait for
-                # all outstanding reads before identity verification or reuse.
-                if any(self._busy): await asyncio.sleep(.01); continue
-                try:
-                    await self._offload(lambda:device.verify(device_id) if self._valid(client,generation) else None)
+                if any(self._busy):await asyncio.sleep(.01);continue
+                def identify():
+                    if not self._capture_ready(client,generation,fence):return False
+                    device.verify(device_id);return True
+                try:identified=await self._offload(identify)
                 except PreviewError as error:
-                    self._capture_failed(client,generation,error)
-                    continue
-                if not self._valid(client,generation): continue
-                verified=generation
-                next_tick=None
+                    self._capture_failed(client,generation,error);continue
+                if not identified or not self._valid(client,generation):continue
+                verified=generation;next_tick=None
             now=loop.time()
-            if next_tick is None: next_tick=now
-            # Keep the phase through bounded wake lateness and bookkeeping;
-            # the minimum gap prevents a short catch-up tick.
-            wake_at=next_tick if last_tick is None else max(next_tick,last_tick+.025)
+            wake_at=now if next_tick is None else next_tick
+            if last_tick is not None:wake_at=max(wake_at,last_tick+period)
+            wake_at=max(wake_at,self._last_capture_started+period)
             if wake_at>now:
                 await asyncio.sleep(wake_at-now)
-                continue  # Recheck generation, demand and identity after waking.
-            next_tick+=period
-            if next_tick<=now:
-                # Skip missed periods after a stall, with no catch-up batch.
-                next_tick+=(int((now-next_tick)/period)+1)*period
+                continue
+            if any(self._busy) or self._pending:
+                self._count('busySkipped');next_tick=None
+                await asyncio.sleep(.02);continue
             self._update(status='capturing')
             last_tick=loop.time()
-            try: slot=self._busy.index(False)
-            except ValueError: self._count('busySkipped')
-            else: self._submit_frame(device,slot,client,generation)
-            if loop.time()>=max(next_tick,last_tick+.025):
-                # Overrun bookkeeping must still let demand and worker
-                # completion callbacks run before another capture tick.
-                await asyncio.sleep(0)
+            # Schedule from this actual attempt, never repay missed deadlines.
+            next_tick=last_tick+period
+            self._submit_frame(device,0,client,generation)
+            if loop.time()>=next_tick:await asyncio.sleep(0)
 
     async def _receive(self,ws,device_id):
         stream=None
@@ -437,6 +496,7 @@ class PreviewBridge:
                 self._update(lastCloudError=value['code'])
                 raise PreviewError('unavailable')
             demand=parse_demand(raw,device_id)
+            self._update(requestedTargetFps=demand['targetFps'])
             if stream is not None and stream!=demand['streamId']: raise PreviewError('protocol')
             stream=demand['streamId']
             if demand['enabled']!=self._demand:
@@ -450,7 +510,12 @@ class PreviewBridge:
                 self._drop('invalidatedDropped'); continue
             if frame['sequence']<=self._last_sent:
                 self._drop('outOfOrderDropped'); continue
-            raw=json.dumps(frame,separators=(',',':'),allow_nan=False)
+            fence=frame.get('_displayFence')
+            if not self._capture_ready(client,generation,fence):
+                self._drop('displayPausedDropped');continue
+            # Local confirmation fences never enter the wire/pixel protocol.
+            wire={k:frame[k] for k in ('type','sequence','capturedAt','pixels')}
+            raw=json.dumps(wire,separators=(',',':'),allow_nan=False)
             if len(raw.encode('utf-8'))>MAX_MESSAGE: raise PreviewError('frame')
             sending=asyncio.create_task(ws.send(raw))
             self._active_send=sending
@@ -467,7 +532,7 @@ class PreviewBridge:
                 if self._active_send is sending: self._active_send=None
                 if not sending.done(): sending.cancel()
                 await asyncio.gather(sending,return_exceptions=True)
-            if not self._valid(client,generation):
+            if not self._capture_ready(client,generation,fence):
                 self._drop('invalidatedDropped'); continue
             self._last_sent=frame['sequence']; self._count('sent')
 
@@ -512,7 +577,7 @@ class PreviewBridge:
 
     async def run(self):
         self._loop=asyncio.get_running_loop(); self._task=asyncio.current_task()
-        self._executor=ThreadPoolExecutor(max_workers=4,thread_name_prefix='busy-preview-http')
+        self._executor=ThreadPoolExecutor(max_workers=MAX_IN_FLIGHT,thread_name_prefix='busy-preview-http')
         backoff=1
         try:
             while not self._stop.is_set():
