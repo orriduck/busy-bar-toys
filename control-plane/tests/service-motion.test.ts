@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   acceptDisplay,
   createState,
@@ -20,10 +20,110 @@ import {
   reuseNativeMotionSlots,
   cacheNativeMotionAssets,
   nativeMotionCapacity,
+  waitForMotionFence,
   unmaskMotionElement,
   type ServiceMotion,
 } from "../src/service-motion";
 import { digest } from "../src/security";
+
+afterEach(() => vi.useRealTimers());
+
+describe("local motion fence wakeups", () => {
+  function fence(phase: "fade" | "black" = "fade") {
+    const state = createState("local-fence");
+    state.serviceMotion = {
+      id: 7,
+      phase,
+      elapsedMs: 0,
+      nativeStarted: phase === "fade",
+    };
+    state.commands = [
+      {
+        id: 1,
+        generation: state.generation,
+        kind: "motion",
+        motionId: 7,
+        dueAt: 0,
+        status: "pending",
+        attempts: 0,
+      },
+    ];
+    return state;
+  }
+
+  it.each(["fade", "black"] as const)(
+    "waits the remaining %s fence without completing at 199ms",
+    async (phase) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      const state = fence(phase),
+        clock = new ServiceMotionClock(() => Date.now());
+      let result: string | undefined;
+      const pending = waitForMotionFence(state, clock, () => state).then(
+        (value) => (result = value),
+      );
+      await vi.advanceTimersByTimeAsync(199);
+      expect(result).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(result).toBe("ready");
+      expect(state.serviceMotion?.phase).toBe(phase); // Caller alone advances phases.
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("waits only the persisted remaining budget, and does not treat an early wake as proof", async () => {
+    const state = fence();
+    state.serviceMotion!.elapsedMs = 75;
+    const wait = vi.fn(async (_milliseconds: number) => {});
+    expect(
+      await waitForMotionFence(
+        state,
+        new ServiceMotionClock(() => 0),
+        () => state,
+        wait,
+      ),
+    ).toBe("pending");
+    expect(wait).toHaveBeenCalledExactlyOnceWith(125);
+  });
+
+  it.each(["generation", "motion", "phase", "failure"])(
+    "reloads after the timer and rejects a changed %s",
+    async (change) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      const expected = fence(),
+        live = structuredClone(expected),
+        clock = new ServiceMotionClock(() => Date.now());
+      const pending = waitForMotionFence(expected, clock, () => live);
+      await vi.advanceTimersByTimeAsync(100);
+      if (change === "generation") live.generation++;
+      if (change === "motion") live.serviceMotion!.id++;
+      if (change === "phase") live.serviceMotion!.phase = "black";
+      if (change === "failure") live.commands[0].attempts++;
+      const changed = structuredClone(live);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await pending).toBe("changed");
+      expect(live).toEqual(changed);
+    },
+  );
+
+  it("does not wait on an unacknowledged fade or a failed request retry", async () => {
+    const state = fence(),
+      clock = new ServiceMotionClock(() => 0),
+      wait = vi.fn(async () => {});
+    state.serviceMotion!.nativeStarted = false;
+    expect(await waitForMotionFence(state, clock, () => state, wait)).toBe(
+      "pending",
+    );
+    state.serviceMotion!.nativeStarted = true;
+    state.commands[0].attempts = 1;
+    expect(await waitForMotionFence(state, clock, () => state, wait)).toBe(
+      "pending",
+    );
+    expect(wait).not.toHaveBeenCalled();
+  });
+});
 
 describe("native device fade assets", () => {
   it.each(["type", "bytes", "data"] as const)(

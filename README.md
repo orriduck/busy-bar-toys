@@ -155,7 +155,7 @@ The program does not estimate missing usage.
 The front display uses compact values.
 The back display shows whole tokens per second.
 
-Cloud services share a 200 ms exit-fade target and a 200 ms black hold. The current local services turn only their icon rectangle with a shared 720 ms decelerating coin entrance; PR63 text motion remains independent, and value updates do not replay the icon. See the [motion design, previews and timing limits](docs/service-motion.md).
+Cloud services share a 200 ms exit-fade target and a 200 ms black hold. The current local services turn only their icon rectangle with a shared 540 ms decelerating coin entrance; PR63 text motion remains independent, and value updates do not replay the icon. See the [motion design, previews and timing limits](docs/service-motion.md).
 
 Changed digits roll upward and then release their overlay.
 A completed roll cannot cover a later value.

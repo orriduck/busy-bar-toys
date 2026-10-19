@@ -7,6 +7,7 @@ from busybar_apps import load_agents
 from busybar_notifier.model import Notification
 from busybar_service.cloud_adapter import CloudQueue, notification_scene, AgentRenderer
 from busybar_agents.events import Task
+from busybar_shared.service_entry import ENTRY_SECONDS
 
 load_agents()
 
@@ -96,7 +97,7 @@ class AdapterTest(unittest.TestCase):
             self.assertEqual(offsets[-1],scene['entryDurationMs'])
             self.assertIn('notice-detail',{e['id'] for c in scene['commands'] if c['offsetMs']==300 for e in c['elements']})
             entry=next(e for e in scene['commands'][0]['elements'] if e['id']=='shared-service-entry')
-            final=next(e for c in scene['commands'] if c['offsetMs']==720 for e in c['elements'] if e['id']=='shared-service-entry')
+            final=next(e for c in scene['commands'] if c['offsetMs']==round(ENTRY_SECONDS*1000) for e in c['elements'] if e['id']=='shared-service-entry')
             self.assertEqual(final['id'],entry['id'])
             self.assertNotEqual(final['assetHash'],entry['assetHash'])
             self.assertEqual((entry['x'],entry['y']),(0,1))
@@ -189,7 +190,7 @@ class AdapterTest(unittest.TestCase):
             task=Task('s','t','codex','project','working',90,100,token_rate=TokenUsage(1001,1001))
             renderer.show(task,100)
             record=producer.state.records['agent']; first=record['itemId']
-            self.assertEqual(record['scene']['entryDurationMs'],720)
+            self.assertEqual(record['scene']['entryDurationMs'],round(ENTRY_SECONDS*1000))
             self.assertTrue(any(e['id']=='shared-service-entry' for e in record['scene']['commands'][0]['elements']))
             producer.flush()
             key=json.dumps(['agent','mac',first],separators=(',',':'))

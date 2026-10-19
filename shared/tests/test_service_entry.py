@@ -2,7 +2,7 @@ import math
 import struct
 import unittest
 from PIL import Image, ImageDraw
-from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_FPS, coin_pose, coin_frame, coin_asset, wrap_scene
+from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_FPS, coin_motion, coin_pose, coin_frame, coin_asset, wrap_scene
 
 
 class ServiceEntryTests(unittest.TestCase):
@@ -42,6 +42,22 @@ class ServiceEntryTests(unittest.TestCase):
         self.assertEqual(asset[-frame_bytes:],bytes(frame_bytes))
         self.assertAlmostEqual((fields[-1]-1)/ENTRY_FPS,ENTRY_SECONDS)
 
+    def test_half_second_spin_is_fast_then_continuously_slows_without_sample_aliasing(self):
+        self.assertGreaterEqual(ENTRY_SECONDS,.50)
+        self.assertLessEqual(ENTRY_SECONDS,.56)
+        self.assertEqual(1000%ENTRY_FPS,0,'Use an exact native millisecond timer period')
+        times=[index/ENTRY_FPS for index in range(round(ENTRY_SECONDS*ENTRY_FPS)+1)]
+        motion=[coin_motion(t) for t in times]
+        self.assertAlmostEqual(motion[0][0],4*math.pi)
+        self.assertAlmostEqual(math.degrees(motion[0][1]),4000)
+        self.assertEqual(motion[-1],(0,0))
+        self.assertTrue(all(a[0]>b[0] and a[1]>b[1] for a,b in zip(motion,motion[1:])))
+        steps=[a[0]-b[0] for a,b in zip(motion,motion[1:])]
+        self.assertLess(max(steps),math.pi/2,'Resolve each edge/front/reverse change')
+        self.assertGreater(max(steps),math.pi/3,'The first sampled turn should be visibly fast')
+        self.assertGreater(coin_motion(.12)[1],4*coin_motion(.36)[1])
+        self.assertLess(coin_motion(.48)[1],coin_motion(0)[1]/50)
+
     def test_scene_wrap_is_local_and_never_mutates_other_scene_elements(self):
         from copy import deepcopy
         from types import SimpleNamespace
@@ -62,7 +78,7 @@ class ServiceEntryTests(unittest.TestCase):
         header=struct.unpack_from('<8sBBBBBHBIIIII',assets['service-entry.anim'])
         self.assertEqual((header[2],header[3]),(16,14))
         self.assertEqual(wrapped['entryDurationMs'],1700)
-        self.assertEqual(wrapped['commands'][-1]['offsetMs'],720)
+        self.assertEqual(wrapped['commands'][-1]['offsetMs'],round(ENTRY_SECONDS*1000))
         with self.assertRaises(ValueError):wrap_scene(producer,scene,Image.new('RGB',(72,16)))
 
 
