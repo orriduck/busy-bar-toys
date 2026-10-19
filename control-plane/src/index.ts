@@ -18,6 +18,16 @@ import {
   sessionComputer,
 } from "./computers";
 import { PreviewRelay } from "./preview";
+import {
+  BLACK_MS,
+  FADE_MS,
+  MOTION_SAMPLE_MS,
+  ServiceMotionClock,
+  isMotionElement,
+  motionElements,
+  motionOpacity,
+  visibleHandoff,
+} from "./service-motion";
 import { DurableObject } from "cloudflare:workers";
 import {
   Action,
@@ -26,6 +36,7 @@ import {
   Item,
   ProtocolError,
   State,
+  Slot,
   acceptDisplay,
   actionResult,
   createState,
@@ -93,6 +104,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
   private store: StateStore;
   private preview = new PreviewRelay();
   private dispatching = false;
+  private motionClock = new ServiceMotionClock();
   private lastBroadcastRevision: number | null = null;
   private streams = new Map<
     string,
@@ -177,6 +189,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     tick(s, now);
     const item = s.selected ? s.items[s.selected] : null;
     s.nativeRecoveryRequired = false;
+    // An uncertain write still requires the existing namespace recovery. Do not
+    // replay a partly observed transition or let its opaque masks survive it.
+    delete s.serviceMotion;
+    this.motionClock.reset();
     s.commands = [];
     s.generation++;
     s.displaying = null;
@@ -626,7 +642,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           403,
         );
         response = json({
-          implementation: "continuous-handoff-v4",
+          implementation: "shared-service-motion-v1",
           generation: s.generation,
           nativeElements: Object.keys(s.nativeElements).length,
           earliestExpiryMs: Object.keys(s.nativeElements).length
@@ -764,10 +780,15 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           for (const c of item.scene.commands)
             for (const e of c.elements) newElements.set(e.id, e);
           const changed = [...newElements.values()].filter(
-            (e) => JSON.stringify(e) !== JSON.stringify(oldElements.get(e.id)),
+            (e) =>
+              e.id !== "shared-service-entry" &&
+              JSON.stringify(e) !== JSON.stringify(oldElements.get(e.id)),
           );
           const removed = [...oldElements.keys()].filter(
-            (id) => !newElements.has(id),
+            (id) =>
+              !newElements.has(id) &&
+              !isMotionElement(id) &&
+              id !== "shared-service-entry",
           );
           const transitioned = changed
             .filter(
@@ -864,6 +885,12 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             Number.MAX_SAFE_INTEGER,
           ),
           elements = validateElements(body.elements);
+        requireThat(
+          elements.every(
+            (e) => !isMotionElement(e.id) && Number(e.z_index ?? 0) < 255,
+          ),
+          "COMPOSITOR_LAYER_RESERVED",
+        );
         const recoveryScene =
           body.scene === undefined ? undefined : validateScene(body.scene);
         const latest = this.projectedNativeElements(s);
@@ -1292,12 +1319,13 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     const old = Object.keys(s.nativeElements);
     // Inline widgets need no asset slot. Keep the old base view visible while
     // releasing only file-backed widgets; a black anchor is the last resort.
+    const motionMasks = old.filter(isMotionElement);
     const inline = elementCapacity
-      ? []
+      ? motionMasks
       : old.filter((id) => !s.nativeElements[id].assetHash);
     const retainInline = inline.length > 0 && inline.length < old.length;
     const retired = retainInline
-      ? old.filter((id) => s.nativeElements[id].assetHash)
+      ? old.filter((id) => !inline.includes(id))
       : [...old];
     this.traceDisplay("reclaim", {
       generation: s.generation,
@@ -1427,9 +1455,21 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         scroll_start_delay: 0,
         scroll_repeat_delay: 0,
       }));
-    if (textToHide.length + (command.elements?.length ?? 0) <= 32)
-      command.elements = [...textToHide, ...(command.elements ?? [])];
-    else
+    const unmask = old
+      .filter((e) => isMotionElement(e.id))
+      .map((e) => ({ ...e, opacity: 0 }));
+    if (
+      textToHide.length + unmask.length + (command.elements?.length ?? 0) <=
+      32
+    )
+      // Incoming content, old-text neutralization and unmask share one native
+      // draw. A slow retirement DELETE must not hide the whole entrance.
+      command.elements = [
+        ...textToHide,
+        ...unmask,
+        ...(command.elements ?? []),
+      ];
+    else {
       for (let offset = 0; offset < textToHide.length; offset += 32)
         add(before, {
           generation: s.generation,
@@ -1439,6 +1479,28 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           elements: textToHide.slice(offset, offset + 32),
           ...metadata,
         });
+      if (unmask.length) {
+        // The source consumed the whole draw bound. Stage it under black, then
+        // unmask and restart only its shared entry helper in a bounded draw.
+        // This becomes the first entrance ACK, so scene offsets and Hold begin
+        // from the visible entrance rather than the hidden staging request.
+        const retirements = after.splice(0);
+        const entry = command.elements?.find(
+          (e) => e.id === "shared-service-entry",
+        );
+        command.refresh = true;
+        add(after, {
+          generation: s.generation,
+          kind: "draw",
+          // Keep the original zero-offset origin; using preparation time here
+          // would shorten the following entrance offsets by preparation delay.
+          dueAt: command.dueAt,
+          elements: [...unmask, ...(entry ? [entry] : [])],
+          ...metadata,
+        });
+        after.push(...retirements);
+      }
+    }
     const index = s.commands.indexOf(command);
     s.commands.splice(index, 1, ...before, command, ...after);
   }
@@ -1548,9 +1610,86 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           (c) => c.generation === s.generation || c.status === "inflight",
         );
         const cmd = s.commands[0];
-        if (!cmd || cmd.dueAt > now) {
+        const motionDue =
+          cmd?.kind === "motion" && s.serviceMotion
+            ? s.serviceMotion.nextSampleMs === undefined ||
+              this.motionClock.elapsed(s.serviceMotion) >=
+                s.serviceMotion.nextSampleMs
+            : undefined;
+        if (
+          !cmd ||
+          (cmd.attempts > 0 && cmd.dueAt > now) ||
+          (motionDue === undefined ? cmd.dueAt > now : !motionDue)
+        ) {
           this.save(s);
           break;
+        }
+        if (cmd.kind === "motion") {
+          const motion = s.serviceMotion;
+          if (
+            !motion ||
+            motion.id !== cmd.motionId ||
+            motion.phase === "handoff"
+          ) {
+            s.commands.shift();
+            this.save(s);
+            continue;
+          }
+          const elapsed =
+            motion.phase === "black"
+              ? this.motionClock.elapsed(motion)
+              : motion.elapsedMs;
+          if (motion.phase === "black") {
+            if (elapsed < BLACK_MS) {
+              cmd.dueAt = now + BLACK_MS - elapsed;
+              this.save(s);
+              break;
+            }
+            motion.phase = "handoff";
+            s.commands.shift();
+            // All scene offsets remain relative to the actual end of black,
+            // including after preloads, candidate changes or slow native ACKs.
+            const entrance = s.commands.find(
+              (c) =>
+                c.generation === s.generation &&
+                c.kind === "draw" &&
+                !c.refresh,
+            );
+            if (entrance) {
+              const delay = now - entrance.dueAt;
+              for (const command of s.commands)
+                if (
+                  command.generation === s.generation &&
+                  !command.refresh &&
+                  command.kind === "draw"
+                )
+                  command.dueAt += delay;
+            }
+            this.save(s);
+            continue;
+          }
+          cmd.elements = motionElements(motionOpacity(elapsed));
+          // Very crowded legacy scenes may have occupied all 128 native IDs.
+          // Free only the few IDs needed for masks, retaining the application.
+          const union = new Set([
+            ...Object.keys(s.nativeElements),
+            ...cmd.elements.map((e) => e.id),
+          ]);
+          if (union.size > 128) {
+            const retired = Object.keys(s.nativeElements)
+              .filter((id) => !isMotionElement(id))
+              .slice(0, union.size - 128);
+            enqueue(s, {
+              generation: s.generation,
+              kind: "clear",
+              dueAt: now,
+              elementIds: retired,
+              refresh: true,
+            });
+            s.commands.unshift(s.commands.pop()!);
+            this.save(s);
+            continue;
+          }
         }
         if (cmd.kind === "clear" && cmd.elementIds) {
           // tick has removed ACKed widgets whose finite device TTL has ended.
@@ -1564,15 +1703,34 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             });
           cmd.elementIds = retained;
         }
+        if (cmd.kind === "draw" && cmd.handoff && visibleHandoff(s)) {
+          // A late old-generation incoming ACK may only now prove that its
+          // unmask made content visible. Give that view its own bounded exit;
+          // an opaque handoff still keeps the existing deadline unchanged.
+          s.serviceMotion = {
+            id: s.commandSeq + 1,
+            phase: "fade",
+            elapsedMs: 0,
+          };
+          enqueue(s, {
+            generation: s.generation,
+            kind: "motion",
+            dueAt: now,
+            motionId: s.serviceMotion.id,
+          });
+          s.commands.unshift(s.commands.pop()!);
+          this.save(s);
+          continue;
+        }
         // Reserve all assets for the generation before any draw. Playing/pending slots stay pinned.
-        if (cmd.kind === "draw") {
+        if (cmd.kind === "draw" || (cmd.kind === "motion" && s.selected)) {
           const hashes = (
-            cmd.handoff && s.selected
+            (cmd.handoff || cmd.kind === "motion") && s.selected
               ? s.items[s.selected].scene.commands.flatMap((c) => c.elements)
               : (cmd.elements ?? [])
           ).flatMap((e) => (e.assetHash ? [e.assetHash] : []));
           const priorSlots = structuredClone(s.slots);
-          let slots;
+          let slots: Slot[];
           try {
             const union = new Set([
               ...Object.keys(s.nativeElements),
@@ -1584,6 +1742,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           } catch (error) {
             s.slots = priorSlots;
             if (
+              cmd.kind === "motion" &&
+              error instanceof ProtocolError &&
+              ["SLOT_CAPACITY", "SLOT_BYTES_CAPACITY"].includes(error.code)
+            ) {
+              // A generation too large to coexist with the outgoing slots will
+              // use the existing bounded reclamation once it is under black.
+              slots = [];
+            } else if (
               cmd.handoff &&
               !cmd.handoffReclaimed &&
               Object.keys(s.nativeElements).length &&
@@ -1604,8 +1770,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               );
               this.save(s);
               continue;
-            }
-            throw error;
+            } else throw error;
           }
           const pending = slots.filter((slot) => !slot.uploaded);
           if (pending.length) {
@@ -1629,6 +1794,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           this.save(s);
           continue;
         }
+        if (cmd.kind === "motion" && s.serviceMotion?.phase === "fade")
+          cmd.elements = motionElements(
+            motionOpacity(this.motionClock.elapsed(s.serviceMotion)),
+          );
         cmd.status = "inflight";
         cmd.startedAt = now;
         cmd.attempts++;
@@ -1691,14 +1860,15 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             );
           } else {
             const current = s.selected ? s.items[s.selected] : null;
-            requireThat(current, "STALE_TARGET", 409);
-            const remaining = current.remainingMs ?? 60000;
+            requireThat(current || cmd.kind === "motion", "STALE_TARGET", 409);
+            const remaining = current?.remainingMs ?? 60000;
             const ttl = Math.max(
               1,
               Math.min(
                 60,
                 Math.ceil(
-                  (remaining + current.scene.entryDurationMs + 3000) / 1000,
+                  (remaining + (current?.scene.entryDurationMs ?? 0) + 3000) /
+                    1000,
                 ),
               ),
             );
@@ -1719,7 +1889,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             await client.request("POST", "/display/draw", {
               application_name: NAMESPACE,
               priority: NATIVE_PRIORITY,
-              ...(current.scene.ledColor
+              ...(current?.scene.ledColor && cmd.kind !== "motion"
                 ? { led_notification_color: current.scene.ledColor }
                 : {}),
               elements,
@@ -1789,7 +1959,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               cmd.elements?.length ?? cmd.elementIds?.length ?? null,
           });
         if (
-          cmd.kind === "draw" &&
+          (cmd.kind === "draw" || cmd.kind === "motion") &&
           drawExpiresAt !== undefined &&
           drawSentAt !== undefined
         )
@@ -1811,6 +1981,62 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             live.elementExpiries = {};
             live.nativeElements = {};
           }
+        }
+        if (
+          cmd.kind === "motion" &&
+          live.serviceMotion &&
+          live.serviceMotion.id === cmd.motionId
+        ) {
+          const motion = live.serviceMotion;
+          this.motionClock.elapsed(motion);
+          const opaque = cmd.elements?.every((e) => e.opacity === 100);
+          if (opaque) {
+            // The black interval starts only after the device acknowledged an
+            // opaque draw, not after an assumed number of frames or requests.
+            motion.phase = "black";
+            motion.elapsedMs = 0;
+            this.motionClock.reset();
+            this.motionClock.elapsed(motion);
+          }
+          motion.nextSampleMs = opaque
+            ? BLACK_MS
+            : Math.min(FADE_MS, motion.elapsedMs + MOTION_SAMPLE_MS);
+          const pending = live.commands.find(
+            (c) =>
+              c.kind === "motion" &&
+              c.motionId === motion.id &&
+              c.generation === live.generation,
+          );
+          const dueAt =
+            acceptedAt +
+            (opaque
+              ? BLACK_MS
+              : Math.min(
+                  MOTION_SAMPLE_MS,
+                  Math.max(0, FADE_MS - motion.elapsedMs),
+                ));
+          if (pending) pending.dueAt = dueAt;
+          else
+            enqueue(live, {
+              generation: live.generation,
+              kind: "motion",
+              dueAt,
+              motionId: motion.id,
+            });
+          // Keep the motion ahead of the queued entrance after a late old-
+          // generation ACK, without ever granting display/admission proof.
+          const index = live.commands.findIndex(
+            (c) => c.kind === "motion" && c.motionId === motion.id,
+          );
+          if (index > 0)
+            live.commands.unshift(...live.commands.splice(index, 1));
+        }
+        if (
+          live.serviceMotion?.phase === "handoff" &&
+          !Object.keys(live.nativeElements).some(isMotionElement)
+        ) {
+          delete live.serviceMotion;
+          this.motionClock.reset();
         }
         if (cmd.generation === live.generation) {
           if (cmd.kind === "draw") {

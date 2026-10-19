@@ -84,20 +84,44 @@ class AdapterTest(unittest.TestCase):
             producer.flush()
             self.assertTrue(any(path=='/api/publish' for _,path,_ in producer.http.calls))
 
-    def test_notification_recovery_has_entry_detail_at_300ms_and_final(self):
+    def test_notification_recovery_has_shared_coin_and_final_transparent_renewal_target(self):
         with tempfile.TemporaryDirectory() as directory:
             producer=self.producer(directory)
             item=Notification('a','urgent','app','BRAND','This long title rolls','Detail')
             scene=notification_scene(producer,item)
             offsets=[c['offsetMs'] for c in scene['commands']]
             self.assertEqual(offsets[0],0)
-            self.assertIn(300,offsets)
-            self.assertGreater(scene['entryDurationMs'],300)
+            self.assertEqual(scene['entryDurationMs'],720)
             self.assertEqual(offsets[-1],scene['entryDurationMs'])
+            self.assertIn('notice-detail',{e['id'] for e in scene['commands'][0]['elements']})
+            entry=next(e for e in scene['commands'][0]['elements'] if e['id']=='shared-service-entry')
+            final=scene['commands'][-1]['elements'][0]
+            self.assertEqual(final['id'],entry['id'])
+            self.assertNotEqual(final['assetHash'],entry['assetHash'])
             encoded=json.dumps(scene)
             self.assertNotIn('"path"',encoded); self.assertNotIn('"timeout"',encoded)
             self.assertIn('assetHash',encoded)
             self.assertTrue(all(a['type']=='anim' for a in producer.state.data['assets'].values()))
+
+    def test_agent_rate_update_does_not_replay_shared_entry(self):
+        from dataclasses import replace
+        from busybar_agents.tokens import TokenUsage
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory,'agent'); renderer=AgentRenderer(producer)
+            task=Task('s','t','codex','project','working',90,100,token_rate=TokenUsage(1001,1001))
+            renderer.show(task,100)
+            record=producer.state.records['agent']; first=record['itemId']
+            self.assertEqual(record['scene']['entryDurationMs'],720)
+            self.assertTrue(any(e['id']=='shared-service-entry' for e in record['scene']['commands'][0]['elements']))
+            producer.flush()
+            key=json.dumps(['agent','mac',first],separators=(',',':'))
+            producer.snapshot={'selected':key,'generation':1,'items':[{'itemId':first,'itemKey':key,'app':'codex'}]}
+            renderer.show(replace(task,token_rate=TokenUsage(1999,1999)),100)
+            producer.flush()
+            updates=[body for _,path,body in producer.http.calls if path=='/api/update']
+            self.assertTrue(updates)
+            self.assertFalse(any(e['id']=='shared-service-entry' for e in updates[-1]['elements']))
+            self.assertEqual(record['itemId'],first)
 
     def test_agent_content_updates_preserve_complete_recovery_scene(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -162,7 +162,9 @@ const presentation = (epoch: string, id = "one") => ({
   },
 });
 async function displayed(admin: (path: string) => Promise<Response>) {
-  for (let j = 0; j < 50; j++) {
+  // A warm handoff now has a real 200ms fade and 200ms acknowledged black hold.
+  // Keep polling the finite proof, including Date-only fake-clock fixtures.
+  for (let j = 0; j < 160; j++) {
     const response = await admin("/snapshot");
     const s = (await response.json()) as {
       displaying: unknown;
@@ -1293,7 +1295,7 @@ describe("continuous scene handoff", () => {
         itemId: "two",
         version: 1,
       });
-      for (let j = 0; j < 30 && screen.size; j++) await admin("/snapshot");
+      for (let j = 0; j < 160 && screen.size; j++) await admin("/snapshot");
       expect(screen.size).toBe(0);
     },
   );
@@ -1435,6 +1437,7 @@ it.each([false, true])(
                 fill?: string;
                 fill_colors?: string[];
                 border_width?: number;
+                opacity?: number;
               }[];
               element_ids?: string[];
             })
@@ -1446,7 +1449,10 @@ it.each([false, true])(
         } else
           for (const e of body!.elements!) {
             screen.add(e.id);
-            if (e.id.startsWith("control-handoff-")) {
+            if (
+              e.id.startsWith("control-handoff-") ||
+              (e.id === "control-service-motion-front" && e.opacity === 100)
+            ) {
               if (e.type === "xpmbitmap" && e.data) {
                 const lines = e.data.trim().split("\n");
                 const [width, height, count, chars] = lines[1]
@@ -1461,8 +1467,8 @@ it.each([false, true])(
                     ]),
                 );
                 anchorIsOpaqueBlack =
-                  width === 1 &&
-                  height === 1 &&
+                  ((width === 1 && height === 1) ||
+                    (width === 72 && height === 16)) &&
                   palette.get(lines[2 + count].slice(0, chars)) === "#000000";
               } else
                 anchorIsOpaqueBlack =
@@ -1500,7 +1506,9 @@ it.each([false, true])(
     expect(final.displaying.itemKey).toContain("two");
     expect(empty).toEqual([]);
     expect(outgoingViewLostDuringUpload).toBe(false);
-    expect(anchorIsOpaqueBlack).toBe(!retainInline);
+    // Both cases now retain the acknowledged full-screen exit mask while
+    // reclaiming slots; the inline base still remains pinned where possible.
+    expect(anchorIsOpaqueBlack).toBe(true);
     expect([...screen]).toEqual(["next"]);
   },
 );
@@ -1582,7 +1590,7 @@ it("retains bounded content-free display diagnostics across eviction for managem
     implementation: string;
     events: { at: number; kind: string; data: Record<string, unknown> }[];
   };
-  expect(diagnostic.implementation).toBe("continuous-handoff-v4");
+  expect(diagnostic.implementation).toBe("shared-service-motion-v1");
   expect(diagnostic.events.some((e) => e.kind === "command_ack")).toBe(true);
   const serialized = JSON.stringify(diagnostic);
   expect(serialized).not.toContain("Hello");

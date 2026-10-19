@@ -7,11 +7,10 @@ import threading
 
 from busybar_agents.motion import MotionDirector, visual_state
 from busybar_agents.motion_assets import REGIONS, FPS
-from busybar_notifier.presenter import NotificationPresenter
-from busybar_notifier.display import entrance_seconds
 from busybar_notifier.model import status_color, Notification
 from busybar_shared.cloud import CloudError
 from busybar_shared.activity import ActivityPublisher
+from busybar_shared.service_entry import wrap_scene
 
 
 class Capture:
@@ -47,19 +46,14 @@ class Capture:
 
 
 def notification_scene(producer,item,*,reduced=False):
-    """Capture the complete entrance, early detail and final settled view."""
-    tick=[0.0]; capture=Capture(producer)
-    presenter=NotificationPresenter(capture,reduced=reduced,clock=lambda:tick[0])
-    presenter.start(item)
+    """All local notification/game sources share the service entry compositor."""
+    from busybar_notifier.display import payload, render
+    capture=Capture(producer)
+    capture.draw(payload(item,reduced=True,settled=True))
     commands=[{'offsetMs':0,'elements':capture.draws[-1]}]
-    duration=0 if reduced else round(entrance_seconds(item)*1000)
-    if not reduced:
-        capture.draws.clear(); tick[0]=.3; presenter.advance()
-        for elements in capture.draws: commands.append({'offsetMs':300,'elements':elements})
-        capture.draws.clear(); tick[0]=duration/1000+.001; presenter.advance()
-        for elements in capture.draws: commands.append({'offsetMs':duration,'elements':elements})
     color=status_color(item.level,item.accent)
-    return {'entryDurationMs':duration,'commands':commands,'ledColor':'#{:02X}{:02X}{:02X}FF'.format(*color)}
+    scene={'entryDurationMs':0,'commands':commands,'ledColor':'#{:02X}{:02X}{:02X}FF'.format(*color)}
+    return scene if reduced else wrap_scene(producer,scene,render(item)[0])
 
 
 class CloudQueue:
@@ -222,6 +216,9 @@ class AgentRenderer:
         fresh.show(*self._args)
         scene={'entryDurationMs':0 if self.reduced else round(REGIONS['view'][2]/FPS*1000),
                'commands':[{'offsetMs':0,'elements':complete.draws[-1]}]}
+        if not self.reduced:
+            from busybar_agents.display import render
+            scene=wrap_scene(self.producer,scene,render(*self._args)[0])
         elements={e['id']:e for draw in self.capture.draws for e in draw}
         self.capture.draws.clear()
         changed={key:value for key,value in elements.items() if self._last_elements.get(key)!=value}
