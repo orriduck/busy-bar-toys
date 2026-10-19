@@ -21,6 +21,25 @@ class AdapterTest(unittest.TestCase):
     def producer(self,directory,role='notifier'):
         return Producer(Path(directory),{'role':role,'serviceId':role,'instanceId':'mac','epoch':'e'},FakeHTTP(),clock=lambda:100,notify=lambda *args:None)
 
+    def test_restart_rebuilds_legacy_cached_motion_without_recreating_occurrence(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            producer=self.producer(directory);queue=CloudQueue(producer)
+            item=Notification('x','urgent','app','APP','Urgent','Detail',source='source')
+            queue.set_state('source',[item])
+            old=producer.state.records['source:x'];identity=old['itemId'];deadline=old['deadline']
+            # Previous releases fingerprinted only content, so an unchanged
+            # live notification would keep its old native assets after restart.
+            old['localFingerprint']=json.dumps(json.loads(old['localFingerprint'])['content'],sort_keys=True)
+            producer.state.save()
+            resumed=self.producer(directory);queue=CloudQueue(resumed)
+            with patch('busybar_service.cloud_adapter.notification_scene',wraps=notification_scene) as render:
+                queue.set_state('source',[item]);queue.set_state('source',[item])
+            self.assertEqual(render.call_count,1)
+            record=resumed.state.records['source:x']
+            self.assertEqual(record['itemId'],identity);self.assertEqual(record['deadline'],deadline)
+            self.assertIn(round(ENTRY_SECONDS*1000),[c['offsetMs'] for c in record['scene']['commands']])
+
     def test_all_group_members_publish_and_errors_do_not_resolve_urgent(self):
         with tempfile.TemporaryDirectory() as directory:
             producer=self.producer(directory); queue=CloudQueue(producer,reduced=True)
