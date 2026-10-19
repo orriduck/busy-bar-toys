@@ -20,12 +20,33 @@ title_layers = notice.title_layers
 
 
 def aircraft_icon():
+    """A top-down aircraft with a jade radar echo, at native pixel resolution."""
     image = Image.new("RGB", (16, 14), "black")
     draw = ImageDraw.Draw(image)
-    draw.polygon([(15, 6), (11, 5), (9, 5), (5, 0), (3, 0), (5, 5), (2, 5), (1, 3),
-                  (0, 3), (0, 10), (1, 10), (2, 8), (5, 8), (3, 13), (5, 13), (9, 8), (11, 8)], fill="white")
-    draw.point((9, 5), fill=JADE)
-    draw.point((9, 8), fill=JADE)
+    # Hand-placed pixels keep the swept wings and tail distinct on the 16px bar.
+    rows = (
+        ".......##.......",
+        ".......##.......",
+        ".......##.......",
+        ".......##.......",
+        "......####......",
+        ".....######.....",
+        "...##########...",
+        ".#####.##.#####.",
+        "####...##...####",
+        ".......##.......",
+        ".......##.......",
+        "......####......",
+        ".....######.....",
+        ".....##..##.....",
+    )
+    for y, row in enumerate(rows):
+        for x, pixel in enumerate(row):
+            if pixel == "#":
+                draw.point((x, y), fill="white")
+    # Two short radar arcs occupy the clear space above the right wing.
+    draw.line([(11, 2), (12, 3), (12, 4)], fill=JADE)
+    draw.line([(12, 0), (14, 2), (15, 4)], fill=JADE)
     return image
 
 

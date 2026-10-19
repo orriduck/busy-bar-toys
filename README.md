@@ -129,7 +129,7 @@ See the [actual-device mock capture](docs/images/actual-staggered-intro.png) for
 | Component | Display | Apps |
 |---|---|---|
 | [Agent checker](agent-checker/README.md) | Task status, source icon, clock, and token rates. | Codex, Your dot, Claude Code |
-| [Notifier](notifier/README.md) | Short alerts with staggered character rolls. | ADSBao, Datadog, GitHub, Jira, Metaflow, Terminal, Credentials, Calendar |
+| [Notifier](notifier/README.md) | Short alerts and source actions. | ADSBao, Datadog, GitHub, Jira, Metaflow, Terminal, Credentials, Calendar |
 
 See [all apps and their requirements](apps/README.md).
 
@@ -141,18 +141,21 @@ The amber ↑ value shows input tokens per second.
 The cyan ↓ value shows output tokens per second.
 These are token rates, not network speeds or task totals.
 
-Both values describe the latest completed reply: its tokens divided by its elapsed time, including first-token latency and thinking.
-The value stays until the next reply completes. It is not live decoding speed.
+Claude values describe the latest completed reply: its tokens divided by its elapsed time, including first-token latency and thinking.
+Codex can report the latest completed whole-turn average, labelled `TURN AVG` on the back display, when attributed turn usage and a matching monotonic duration are available. That duration includes tools, waiting and retries as well as thinking and first-token latency.
+The previous value stays during generation; an unmeasurable new completion clears it to `--`. These values are not live decoding speed.
 
 Input includes new input and first-time cache writes.
 It excludes cache reads.
 Output includes reasoning tokens.
 
-Claude Code reports reply timing. Codex shows `--` until its reply timing is verified.
+Codex legacy totals alone show `--`; this change does not enable a new live data feed or authorize reading restricted session directories. See the [supported Codex fields and limitations](apps/src/busybar_apps/codex/README.md).
 `--` means that the rate is unknown.
 The program does not estimate missing usage.
 The front display uses compact values.
 The back display shows whole tokens per second.
+
+Cloud services share a 200 ms exit-fade target and a 200 ms black hold. The current local services use one 720 ms decelerating coin entrance, without replaying it on value updates. See the [motion design, previews and timing limits](docs/service-motion.md).
 
 Changed digits roll upward and then release their overlay.
 A completed roll cannot cover a later value.

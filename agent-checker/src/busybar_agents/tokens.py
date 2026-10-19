@@ -1,7 +1,8 @@
 """Model token rates. Inputs exclude cache reads; outputs include reasoning.
 
 The display shows the observed elapsed-time average of a session's latest
-completed reply, as reported by its source (SourceUsage.throughput). A source
+completed measurement (Claude reply; Codex whole turn), as reported by its
+source (SourceUsage.throughput). A source
 without trustworthy reply boundaries reports no throughput and shows --; its
 cumulative totals are kept but never turned into a rate. The input value is
 input accounting throughput: counted input divided by the reply duration. It is

@@ -11,6 +11,11 @@ import {
   yieldTurn,
   yieldComputer,
 } from "./ordering";
+import {
+  isMotionElement,
+  visibleHandoff,
+  type ServiceMotion,
+} from "./service-motion";
 /** Deterministic v5 state machine. Every operation is persisted atomically by DeviceControl. */
 export class ProtocolError extends Error {
   constructor(
@@ -133,7 +138,7 @@ export interface Tombstone {
 export interface Command {
   id: number;
   generation: number;
-  kind: "clear" | "draw" | "upload";
+  kind: "clear" | "draw" | "upload" | "motion";
   dueAt: number;
   elements?: Element[];
   hash?: string;
@@ -149,6 +154,8 @@ export interface Command {
   /** Prepare a replacement without dropping the native application between scenes. */
   handoff?: boolean;
   handoffReclaimed?: boolean;
+  /** Internal exit command; not scene content and never admission proof. */
+  motionId?: number;
 }
 export interface Asset {
   hash: string;
@@ -215,6 +222,7 @@ export interface State {
   nativeElements: Record<string, Element>;
   /** A sent draw with an uncertain response requires complete namespace recovery. */
   nativeRecoveryRequired?: boolean;
+  serviceMotion?: ServiceMotion;
   nextTextAt: number | null;
   nextWidgetAt: number | null;
 }
@@ -530,6 +538,12 @@ export function validateScene(v: unknown): Scene {
     requireThat(offsetMs >= last);
     last = offsetMs;
     const elements = validateElements(c.elements);
+    requireThat(
+      elements.every(
+        (e) => !isMotionElement(e.id) && Number(e.z_index ?? 0) < 255,
+      ),
+      "COMPOSITOR_LAYER_RESERVED",
+    );
     total += elements.length;
     return { offsetMs, elements };
   });
@@ -765,6 +779,13 @@ export function enqueue(
 }
 function switchTo(s: State, next: Item | null, now: number) {
   const initial = s.generation === 0;
+  // Only acknowledged content needs an exit. Initial/cold scenes retain their
+  // existing recovery behavior. The same exit survives every candidate change.
+  if (
+    (!s.serviceMotion || visibleHandoff(s)) &&
+    Object.keys(s.nativeElements).length
+  )
+    s.serviceMotion = { id: s.commandSeq + 1, phase: "fade", elapsedMs: 0 };
   const prior = s.selected ? s.items[s.selected] : null;
   if (prior && prior.state !== "paused" && prior.state !== "snoozed")
     prior.state = "preempted";
@@ -780,6 +801,13 @@ function switchTo(s: State, next: Item | null, now: number) {
   s.nextWidgetAt = null;
   s.admission = [];
   s.commands = s.commands.filter((c) => c.status === "inflight");
+  if (s.serviceMotion && s.serviceMotion.phase !== "handoff")
+    enqueue(s, {
+      generation: s.generation,
+      kind: "motion",
+      dueAt: now,
+      motionId: s.serviceMotion.id,
+    });
   if (!next || initial)
     enqueue(s, { generation: s.generation, kind: "clear", dueAt: now });
   if (next) {
