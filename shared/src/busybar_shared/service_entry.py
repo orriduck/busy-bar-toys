@@ -9,17 +9,30 @@ import math
 from PIL import Image, ImageEnhance, ImageOps
 from .native import encode_sections
 
-ENTRY_SECONDS = .72
-ENTRY_FPS = 25
+# 50 FPS has an exact 20ms native timer period (firmware uses integer 1000/fps).
+# Two revolutions finish in 540ms. The first sampled step is <90 degrees, so
+# fast front/reverse/edge changes remain resolved rather than strobing at 25FPS.
+ENTRY_SECONDS = .54
+ENTRY_FPS = 50
 ENTRY_ID = 'shared-service-entry'
 
 
-def coin_pose(elapsed, *, duration=ENTRY_SECONDS):
+def coin_motion(elapsed, *, duration=ENTRY_SECONDS):
+    """Remaining angle and positive angular speed, in radians and radians/s.
+
+    Two turns, peak speed immediately on entry, continuously decreasing to zero.
+    The time curve is independent of native/preview sampling cadence.
+    """
     if not math.isfinite(elapsed) or not math.isfinite(duration) or duration <= 0:
         raise ValueError('A service entrance needs finite seconds and positive duration')
     progress = max(0.0, min(1.0, elapsed / duration))
-    # Two revolutions, monotonically decreasing angular speed, ending face-on.
     angle = 4 * math.pi * (1-progress)**3
+    speed = 12 * math.pi / duration * (1-progress)**2
+    return angle,speed
+
+
+def coin_pose(elapsed, *, duration=ENTRY_SECONDS):
+    angle,_ = coin_motion(elapsed,duration=duration)
     return math.cos(angle), math.sin(angle)
 
 

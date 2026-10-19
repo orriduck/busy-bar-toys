@@ -147,6 +147,11 @@ async function fixture() {
   await runInDurableObject(stub, (instance) => {
     (instance as unknown as { motionClock: ServiceMotionClock }).motionClock =
       new ServiceMotionClock(() => clock.now);
+    // Boundary tests advance their clock explicitly; a timer wake alone must
+    // never advance this clock or complete a phase.
+    (
+      instance as unknown as { motionFenceWait: () => Promise<void> }
+    ).motionFenceWait = async () => {};
   });
   const state = () =>
     runInDurableObject(stub, (_instance, ctx) =>
@@ -166,6 +171,14 @@ async function fixture() {
       if (predicate(current)) return current;
     }
     throw new Error("fixture did not settle");
+  };
+  const observe = async (predicate: (s: State) => boolean) => {
+    // Read SQL only: neither an alarm nor a management fetch can restart dispatch.
+    for (let n = 0; n < 80; n++) {
+      const current = await state();
+      if (predicate(current)) return current;
+    }
+    throw new Error("inline dispatch did not settle");
   };
   const advance = async (now: number) => {
     clock.now = now;
@@ -243,9 +256,30 @@ async function fixture() {
     publish,
     end,
     wait,
+    observe,
     advance,
     state,
     mutate,
+    inlineWait: async (change?: (state: State) => void) => {
+      const waits: number[] = [];
+      await runInDurableObject(stub, (instance, ctx) => {
+        (
+          instance as unknown as {
+            motionFenceWait: (milliseconds: number) => Promise<void>;
+          }
+        ).motionFenceWait = async (milliseconds) => {
+          waits.push(milliseconds);
+          clock.now += milliseconds;
+          if (change) {
+            const store = new StateStore(ctx.storage),
+              state = store.load()!;
+            change(state);
+            store.save(state);
+          }
+        };
+      });
+      return waits;
+    },
     diagnostics: async () =>
       (await admin("/diagnostics/display")).json() as Promise<{
         events: { kind: string; data: Record<string, unknown> }[];
@@ -261,6 +295,41 @@ async function fixture() {
 }
 
 describe("acknowledged service exits", () => {
+  it("finishes both local fences and sends incoming content without another alarm", async () => {
+    const f = await fixture(),
+      waits = await f.inlineWait();
+    await f.publish("incoming", "urgent");
+    const done = await f.observe(
+      (s) => !!s.displaying && s.items[s.selected!].itemId === "incoming",
+    );
+    expect(waits).toEqual([200, 200]);
+    expect(done.serviceMotion).toBeUndefined();
+    expect(native.has("incoming-text")).toBe(true);
+    expect(calendar).toBe(f.coldCalendar);
+  });
+
+  it("does not send the old incoming scene when a candidate changes during an inline fence", async () => {
+    const f = await fixture();
+    const waits = await f.inlineWait((state) => {
+      // Simulate a concurrent fetch cancelling the selection while dispatch sleeps.
+      state.generation++;
+      state.selected = null;
+      state.applying = null;
+      state.items = {};
+      state.commands = [];
+      delete state.serviceMotion;
+    });
+    await f.publish("incoming", "urgent");
+    await f.observe((s) => s.selected === null && s.commands.length === 0);
+    expect(waits).toEqual([200]);
+    expect(native.has("incoming-text")).toBe(false);
+    expect(
+      calls.some((c) =>
+        c.body?.elements?.some((e) => e.id === "incoming-text"),
+      ),
+    ).toBe(false);
+  });
+
   it("uses elapsed 199/200/399/400 boundaries and never exposes calendar between services", async () => {
     const f = await fixture();
     await f.publish("incoming", "urgent");

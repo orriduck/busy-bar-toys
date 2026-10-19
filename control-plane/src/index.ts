@@ -22,6 +22,8 @@ import {
   BLACK_MS,
   FADE_MS,
   ServiceMotionClock,
+  motionFenceTimer,
+  waitForMotionFence,
   cacheNativeMotionAssets,
   isMotionElement,
   motionElements,
@@ -108,6 +110,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
   private preview = new PreviewRelay();
   private dispatching = false;
   private motionClock = new ServiceMotionClock();
+  private motionFenceWait = motionFenceTimer;
   private lastBroadcastRevision: number | null = null;
   private streams = new Map<
     string,
@@ -1633,6 +1636,22 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
               this.motionClock.elapsed(s.serviceMotion) >=
                 s.serviceMotion.nextSampleMs
             : undefined;
+        if (motionDue === false && cmd?.attempts === 0) {
+          // Persist a recovery alarm, but keep these <=200ms fences in this
+          // dispatch. Alarm delivery latency must not become another black hold.
+          this.save(s);
+          await this.arm();
+          const result = await waitForMotionFence(
+            s,
+            this.motionClock,
+            () => this.load(),
+            this.motionFenceWait,
+          );
+          // No state from before either await is written. Candidate changes,
+          // native failures and phase progress all go through a fresh load.
+          if (result !== "pending") continue;
+          break;
+        }
         if (
           !cmd ||
           (cmd.attempts > 0 && cmd.dueAt > now) ||
@@ -1671,7 +1690,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             this.motionClock.elapsed(motion);
             cmd.dueAt = now + BLACK_MS;
             this.save(s);
-            break;
+            continue;
           }
           if (motion.phase === "black") {
             if (elapsed < BLACK_MS) {

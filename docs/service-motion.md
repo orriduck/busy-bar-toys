@@ -12,6 +12,22 @@ unpinned animation slots or cache capacity are unavailable, a single opaque XPM
 draw and 200 ms black hold provide a bounded hard-cut fallback; that path does
 not satisfy smooth fading and is not labelled as a successful fade.
 
+Short completion/black fences now wait inside the active dispatch, with a
+persisted recovery alarm. Each wake reloads the current generation and rechecks
+monotonic elapsed time; a timer callback alone cannot complete a phase. This
+avoids adding Durable Object alarm delivery latency to each 200 ms stage. It
+does not remove the incoming native HTTP request after black, so it is not a
+device-local 200 ms scene switch.
+
+Before this scheduling change, a read-only hardware framebuffer probe observed
+three complete black intervals of approximately 3.6–5.5 seconds on the front and
+back service regions. It retained only black/nonblack values and request time
+bounds, not private screen pixels. A matching control-plane trace showed a
+nominal 400 ms pair of fences taking about 2.7 seconds before the incoming draw;
+that draw then acknowledged about 3.9 seconds later. These are separate timing
+observations, not proof that ACK latency equals physical black duration. The
+revised deployment still requires a new hardware timing measurement.
+
 | Event | Behavior |
 | --- | --- |
 | Natural end or rotation | Stop charging the outgoing dwell budget; exit, black, then enter the next candidate. |
@@ -33,19 +49,46 @@ section changes on the same path. Unmasking explicitly sets opacity to zero.
 Native fade assets only reuse historical unpinned animation slots; they do not
 consume a new immutable slot extension or reduce the original 16-slot limit.
 
-All six current local registrations use the same 720 ms coin projection through
+All six current local registrations use the same 540 ms coin projection through
 the common cloud scene adapter: Agent status, Agent requests, ADSBao, World of
 Warcraft, WoW Forever and MapleStory. Only the icon rectangle turns about its
 vertical axis twice, slows and stops on its normal face. Agent icons occupy
 14×14 pixels at (14,1); notification/game icons occupy 16×14 pixels at (0,1).
 The service card, clock, counters and text never rotate. The reverse is darker
 and mirrored, and the edge remains at least one pixel wide. The pure projection
-function takes elapsed seconds; the native icon asset samples it at 25 FPS.
+function takes elapsed seconds; the native icon asset samples it at 50 FPS.
 PR63 text motion remains independent: agent digit rolls and fades are unchanged;
 notifications retain the original character entrance, detail at 300 ms and native
 scrolling text. The notification entrance duration still follows its original
-text sequence and can exceed the icon's 720 ms. Entrance completion uses the
+text sequence and can exceed the icon's 540 ms. Entrance completion uses the
 scene duration/acknowledgement boundary, not a host frame counter.
+
+The two-turn curve is θ(t)=4π(1−t/0.54)³, with angular speed
+ω(t)=12π/0.54·(1−t/0.54)². Speed starts at 4000°/s and decreases
+continuously to zero at 540ms. Sampling at50FPS uses the firmware's exact20ms
+integer timer period. The largest adjacent angle change is about77.1° (below
+90°), compared with about113.5° at the former25FPS/720ms setting; the fast
+front/reverse/edge sequence is therefore better resolved without adding turns.
+The largest16×14 raw icon animation stays below26KiB, with the same asset/slot
+count and unchanged16-slot/two-MiB device budget.
+
+| Time | Remaining angle | Angular speed |
+| --- | ---: | ---: |
+| 0ms | 720° | 4000°/s |
+| 60ms | 505.7° | 3160.5°/s |
+| 120ms | 338.8° | 2419.8°/s |
+| 240ms | 123.5° | 1234.6°/s |
+| 360ms | 26.7° | 444.4°/s |
+| 480ms | 1.0° | 49.4°/s |
+| 540ms | 0° | 0°/s |
+
+The inspected firmware player schedules one frame callback using `1000/fps` and
+pauses on its finished flag; the service layer still sends `loop:false` and
+retains the transparent renewal target. That wrapper contains no frame-skipping
+policy. Actual render cadence and any decoder-internal catch-up remain hardware
+observations, not a guarantee from the encoded FPS or this preview.
+
+![Continuous angular deceleration](images/icon-spin-speed.png)
 
 Complete recovery scenes retain the entry asset for actual re-entry. A later
 transparent replacement is the native renewal target, so a long-lived service

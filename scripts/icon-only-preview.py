@@ -24,6 +24,8 @@ from busybar_service.cloud_adapter import AgentRenderer, AgentSignals, CloudQueu
 from busybar_service.game_watch import GameRenderer
 from busybar_shared.cloud import Producer
 from busybar_shared.graphics import draw_clock, tiny_text
+from busybar_shared.service_entry import ENTRY_SECONDS, ENTRY_FPS, coin_motion
+import math
 
 spec=importlib.util.spec_from_file_location('native_preview',Path(__file__).with_name('motion-preview.py'))
 preview=importlib.util.module_from_spec(spec);spec.loader.exec_module(preview)
@@ -102,7 +104,7 @@ def main():
     args=parser.parse_args();args.output.mkdir(parents=True,exist_ok=True);load_agents()
     with tempfile.TemporaryDirectory(prefix='busy-icon-preview-') as root:
         rows=[(alias,Scene(scene,assets)) for alias,scene,assets in scenes(root)]
-        samples=(0,.12,.28,.48,.72,1.08,1.8,2.4)
+        samples=(0,.02,.04,.08,.12,.20,.32,ENTRY_SECONDS)
         sheet=Image.new('RGB',(len(samples)*228,6*86+28),'#10151c');draw=ImageDraw.Draw(sheet)
         for n,t in enumerate(samples):draw.text((n*228+8,7),f'{t:.2f}s',fill='white')
         for row,(alias,scene) in enumerate(rows):
@@ -112,8 +114,8 @@ def main():
                 sheet.paste(scene.checked_frame(t).resize((216,48),Image.Resampling.NEAREST),(x,y+18))
         sheet.save(args.output/'icon-only-timeline.png')
         frames=[]
-        for n in range(76):
-            t=n/25
+        for n in range(3*ENTRY_FPS+1):
+            t=n/ENTRY_FPS
             card=Image.new('RGB',(456,6*116+28),'#10151c');d=ImageDraw.Draw(card)
             d.text((10,7),f'ICON ONLY / synthetic / {t:.2f}s',fill='white')
             for row,(alias,scene) in enumerate(rows):
@@ -121,11 +123,30 @@ def main():
                 card.paste(scene.checked_frame(t).resize((432,96),Image.Resampling.NEAREST),(10,y+16))
             frames.append(card)
         frames[0].save(args.output/'icon-only-six-services.gif',save_all=True,append_images=frames[1:],
-                       duration=40,loop=0,optimize=True,disposal=2)
+                       duration=1000//ENTRY_FPS,loop=0,optimize=True,disposal=2)
         metadata={alias:{'iconBounds':scene.box,'entryDurationMs':scene.scene['entryDurationMs'],
-                        'coinDurationMs':720} for alias,scene in rows}
+                        'coinDurationMs':round(ENTRY_SECONDS*1000)} for alias,scene in rows}
+        table=[{'timeMs':round(t*1000),'remainingDegrees':round(math.degrees(coin_motion(t)[0]),3),
+                'speedDegreesPerSecond':round(math.degrees(coin_motion(t)[1]),3)}
+               for t in (0,.02,.06,.12,.18,.24,.30,.36,.42,.48,ENTRY_SECONDS)]
+        (args.output/'coin-motion-table.json').write_text(json.dumps(table,indent=2)+'\n')
+        chart=Image.new('RGB',(720,280),'#10151c');cd=ImageDraw.Draw(chart)
+        cd.text((20,12),'ICON SPIN / angular speed (degrees per second) / synthetic',fill='white')
+        cd.line((60,40,60,236,680,236),fill='#707780',width=1)
+        points=[]
+        for n in range(101):
+            t=ENTRY_SECONDS*n/100;speed=math.degrees(coin_motion(t)[1])
+            points.append((60+round(t/ENTRY_SECONDS*620),236-round(speed/4000*180)))
+        cd.line(points,fill='#64DCB3',width=3)
+        for t in (0,.12,.24,.36,ENTRY_SECONDS):
+            x=60+round(t/ENTRY_SECONDS*620);cd.text((x-14,244),f'{t:.2f}s',fill='white')
+        for speed in (0,1000,2000,3000,4000):
+            y=236-round(speed/4000*180);cd.text((10,y-5),str(speed),fill='white')
+        chart.save(args.output/'icon-spin-speed.png')
         (args.output/'manifest.json').write_text(json.dumps({'synthetic':True,'physicalEvidence':False,
-            'nativeTextApproximation':True,'outsideIconPixelsUnchanged':True,'services':metadata},indent=2)+'\n')
+            'nativeTextApproximation':True,'outsideIconPixelsUnchanged':True,'coinFps':ENTRY_FPS,
+            'maxSampleAngleDegrees':max(math.degrees(coin_motion(n/ENTRY_FPS)[0]-coin_motion((n+1)/ENTRY_FPS)[0])
+                for n in range(round(ENTRY_SECONDS*ENTRY_FPS))), 'services':metadata},indent=2)+'\n')
     print(args.output)
 
 

@@ -47,6 +47,63 @@ export class ServiceMotionClock {
   }
 }
 
+export type MotionFenceWait = (milliseconds: number) => Promise<void>;
+export const motionFenceTimer: MotionFenceWait = (milliseconds) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+/** A short local wakeup is never phase-completion proof; reload and remeasure. */
+export async function waitForMotionFence(
+  expected: State,
+  clock: ServiceMotionClock,
+  reload: () => State | null,
+  wait: MotionFenceWait = motionFenceTimer,
+): Promise<"ready" | "changed" | "pending"> {
+  const motion = expected.serviceMotion,
+    command = expected.commands[0];
+  if (
+    !motion ||
+    command?.kind !== "motion" ||
+    command.status !== "pending" ||
+    command.attempts > 0 ||
+    (motion.phase !== "black" &&
+      !(motion.phase === "fade" && motion.nativeStarted))
+  )
+    return "pending";
+  const generation = expected.generation,
+    id = motion.id,
+    phase = motion.phase,
+    commandId = command.id,
+    target = phase === "black" ? BLACK_MS : FADE_MS;
+  const current = () => {
+    const state = reload(),
+      next = state?.commands[0],
+      active = state?.serviceMotion;
+    return state?.generation === generation &&
+      active?.id === id &&
+      active.phase === phase &&
+      (phase !== "fade" || active.nativeStarted) &&
+      next?.id === commandId &&
+      next.kind === "motion" &&
+      next.status === "pending" &&
+      next.attempts === 0
+      ? active
+      : null;
+  };
+  let active = current();
+  if (!active) return "changed";
+  const remaining = Math.max(
+    0,
+    // Native timers accept whole milliseconds. Round up a fractional remainder
+    // so truncation cannot turn an ordinary wake into another alarm round trip.
+    Math.min(target, Math.ceil(target - clock.elapsed(active))),
+  );
+  if (remaining === 0) return "ready";
+  await wait(remaining);
+  active = current();
+  if (!active) return "changed";
+  return clock.elapsed(active) >= target ? "ready" : "pending";
+}
+
 export function motionOpacity(elapsedMs: number): number {
   // Floor preserves a distinct not-yet-black sample at 199ms.
   return Math.floor(100 * Math.max(0, Math.min(1, elapsedMs / FADE_MS)));
