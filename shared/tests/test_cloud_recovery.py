@@ -35,7 +35,13 @@ class RecoveryTest(unittest.TestCase):
                 self.assertEqual(bodies[0],bodies[1])
                 self.assertTrue(any(path=='/api/assets' for path,_ in http.calls))
                 self.assertTrue(producer._threads[0].is_alive())
-            finally: released.set(); producer.stop()
+            finally:
+                released.set(); producer.stop()
+                # Production stop has bounded joins. This fixture must await
+                # every writer before deleting its private temporary outbox.
+                for thread in producer._threads:
+                    thread.join(timeout=3)
+                    self.assertFalse(thread.is_alive(),'fixture worker did not stop')
 
     def test_revoked_input_grant_drops_event_and_keeps_publishing(self):
         class HTTP:
