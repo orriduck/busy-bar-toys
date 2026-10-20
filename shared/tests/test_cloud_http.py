@@ -76,8 +76,8 @@ class CloudHTTPTest(unittest.TestCase):
         with self.assertRaises(CloudError) as error: http.request('GET','/api/snapshot')
         self.assertNotIn('private',str(error.exception))
 
-    def test_publisher_retries_after_real_stalled_snapshot_body(self):
-        published=threading.Event(); attempts=[0]
+    def test_downlink_retries_stalled_snapshot_without_blocking_publisher(self):
+        published=threading.Event(); recovered=threading.Event(); attempts=[0]
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args): pass
             def do_GET(self):
@@ -86,7 +86,7 @@ class CloudHTTPTest(unittest.TestCase):
                 if attempts[0]==1:
                     self.send_header('Content-Length','100'); self.end_headers()
                     self.wfile.write(b'{'); self.wfile.flush(); time.sleep(.2); return
-                self.end_headers(); self.wfile.write(b'{"protocol":1,"revision":1,"services":[{"id":"a"}],"items":[]}')
+                self.end_headers(); self.wfile.write(b'{"protocol":1,"revision":1,"services":[{"id":"a"}],"items":[]}'); recovered.set()
             def do_POST(self):
                 self.rfile.read(int(self.headers.get('Content-Length','0')))
                 self.send_response(200); self.end_headers(); self.wfile.write(b'{}')
@@ -97,10 +97,13 @@ class CloudHTTPTest(unittest.TestCase):
             http=Transport('http://127.0.0.1:'+str(server.server_port),'test-publisher',timeout=.05)
             producer=Producer(directory,{'role':'agent','serviceId':'a','instanceId':'m','epoch':'e'},http,clock=lambda:100)
             producer.state.recognize('a',kind='agent',level='info',title='A',detail='',scene={'entryDurationMs':0,'commands':[{'offsetMs':0,'elements':[]}]})
-            worker=threading.Thread(target=producer._run,daemon=True); worker.start()
+            worker=threading.Thread(target=producer._run,daemon=True)
+            downlink=threading.Thread(target=producer._poll_snapshots,daemon=True)
+            downlink.start();worker.start()
             try:
-                self.assertTrue(published.wait(2.5),'publisher must retry after a body timeout')
+                self.assertTrue(published.wait(.5),'publisher must not wait for downlink recovery')
+                self.assertTrue(recovered.wait(2.5),'downlink must retry its body timeout independently')
                 self.assertTrue(worker.is_alive())
                 self.assertGreaterEqual(attempts[0],2)
             finally:
-                producer.stop(); worker.join(1); server.shutdown(); server.server_close(); thread.join()
+                producer.stop(); worker.join(1); downlink.join(1); server.shutdown(); server.server_close(); thread.join()

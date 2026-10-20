@@ -23,6 +23,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
+from .connection_lifecycle import PeriodicChannel, SnapshotStreamChannel
+
 MAX_RESPONSE = 4 * 1024 * 1024
 LOCAL_ASSET_COUNT = 128
 LOCAL_ASSET_BYTES = 8 * 1024 * 1024
@@ -525,7 +527,7 @@ class Producer:
             self.state.data['epoch']=config['epoch']; self.state.save()
         self.guard=Watchdog(self.state,config,clock=self.clock,monotonic=time.monotonic if clock is None else clock,notify=notify,delay=fallback)
         self.actions=Actions(self.state,config,clock=self.clock)
-        self.snapshot={}; self._snapshot_lock=threading.Lock(); self._stop=threading.Event()
+        self.snapshot={}; self._snapshot_lock=threading.Lock(); self._accept_lock=threading.RLock(); self._stop=threading.Event()
         self._snapshot_received_at=None; self._snapshot_server_now=None
         now=self.clock()
         self._threads=[]
@@ -538,6 +540,11 @@ class Producer:
         self._request_lock=threading.Lock(); self._request_history=deque(maxlen=64); self._request_pending={}
 
     def accept(self,snapshot):
+        # Queue reconciliation is one ordered owner even with concurrent SSE,
+        # poll and publish responses. Transport lanes never reset this state.
+        with self._accept_lock:self._accept_snapshot(snapshot)
+
+    def _accept_snapshot(self,snapshot):
         if not isinstance(snapshot,dict) or snapshot.get('protocol')!=1: raise CloudError('invalid_snapshot')
         received_at=time.monotonic()
         if any(s.get('id')!=self.config['serviceId'] for s in snapshot.get('services',[])):
@@ -630,7 +637,7 @@ class Producer:
             self.state.save()
 
     def start(self):
-        for name,target in (('publisher',self._run),('sse',self._events),('watchdog',self._watchdog),('actions',self._actions),('heartbeat',self._heartbeat_run)):
+        for name,target in (('publisher',self._run),('sse',self._events),('watchdog',self._watchdog),('actions',self._actions),('heartbeat',self._heartbeat_run),('snapshot-poll',self._poll_snapshots)):
             thread=threading.Thread(target=target,name='busy-cloud-'+name+'-'+self.config['role'],daemon=True)
             self._threads.append(thread); thread.start()
 
@@ -643,19 +650,25 @@ class Producer:
             try: self.actions.accept(snapshot)
             except CloudError as error: self.error=error.code
 
+    @staticmethod
+    def _terminal_connection_error(error):
+        return isinstance(error,CloudError) and error.code=='unauthorized' and error.status in (401,403)
+
+    def _connection_error(self,error):
+        self.error=error.code if isinstance(error,CloudError) else 'sse_unavailable'
+
     def _events(self):
-        backoff=1
-        while not self._stop.is_set():
-            try:
-                for snapshot in self.http.events():
-                    if self._stop.is_set(): return
-                    self.accept(snapshot); backoff=1
-            except CloudError as error:
-                self.error=error.code
-                if error.code=='unauthorized' and error.status in (401,403): return
-            except (OSError,ValueError): self.error='sse_unavailable'
-            if self._stop.wait(backoff): return
-            backoff=min(backoff*2,30)
+        SnapshotStreamChannel(stop=self._stop,connect=self.http.events,deliver=self.accept,
+            errors=(CloudError,OSError,ValueError),terminal=self._terminal_connection_error,
+            on_error=self._connection_error).run()
+
+    def _poll_snapshots(self):
+        # Downlink fallback cannot queue behind an upstream publish or asset upload.
+        # accept owns revision/freshness/queue semantics; this lane only transports.
+        def poll():
+            if self._snapshot_due():self._response('GET','/api/snapshot')
+        PeriodicChannel(stop=self._stop,operation=poll,errors=(CloudError,),
+            terminal=self._terminal_connection_error,on_error=self._connection_error).run()
 
     def request_diagnostics(self):
         """Bounded timing metadata only: no URLs, IDs, hashes or content."""
@@ -748,18 +761,25 @@ class Producer:
             if rec.get('cleared') or rec.get('handoverPendingSource') or rec.get('renderPending') or not isinstance(rec.get('scene'),dict) or rec['acked']>=rec['version']: continue
             frozen=rec.get('publishBody')
             if frozen and frozen['validUntil']<=self.clock()*1000:
-                with self._snapshot_lock:
-                    remote=next((i for i in self.snapshot.get('items',[]) if i.get('itemId')==rec['itemId']),None)
-                if remote is None:
-                    if rec.get('sourceUnknown') or rec['lastSourceAt']+45000<=self.clock()*1000: continue
-                    # Expired unacknowledged work cannot be resent with altered
-                    # same-version content. Advance version, keeping occurrence
-                    # and first recognition, after the fresh snapshot has no item.
-                    with self.state.lock:
-                        live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
-                        if live is None or live['version']!=rec['version']: continue
-                        live['version']+=1; live.pop('publishBody',None); live.pop('updateBody',None)
-                        self.state.save(); rec=copy.deepcopy(live)
+                # Serialize recovery with queue reconciliation, not transport.
+                # Absence and freshness must describe the same projection.
+                with self._accept_lock:
+                    with self._snapshot_lock:
+                        remote=next((i for i in self.snapshot.get('items',[]) if i.get('itemId')==rec['itemId']),None)
+                        received_at=self._snapshot_received_at
+                        fresh_snapshot=received_at is not None and 0<=time.monotonic()-received_at<5
+                    if remote is None:
+                        if not fresh_snapshot: continue
+                        if rec.get('sourceUnknown') or rec['lastSourceAt']+45000<=self.clock()*1000: continue
+                        # Never change same-version content after a lost ack.
+                        # A new version needs fresh authoritative absence and a
+                        # still-live occurrence; transport cannot create either.
+                        with self.state.lock:
+                            live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
+                            if (live is None or live['version']!=rec['version']
+                                    or live.get('tombstone') or live.get('cleared')): continue
+                            live['version']+=1; live.pop('publishBody',None); live.pop('updateBody',None)
+                            self.state.save(); rec=copy.deepcopy(live)
             scene=rec['scene']
             hashes={e['assetHash'] for c in scene.get('commands',[]) for e in c['elements'] if 'assetHash' in e}
             hashes|={e['assetHash'] for e in rec.get('update',[]) if 'assetHash' in e}
@@ -851,39 +871,19 @@ class Producer:
         self._presence_at=now
 
     def _heartbeat_run(self):
-        backoff=1
-        while not self._stop.is_set():
-            try:
-                self.maintain_presence()
-                self.heartbeat_error=None; backoff=1
-            except CloudError as error:
-                self.heartbeat_error=error.code
-                if error.code=='unauthorized' and error.status in (401,403): return
-                if self._stop.wait(backoff): return
-                backoff=min(backoff*2,30); continue
-            if self._stop.wait(.5): return
+        PeriodicChannel(stop=self._stop,operation=self.maintain_presence,errors=(CloudError,),
+            terminal=self._terminal_connection_error,
+            on_error=lambda error:setattr(self,'heartbeat_error',error.code),
+            on_success=lambda:setattr(self,'heartbeat_error',None)).run()
 
     def _run(self):
-        backoff=1
-        while not self._stop.is_set():
-            try:
-                with self._io_lock:
-                    # SSE and successful content/heartbeat responses already
-                    # carry scoped snapshots. Do not put another WAN round trip
-                    # ahead of fresh outbox work; retain a bounded poll fallback.
-                    if self._snapshot_due():self._response('GET','/api/snapshot')
-                    self.flush()
-                self.error=None; backoff=1
-            except CloudError as error:
-                self.error=error.code
-                if error.code=='unauthorized' and error.status in (401,403): return
-                if error.status==409:
-                    # Snapshot refresh resolves stale generations. A rejected
-                    # publish remains durable until its authoritative tombstone.
-                    pass
-                if self._stop.wait(backoff): return
-                backoff=min(backoff*2,30); continue
-            if self._stop.wait(.5): return
+        # Upstream content remains ordered. Retry/stop never own durable outbox
+        # state, item identity or acknowledgement; only business responses do.
+        def publish():
+            with self._io_lock:self.flush()
+        PeriodicChannel(stop=self._stop,operation=publish,errors=(CloudError,),
+            terminal=self._terminal_connection_error,on_error=self._connection_error,
+            on_success=lambda:setattr(self,'error',None)).run()
 
     def stop(self):
         # A process restart must retain occurrence identity, snooze and deadline.
