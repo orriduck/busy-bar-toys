@@ -1111,6 +1111,20 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     }
   }
   private openStream(s: State, auth: Auth) {
+    // A reconnect request may run before an overdue cleanup callback. Reclaim
+    // only streams already past the existing lifetime/backpressure deadlines
+    // before deciding that all sixteen slots are occupied.
+    const now = Date.now();
+    for (const [id, entry] of this.streams) {
+      const deadline = Math.min(
+        entry.openedAt + 55000,
+        entry.auth.kind === "session" ? entry.auth.expiresAt : Infinity,
+      );
+      if (now >= deadline) this.closeStream(id, "lifetime");
+      else if ((entry.controller.desiredSize ?? 0) > 0) entry.queuedAt = null;
+      else if (entry.queuedAt !== null && now - entry.queuedAt >= 2000)
+        this.closeStream(id, "backpressure");
+    }
     if (this.streams.size >= 16) {
       this.streamStats.capacityRejected++;
       this.streamStats.capacityRejectedByKind[auth.kind]++;

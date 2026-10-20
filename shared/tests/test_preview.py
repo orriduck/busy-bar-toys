@@ -1111,6 +1111,32 @@ class PreviewSessionDiagnosticsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bridge.diagnostics()['lastConnectFailure']['httpStatus'],503)
         self.assertEqual(len(bridge.diagnostics()['recentSessionEnds']),16)
 
+    async def test_conflict_handshake_preserves_only_exact_bounded_protocol_codes(self):
+        from types import SimpleNamespace
+        from websockets.exceptions import InvalidStatus
+        cases=[(409,b'{"error":"PREVIEW_PUBLISHER_EXISTS"}','PREVIEW_PUBLISHER_EXISTS'),
+               (409,b'{"error":"EPOCH_EXPIRED"}','EPOCH_EXPIRED'),
+               (409,b'{"error":"private-peer-payload"}','handshake_rejected'),
+               (409,b'[]','handshake_rejected'),
+               (409,b'\xff','handshake_rejected'),
+               (409,b'x'*2049,'handshake_rejected'),
+               (503,b'{"error":"PREVIEW_PUBLISHER_EXISTS"}','handshake_rejected')]
+        for status,raw,expected in cases:
+            with self.subTest(status=status,expected=expected):
+                bridge=preview.PreviewBridge('.',{'agent':client_for('http://localhost:1234')},status_path=None)
+                class Rejected:
+                    def __init__(self,*args,**kwargs):pass
+                    async def __aenter__(self):
+                        bridge._stop.set()
+                        raise InvalidStatus(SimpleNamespace(status_code=status,reason_phrase='test',body=raw))
+                    async def __aexit__(self,*args):pass
+                with patch.object(preview,'NoRedirectConnect',Rejected):await bridge.run()
+                diag=bridge.diagnostics()
+                self.assertEqual(diag['lastConnectFailure']['code'],expected)
+                self.assertEqual(diag['lastConnectFailure']['httpStatus'],status)
+                self.assertEqual(diag['recentSessionEnds'],[])
+                self.assertNotIn('private-peer-payload',json.dumps(diag))
+
     async def test_capture_history_distinguishes_late_completion_from_current_retry(self):
         client=client_for('http://localhost:1234');bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
         for _ in range(12):bridge._capture_failed(client,0,preview.PreviewError('private-peer-payload'))

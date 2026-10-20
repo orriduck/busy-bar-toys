@@ -42,7 +42,7 @@ _DIAGNOSTIC_PEER_CODES = _TRANSIENT_CLOUD_ERRORS | frozenset((
 ))
 _DIAGNOSTIC_CODES = _DIAGNOSTIC_PEER_CODES | frozenset((
     'session_ended','normal_close','no_close_frame','websocket_closed','websocket_error','ping_timeout',
-    'handshake_rejected','transport_error','transport_timeout','cancelled','stopped','unexpected_error','unknown',
+    'PREVIEW_PUBLISHER_EXISTS','handshake_rejected','transport_error','transport_timeout','cancelled','stopped','unexpected_error','unknown',
     'auth','body','device_mismatch','frame','identity','invalid_config','not_found','protocol',
     'redirect_refused','timeout','unavailable',
 ))
@@ -627,6 +627,19 @@ class PreviewBridge:
             return len(raw)<=2048 and json.loads(raw).get('error')=='PREVIEW_CAPABILITY_REQUIRED'
         except (ValueError,TypeError,AttributeError,RecursionError): return False
 
+    @staticmethod
+    def _handshake_code(error):
+        # Keep only exact conflict enums, never the response body or peer text.
+        if error.response.status_code!=409:return 'handshake_rejected'
+        try:
+            raw=error.response.body
+            if len(raw)>2048:return 'handshake_rejected'
+            value=json.loads(raw)
+            code=value.get('error') if isinstance(value,dict) else None
+            if code in ('PREVIEW_PUBLISHER_EXISTS','EPOCH_EXPIRED'):return code
+        except (ValueError,TypeError,AttributeError,RecursionError):pass
+        return 'handshake_rejected'
+
     async def run(self):
         self._loop=asyncio.get_running_loop(); self._task=asyncio.current_task()
         self._executor=ThreadPoolExecutor(max_workers=MAX_IN_FLIGHT,thread_name_prefix='busy-preview-http')
@@ -651,7 +664,7 @@ class PreviewBridge:
                         ws_code=self._safe_close_code(getattr(ws,'close_code',None))
                         exit_code='normal_close' if ws_code==1000 else 'session_ended'
                 except InvalidStatus as error:
-                    exit_code='handshake_rejected'
+                    exit_code=self._handshake_code(error)
                     status=error.response.status_code
                     http_status=status
                     if status in (401,403):
