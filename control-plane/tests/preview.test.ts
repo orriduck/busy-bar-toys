@@ -927,3 +927,23 @@ it("distinguishes an unreleased same-instance publisher lease from an expired ep
   replacement.webSocket!.accept();
   replacement.webSocket!.close();
 });
+
+it("VM investigation: heartbeat keeps an idle no-demand publisher past its initial lease", async () => {
+  const s = await setup();
+  const response = await s.connect();
+  expect(response.status).toBe(101);
+  const socket = response.webSocket!;
+  const events = messages(socket);
+  await waitMessage(events, "demand", v => !v.enabled);
+  const interval = setInterval(() => socket.send('{"type":"heartbeat"}'), 5000);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 17200));
+    expect(await (await s.admin("/api/preview/status")).json()).toMatchObject({
+      connected: true, demand: false, viewers: 0, lastFrameAt: null,
+    });
+    expect(events.filter(v => v.type === "error")).toEqual([]);
+  } finally {
+    clearInterval(interval);
+    socket.close();
+  }
+}, 23000);

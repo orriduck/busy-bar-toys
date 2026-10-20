@@ -533,9 +533,9 @@ class Producer:
         # Capacity eviction is repaired by the existing exact-body403 retry.
         self._assets={digest:asset['uploadedAt'] for digest,asset in self.state.data['assets'].items()
                       if type(asset.get('uploadedAt')) in (int,float) and 0<=now-asset['uploadedAt']<1800}
-        self._heart=0; self.error=None; self.on_admitted=None; self.on_tombstone=None
+        self._heart=0; self._presence_at=0; self.heartbeat_error=None; self.error=None; self.on_admitted=None; self.on_tombstone=None
         self._io_lock=threading.Lock()
-        self._request_lock=threading.Lock(); self._request_history=deque(maxlen=64); self._request_pending=None
+        self._request_lock=threading.Lock(); self._request_history=deque(maxlen=64); self._request_pending={}
 
     def accept(self,snapshot):
         if not isinstance(snapshot,dict) or snapshot.get('protocol')!=1: raise CloudError('invalid_snapshot')
@@ -630,7 +630,7 @@ class Producer:
             self.state.save()
 
     def start(self):
-        for name,target in (('publisher',self._run),('sse',self._events),('watchdog',self._watchdog),('actions',self._actions)):
+        for name,target in (('publisher',self._run),('sse',self._events),('watchdog',self._watchdog),('actions',self._actions),('heartbeat',self._heartbeat_run)):
             thread=threading.Thread(target=target,name='busy-cloud-'+name+'-'+self.config['role'],daemon=True)
             self._threads.append(thread); thread.start()
 
@@ -660,7 +660,7 @@ class Producer:
     def request_diagnostics(self):
         """Bounded timing metadata only: no URLs, IDs, hashes or content."""
         with self._request_lock:
-            pending=copy.deepcopy(self._request_pending)
+            pending=copy.deepcopy(min(self._request_pending.values(),key=lambda row:row['startedMono'],default=None))
             if pending:pending['elapsedMs']=round((time.monotonic()-pending.pop('startedMono'))*1000,2)
             return {'inFlight':pending,'recent':copy.deepcopy(list(self._request_history))}
 
@@ -671,7 +671,8 @@ class Producer:
         if endpoint=='/api/assets' and isinstance(body,dict) and isinstance(body.get('data'),str):
             encoded=body['data'];row['assetBytes']=len(encoded)*3//4-(len(encoded)-len(encoded.rstrip('=')))
         started=time.monotonic()
-        with self._request_lock:self._request_pending={**row,'startedMono':started}
+        token=object()
+        with self._request_lock:self._request_pending[token]={**row,'startedMono':started}
         try:
             response=self.http.request(method,path,body);row['ok']=True;return response
         except Exception:
@@ -679,19 +680,20 @@ class Producer:
         finally:
             row['elapsedMs']=round((time.monotonic()-started)*1000,2)
             with self._request_lock:
-                self._request_history.append(row);self._request_pending=None
+                self._request_history.append(row);self._request_pending.pop(token,None)
 
     def _response(self,method,path,body=None):
         response=self._request(method,path,body)
         snapshot=response.get('snapshot',response)
         if snapshot.get('protocol')==1:
             started=time.monotonic();row={'phase':'accept','startedAtMs':round(self.clock()*1000)}
-            with self._request_lock:self._request_pending={**row,'startedMono':started}
+            token=object()
+            with self._request_lock:self._request_pending[token]={**row,'startedMono':started}
             try:self.accept(snapshot)
             finally:
                 row['elapsedMs']=round((time.monotonic()-started)*1000,2)
                 with self._request_lock:
-                    self._request_history.append(row);self._request_pending=None
+                    self._request_history.append(row);self._request_pending.pop(token,None)
         return response
 
     def _upload_assets(self,hashes,asset_bodies,*,force=False):
@@ -833,6 +835,33 @@ class Producer:
             except CloudError as error:
                 if error.status!=409 and error.code!='input_forbidden': raise
             with self.state.lock: self.state.data['inputs'].pop(ident,None); self.state.save()
+
+    def maintain_presence(self):
+        """Transport liveness only: never renew business items or run callbacks.
+
+        Keep occurrence renewal in the ordered outbox lane. A delayed concurrent
+        renewal can otherwise shorten a newer publish's validUntil on the server.
+        Snapshot reconciliation remains owned by SSE and the normal poll fallback.
+        """
+        now=self.clock()
+        if now-self._presence_at<5: return
+        identity={'instanceId':self.config['instanceId'],'epoch':self.config['epoch']}
+        self._request('POST','/api/heartbeat',
+                      {**identity,'itemIds':[],'validUntil':int(now*1000)+60000})
+        self._presence_at=now
+
+    def _heartbeat_run(self):
+        backoff=1
+        while not self._stop.is_set():
+            try:
+                self.maintain_presence()
+                self.heartbeat_error=None; backoff=1
+            except CloudError as error:
+                self.heartbeat_error=error.code
+                if error.code=='unauthorized' and error.status in (401,403): return
+                if self._stop.wait(backoff): return
+                backoff=min(backoff*2,30); continue
+            if self._stop.wait(.5): return
 
     def _run(self):
         backoff=1
