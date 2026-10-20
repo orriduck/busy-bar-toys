@@ -127,6 +127,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
   private streamStats = {
     opened: 0,
     capacityRejected: 0,
+    capacityRejectedByKind: { session: 0, computer: 0, publisher: 0 },
     coalesced: 0,
     closed: { cancelled: 0, lifetime: 0, backpressure: 0, authority: 0 },
   };
@@ -139,6 +140,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       heartbeat: ReturnType<typeof setInterval>;
       dirty: boolean;
       openedAt: number;
+      queuedAt: number | null;
     }
   >();
   constructor(ctx: DurableObjectState, env: RuntimeEnv) {
@@ -1109,7 +1111,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     }
   }
   private openStream(s: State, auth: Auth) {
-    if (this.streams.size >= 16) this.streamStats.capacityRejected++;
+    if (this.streams.size >= 16) {
+      this.streamStats.capacityRejected++;
+      this.streamStats.capacityRejectedByKind[auth.kind]++;
+    }
     requireThat(this.streams.size < 16, "SSE_CAPACITY", 429);
     const id = crypto.randomUUID();
     const stream = new ReadableStream<Uint8Array>({
@@ -1123,13 +1128,20 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         );
         const heartbeat = setInterval(() => {
           try {
+            const entry = this.streams.get(id);
+            if (!entry) return;
             const current = this.load();
             requireThat(current, "UNAUTHORIZED", 401);
             this.authorize(current, auth);
             if ((controller.desiredSize ?? 0) <= 0) {
-              this.closeStream(id, "backpressure");
+              entry.queuedAt ??= Date.now();
+              // A snapshot may have arrived immediately before this heartbeat.
+              // Reclaim only after an actual two-second blocked interval.
+              if (Date.now() - entry.queuedAt >= 2000)
+                this.closeStream(id, "backpressure");
               return;
             }
+            entry.queuedAt = null;
             if (this.streams.get(id)?.dirty) {
               this.flushSnapshotStream(id);
               return;
@@ -1137,6 +1149,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             // Keep the producer's five-second socket read alive without
             // inventing a revision or repeating its full snapshot.
             controller.enqueue(new TextEncoder().encode(": heartbeat\n\n"));
+            this.noteStreamQueue(id);
           } catch {
             this.closeStream(id, "authority");
           }
@@ -1148,9 +1161,11 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
           heartbeat,
           dirty: false,
           openedAt: Date.now(),
+          queuedAt: null,
         });
         this.streamStats.opened++;
         controller.enqueue(this.frame(s, auth));
+        this.noteStreamQueue(id);
       },
       pull: () => this.flushSnapshotStream(id),
       cancel: () => this.closeStream(id),
@@ -1181,12 +1196,21 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
   private snapshotStreamHealth() {
     const activeByKind = { session: 0, computer: 0, publisher: 0 };
     let pending = 0,
-      oldestAgeMs = 0;
+      oldestAgeMs = 0,
+      backpressured = 0,
+      oldestBackpressureAgeMs = 0;
     const services = new Map<string, number>();
     for (const entry of this.streams.values()) {
       activeByKind[entry.auth.kind]++;
       pending += Number(entry.dirty);
       oldestAgeMs = Math.max(oldestAgeMs, Date.now() - entry.openedAt);
+      if (entry.queuedAt !== null) {
+        backpressured++;
+        oldestBackpressureAgeMs = Math.max(
+          oldestBackpressureAgeMs,
+          Date.now() - entry.queuedAt,
+        );
+      }
       if (entry.auth.kind !== "session" && entry.auth.serviceId) {
         const key = entry.auth.serviceId;
         services.set(key, (services.get(key) ?? 0) + 1);
@@ -1198,13 +1222,23 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       activeByKind,
       pending,
       oldestAgeMs,
+      backpressured,
+      oldestBackpressureAgeMs,
       serviceConnectionCounts: [...services.values()].sort((a, b) => b - a),
       ...this.streamStats,
     };
   }
+  private noteStreamQueue(id: string) {
+    const entry = this.streams.get(id);
+    if (entry)
+      entry.queuedAt =
+        (entry.controller.desiredSize ?? 0) <= 0 ? Date.now() : null;
+  }
   private flushSnapshotStream(id: string) {
     const entry = this.streams.get(id);
-    if (!entry?.dirty || (entry.controller.desiredSize ?? 0) <= 0) return;
+    if (!entry || (entry.controller.desiredSize ?? 0) <= 0) return;
+    entry.queuedAt = null;
+    if (!entry.dirty) return;
     try {
       const current = this.load();
       requireThat(current, "UNAUTHORIZED", 401);
@@ -1212,6 +1246,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       // accumulate serialized snapshots or keep an obsolete pending version.
       entry.controller.enqueue(this.frame(current, entry.auth));
       entry.dirty = false;
+      this.noteStreamQueue(id);
     } catch {
       this.closeStream(id, "authority");
     }
@@ -1240,6 +1275,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         }
         entry.dirty = false;
         entry.controller.enqueue(this.frame(s, entry.auth));
+        this.noteStreamQueue(id);
       } catch {
         this.closeStream(id, "authority");
       }
