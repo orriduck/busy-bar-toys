@@ -23,6 +23,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
+from .connection_lifecycle import PeriodicChannel, SnapshotStreamChannel
+from .service_queue import ServiceQueue
+
 MAX_RESPONSE = 4 * 1024 * 1024
 LOCAL_ASSET_COUNT = 128
 LOCAL_ASSET_BYTES = 8 * 1024 * 1024
@@ -525,79 +528,44 @@ class Producer:
             self.state.data['epoch']=config['epoch']; self.state.save()
         self.guard=Watchdog(self.state,config,clock=self.clock,monotonic=time.monotonic if clock is None else clock,notify=notify,delay=fallback)
         self.actions=Actions(self.state,config,clock=self.clock)
-        self.snapshot={}; self._snapshot_lock=threading.Lock(); self._stop=threading.Event()
-        self._snapshot_received_at=None; self._snapshot_server_now=None
+        self.queue=ServiceQueue(self.state,config,self.guard,clock=self.clock,error_type=CloudError)
+        self._stop=threading.Event()
         now=self.clock()
         self._threads=[]
         # Cache receipts are an optimization, never display/admission proof.
         # Capacity eviction is repaired by the existing exact-body403 retry.
         self._assets={digest:asset['uploadedAt'] for digest,asset in self.state.data['assets'].items()
                       if type(asset.get('uploadedAt')) in (int,float) and 0<=now-asset['uploadedAt']<1800}
-        self._heart=0; self.error=None; self.on_admitted=None; self.on_tombstone=None
+        self._heart=0; self._presence_at=0; self.heartbeat_error=None; self.error=None; self.on_admitted=None; self.on_tombstone=None
         self._io_lock=threading.Lock()
-        self._request_lock=threading.Lock(); self._request_history=deque(maxlen=64); self._request_pending=None
+        self._request_lock=threading.Lock(); self._request_history=deque(maxlen=64); self._request_pending={}
 
-    def accept(self,snapshot):
-        if not isinstance(snapshot,dict) or snapshot.get('protocol')!=1: raise CloudError('invalid_snapshot')
-        received_at=time.monotonic()
-        if any(s.get('id')!=self.config['serviceId'] for s in snapshot.get('services',[])):
-            raise CloudError('scope_violation')
-        with self._snapshot_lock:
-            if snapshot.get('revision',0)<self.snapshot.get('revision',-1): return
-            self.snapshot=copy.deepcopy(snapshot)
-        if any(i.get('serviceId',self.config['serviceId'])!=self.config['serviceId'] for i in snapshot.get('items',[])):
-            raise CloudError('scope_violation')
-        self.guard.snapshot(snapshot)
-        # Receipt history grows over the enrollment lifetime. Index our exact
-        # scoped keys once instead of serializing every record for every receipt
-        # on each SSE, poll and heartbeat snapshot. Keep durable reconciliation
-        # and callbacks in State.tombstone, including repeated fallback updates.
-        with self.state.lock:
-            receipt_ids={}
-            for local_key,rec in self.state.records.items():
-                key=json.dumps([self.config['serviceId'],self.config['instanceId'],rec['itemId']],separators=(',',':'))
-                entry=receipt_ids.setdefault(key,(rec['itemId'],[]))
-                entry[1].append(local_key)
-        for tomb in snapshot.get('tombstones',[]):
-            key=tomb.get('itemKey')
-            match=receipt_ids.get(key) if isinstance(key,str) else None
-            if match is not None:
-                item_id,record_keys=match
-                changed=self.state.tombstone(item_id,tomb.get('reason','ended'),record_keys=record_keys)
-                if changed and self.on_tombstone: self.on_tombstone(item_id,tomb.get('reason'))
-        now=self.clock()*1000
-        display=snapshot.get('displaying') or {}
-        for item in snapshot.get('items',[]):
-            proof=item.get('coverageProof') or {}; controller=proof.get('controller') or {}
-            with self.state.lock:
-                record=next((r for r in self.state.records.values() if r['itemId']==item.get('itemId')),None)
-            admitted=(record is not None and record['version']==item.get('version')==proof.get('version')
-                      and snapshot.get('health',{}).get('status')=='healthy'
-                      and proof.get('revision')==snapshot.get('revision')
-                      and proof.get('itemKey')==item.get('itemKey')
-                      and controller.get('itemKey')==display.get('itemKey')
-                      and controller.get('generation')==display.get('generation')==snapshot.get('generation')
-                      and now<proof.get('validUntil',0)<=display.get('confirmedValidUntil',0))
-            if admitted and item.get('instanceId')==self.config['instanceId']:
-                ident=item.get('itemId')
-                if self.on_admitted:
-                    with self.state.lock:
-                        live=next((r for r in self.state.records.values() if r['itemId']==ident),None)
-                        if live is None or live.get('admitted'): continue
-                        live['admitted']=True; self.state.save()
-                    if not self.on_admitted(ident):
-                        with self.state.lock:
-                            live=next((r for r in self.state.records.values() if r['itemId']==ident),None)
-                            if live: live['admitted']=False; self.state.save()
-        server_now=snapshot.get('serverNow')
-        if type(server_now)in(int,float) and math.isfinite(server_now):
-            with self._snapshot_lock:
-                if self._snapshot_server_now is None or server_now>self._snapshot_server_now:
-                    self._snapshot_server_now=server_now;self._snapshot_received_at=received_at
+    # Compatibility facade for existing adapters. Queue state has one owner;
+    # lifecycle code consumes only accept/snapshot_due, not these internals.
+    @property
+    def snapshot(self): return self.queue.snapshot
 
-    def _snapshot_due(self):
-        with self._snapshot_lock:received_at=self._snapshot_received_at
-        return received_at is None or not 0<=time.monotonic()-received_at<5
+    @snapshot.setter
+    def snapshot(self,value): self.queue.snapshot=value
+
+    @property
+    def _snapshot_lock(self): return self.queue._snapshot_lock
+
+    @property
+    def on_admitted(self): return self.queue.on_admitted
+
+    @on_admitted.setter
+    def on_admitted(self,value): self.queue.on_admitted=value
+
+    @property
+    def on_tombstone(self): return self.queue.on_tombstone
+
+    @on_tombstone.setter
+    def on_tombstone(self,value): self.queue.on_tombstone=value
+
+    def accept(self,snapshot): self.queue.accept(snapshot)
+
+    def _snapshot_due(self): return self.queue.snapshot_due()
 
     def asset(self,name,data):
         suffix=Path(name).suffix.lstrip('.').lower()
@@ -630,7 +598,7 @@ class Producer:
             self.state.save()
 
     def start(self):
-        for name,target in (('publisher',self._run),('sse',self._events),('watchdog',self._watchdog),('actions',self._actions)):
+        for name,target in (('publisher',self._run),('sse',self._events),('watchdog',self._watchdog),('actions',self._actions),('heartbeat',self._heartbeat_run),('snapshot-poll',self._poll_snapshots)):
             thread=threading.Thread(target=target,name='busy-cloud-'+name+'-'+self.config['role'],daemon=True)
             self._threads.append(thread); thread.start()
 
@@ -639,28 +607,34 @@ class Producer:
 
     def _actions(self):
         while not self._stop.wait(.2):
-            with self._snapshot_lock: snapshot=copy.deepcopy(self.snapshot)
+            snapshot=self.queue.read_snapshot()
             try: self.actions.accept(snapshot)
             except CloudError as error: self.error=error.code
 
+    @staticmethod
+    def _terminal_connection_error(error):
+        return isinstance(error,CloudError) and error.code=='unauthorized' and error.status in (401,403)
+
+    def _connection_error(self,error):
+        self.error=error.code if isinstance(error,CloudError) else 'sse_unavailable'
+
     def _events(self):
-        backoff=1
-        while not self._stop.is_set():
-            try:
-                for snapshot in self.http.events():
-                    if self._stop.is_set(): return
-                    self.accept(snapshot); backoff=1
-            except CloudError as error:
-                self.error=error.code
-                if error.code=='unauthorized' and error.status in (401,403): return
-            except (OSError,ValueError): self.error='sse_unavailable'
-            if self._stop.wait(backoff): return
-            backoff=min(backoff*2,30)
+        SnapshotStreamChannel(stop=self._stop,connect=self.http.events,deliver=self.accept,
+            errors=(CloudError,OSError,ValueError),terminal=self._terminal_connection_error,
+            on_error=self._connection_error).run()
+
+    def _poll_snapshots(self):
+        # Downlink fallback cannot queue behind an upstream publish or asset upload.
+        # accept owns revision/freshness/queue semantics; this lane only transports.
+        def poll():
+            if self._snapshot_due():self._response('GET','/api/snapshot')
+        PeriodicChannel(stop=self._stop,operation=poll,errors=(CloudError,),
+            terminal=self._terminal_connection_error,on_error=self._connection_error).run()
 
     def request_diagnostics(self):
         """Bounded timing metadata only: no URLs, IDs, hashes or content."""
         with self._request_lock:
-            pending=copy.deepcopy(self._request_pending)
+            pending=copy.deepcopy(min(self._request_pending.values(),key=lambda row:row['startedMono'],default=None))
             if pending:pending['elapsedMs']=round((time.monotonic()-pending.pop('startedMono'))*1000,2)
             return {'inFlight':pending,'recent':copy.deepcopy(list(self._request_history))}
 
@@ -671,7 +645,8 @@ class Producer:
         if endpoint=='/api/assets' and isinstance(body,dict) and isinstance(body.get('data'),str):
             encoded=body['data'];row['assetBytes']=len(encoded)*3//4-(len(encoded)-len(encoded.rstrip('=')))
         started=time.monotonic()
-        with self._request_lock:self._request_pending={**row,'startedMono':started}
+        token=object()
+        with self._request_lock:self._request_pending[token]={**row,'startedMono':started}
         try:
             response=self.http.request(method,path,body);row['ok']=True;return response
         except Exception:
@@ -679,19 +654,20 @@ class Producer:
         finally:
             row['elapsedMs']=round((time.monotonic()-started)*1000,2)
             with self._request_lock:
-                self._request_history.append(row);self._request_pending=None
+                self._request_history.append(row);self._request_pending.pop(token,None)
 
     def _response(self,method,path,body=None):
         response=self._request(method,path,body)
         snapshot=response.get('snapshot',response)
         if snapshot.get('protocol')==1:
             started=time.monotonic();row={'phase':'accept','startedAtMs':round(self.clock()*1000)}
-            with self._request_lock:self._request_pending={**row,'startedMono':started}
+            token=object()
+            with self._request_lock:self._request_pending[token]={**row,'startedMono':started}
             try:self.accept(snapshot)
             finally:
                 row['elapsedMs']=round((time.monotonic()-started)*1000,2)
                 with self._request_lock:
-                    self._request_history.append(row);self._request_pending=None
+                    self._request_history.append(row);self._request_pending.pop(token,None)
         return response
 
     def _upload_assets(self,hashes,asset_bodies,*,force=False):
@@ -746,18 +722,8 @@ class Producer:
             if rec.get('cleared') or rec.get('handoverPendingSource') or rec.get('renderPending') or not isinstance(rec.get('scene'),dict) or rec['acked']>=rec['version']: continue
             frozen=rec.get('publishBody')
             if frozen and frozen['validUntil']<=self.clock()*1000:
-                with self._snapshot_lock:
-                    remote=next((i for i in self.snapshot.get('items',[]) if i.get('itemId')==rec['itemId']),None)
-                if remote is None:
-                    if rec.get('sourceUnknown') or rec['lastSourceAt']+45000<=self.clock()*1000: continue
-                    # Expired unacknowledged work cannot be resent with altered
-                    # same-version content. Advance version, keeping occurrence
-                    # and first recognition, after the fresh snapshot has no item.
-                    with self.state.lock:
-                        live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
-                        if live is None or live['version']!=rec['version']: continue
-                        live['version']+=1; live.pop('publishBody',None); live.pop('updateBody',None)
-                        self.state.save(); rec=copy.deepcopy(live)
+                rec=self.queue.recover_expired_publish(rec)
+                if rec is None:continue
             scene=rec['scene']
             hashes={e['assetHash'] for c in scene.get('commands',[]) for e in c['elements'] if 'assetHash' in e}
             hashes|={e['assetHash'] for e in rec.get('update',[]) if 'assetHash' in e}
@@ -792,12 +758,7 @@ class Producer:
                 else:
                     response=self._content('/api/update',update,hashes,asset_bodies)
             else: response=self._content('/api/publish',body,hashes,asset_bodies)
-            with self.state.lock:
-                live=next((r for r in self.state.records.values() if r['itemId']==rec['itemId']),None)
-                if live:
-                    live['acked']=max(live['acked'],rec['version'])
-                    if live['version']==rec['version']: live.pop('update',None)
-                    self.state.save()
+            self.queue.acknowledge(rec['itemId'],rec['version'])
         now=self.clock()
         if now-self._heart>=5:
             # Each source has a bounded freshness window based on its next
@@ -834,27 +795,34 @@ class Producer:
                 if error.status!=409 and error.code!='input_forbidden': raise
             with self.state.lock: self.state.data['inputs'].pop(ident,None); self.state.save()
 
+    def maintain_presence(self):
+        """Transport liveness only: never renew business items or run callbacks.
+
+        Keep occurrence renewal in the ordered outbox lane. A delayed concurrent
+        renewal can otherwise shorten a newer publish's validUntil on the server.
+        Snapshot reconciliation remains owned by SSE and the normal poll fallback.
+        """
+        now=self.clock()
+        if now-self._presence_at<5: return
+        identity={'instanceId':self.config['instanceId'],'epoch':self.config['epoch']}
+        self._request('POST','/api/heartbeat',
+                      {**identity,'itemIds':[],'validUntil':int(now*1000)+60000})
+        self._presence_at=now
+
+    def _heartbeat_run(self):
+        PeriodicChannel(stop=self._stop,operation=self.maintain_presence,errors=(CloudError,),
+            terminal=self._terminal_connection_error,
+            on_error=lambda error:setattr(self,'heartbeat_error',error.code),
+            on_success=lambda:setattr(self,'heartbeat_error',None)).run()
+
     def _run(self):
-        backoff=1
-        while not self._stop.is_set():
-            try:
-                with self._io_lock:
-                    # SSE and successful content/heartbeat responses already
-                    # carry scoped snapshots. Do not put another WAN round trip
-                    # ahead of fresh outbox work; retain a bounded poll fallback.
-                    if self._snapshot_due():self._response('GET','/api/snapshot')
-                    self.flush()
-                self.error=None; backoff=1
-            except CloudError as error:
-                self.error=error.code
-                if error.code=='unauthorized' and error.status in (401,403): return
-                if error.status==409:
-                    # Snapshot refresh resolves stale generations. A rejected
-                    # publish remains durable until its authoritative tombstone.
-                    pass
-                if self._stop.wait(backoff): return
-                backoff=min(backoff*2,30); continue
-            if self._stop.wait(.5): return
+        # Upstream content remains ordered. Retry/stop never own durable outbox
+        # state, item identity or acknowledgement; only business responses do.
+        def publish():
+            with self._io_lock:self.flush()
+        PeriodicChannel(stop=self._stop,operation=publish,errors=(CloudError,),
+            terminal=self._terminal_connection_error,on_error=self._connection_error,
+            on_success=lambda:setattr(self,'error',None)).run()
 
     def stop(self):
         # A process restart must retain occurrence identity, snooze and deadline.

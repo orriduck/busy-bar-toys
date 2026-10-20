@@ -515,7 +515,9 @@ class PreviewDisplayPriorityTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(.5)
             self.assertTrue(bridge._submit_frame(device,0,client,0))
             await asyncio.gather(*list(bridge._pending));await asyncio.sleep(0)
-            self.assertEqual(bridge._latest._queue[0][1]['_displayFence'],(3,'own',2))
+            generation,frame=bridge._latest.get_nowait()
+            self.assertEqual(frame['_displayFence'],(3,'own',2))
+            bridge._latest.offer(generation,frame)
             client.snapshot['applying']='own'
             from types import SimpleNamespace
             sent=[]
@@ -544,7 +546,7 @@ class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
                 bridge._submit_frame(device,0,client,0)
                 await asyncio.gather(*list(bridge._pending))
             bridge._latest.get_nowait()
-            bridge._latest.put_nowait((0,{'sequence':100}))
+            bridge._latest.offer(0,{'sequence':100})
             bridge._last_capture_started=-float('inf')
             bridge._submit_frame(device,0,client,0)
             await asyncio.gather(*list(bridge._pending))
@@ -575,8 +577,8 @@ class PreviewSchedulingTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(bridge._submit_frame(device,1,client,0))
             self.assertEqual(len(bridge._pending),1)
             release.set();await asyncio.gather(*list(bridge._pending))
-            bridge._latest=asyncio.Queue(maxsize=1)
-            bridge._latest.put_nowait((0,{'sequence':100}))
+            bridge._latest=preview.LatestFrameBuffer()
+            bridge._latest.offer(0,{'sequence':100})
             bridge._last_capture_started=-float('inf')
             self.assertTrue(bridge._submit_frame(device,0,client,0))
             await asyncio.gather(*list(bridge._pending))
@@ -770,7 +772,7 @@ class PreviewReviewRegressionTest(unittest.IsolatedAsyncioTestCase):
         client=client_for('http://localhost:1234')
         bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
         bridge._client=client; bridge._demand=True
-        bridge._latest.put_nowait((0,{'type':'frame','sequence':1,'capturedAt':1,'pixels':'test'}))
+        bridge._latest.offer(0,{'type':'frame','sequence':1,'capturedAt':1,'pixels':'test'})
         task=asyncio.create_task(bridge._send(BlockedSocket(),client))
         try:
             await started.wait()

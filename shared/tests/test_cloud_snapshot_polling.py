@@ -35,7 +35,7 @@ class SnapshotPollingTest(unittest.TestCase):
             def is_set(self):return self.loops>=12
             def wait(self,seconds):clock[0]+=seconds;self.loops+=1;return self.is_set()
         with tempfile.TemporaryDirectory()as root,patch('busybar_shared.cloud.time.monotonic',side_effect=lambda:clock[0]):
-            p=Producer(root,self.config,HTTP(),clock=lambda:clock[0]);p._heart=100;p._stop=Stop();p._run()
+            p=Producer(root,self.config,HTTP(),clock=lambda:clock[0]);p._heart=100;p._stop=Stop();p._poll_snapshots()
             self.assertEqual([now for path,now in calls if path=='/api/snapshot'],[100,105])
 
     def test_replayed_invalid_or_backward_clock_snapshots_cannot_extend_reuse(self):
