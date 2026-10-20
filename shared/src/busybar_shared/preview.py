@@ -26,6 +26,8 @@ from .api import AuthError
 from .cloud import atomic_json, CloudError
 from .credentials import read_input_token
 from .frames import decode_frame
+from .preview_pipeline import LatestFrameBuffer
+from .preview_session import supervise_preview_session
 
 FRAME_BYTES = 3456
 MAX_MESSAGE = 6143
@@ -247,7 +249,7 @@ class PreviewBridge:
         self._capture_error=None; self._active_send=None
         self._last_capture_started=-float('inf')
         self._capture_failures=0; self._capture_retry_at=0
-        self._latest=asyncio.Queue(maxsize=1); self._sequence=0; self._last_sent=0
+        self._latest=LatestFrameBuffer(); self._sequence=0; self._last_sent=0
         self._diag_lock=threading.Lock(); self._started=time.monotonic()
         self._session_ends=deque(maxlen=16)
         self._capture_error_events=deque(maxlen=8)
@@ -379,15 +381,13 @@ class PreviewBridge:
         return self._valid(client,generation) and current is not None and (fence is None or current==fence)
 
     def _discard_for_display(self):
-        while not self._latest.empty():
-            self._latest.get_nowait();self._drop('displayPausedDropped')
+        for _ in range(self._latest.discard()): self._drop('displayPausedDropped')
 
     def _invalidate(self):
         self._generation+=1; self._demand=False
         if self._active_send is not None and not self._active_send.done():
             self._active_send.cancel()
-        while not self._latest.empty():
-            self._latest.get_nowait(); self._drop('invalidatedDropped')
+        for _ in range(self._latest.discard()): self._drop('invalidatedDropped')
         self._update(demand=False,pausedForDisplay=False)
 
     async def _offload(self,work):
@@ -454,16 +454,9 @@ class PreviewBridge:
                 self._drop('invalidatedDropped'); return
             self._capture_failures=0; self._capture_retry_at=0
             self._update(status='capturing')
-            if sequence<=self._last_sent:
-                self._drop('outOfOrderDropped'); return
-            if not self._latest.empty():
-                queued_generation,queued=self._latest.get_nowait()
-                if queued_generation==generation and queued['sequence']>sequence:
-                    self._drop('outOfOrderDropped')
-                    self._latest.put_nowait((queued_generation,queued)); return
-                self._drop('supersededDropped' if queued_generation==generation else 'invalidatedDropped')
-            self._latest.put_nowait((generation,{'type':'frame','sequence':sequence,
-                                              'capturedAt':captured_at,'pixels':pixels,'_displayFence':fence}))
+            reason=self._latest.offer(generation,{'type':'frame','sequence':sequence,
+                'capturedAt':captured_at,'pixels':pixels,'_displayFence':fence},last_sent=self._last_sent)
+            if reason is not None: self._drop(reason)
         future.add_done_callback(complete)
         return True
 
@@ -608,16 +601,12 @@ class PreviewBridge:
         self._client=client; self._sequence=0; self._last_sent=0
         self._update(connected=True,status='idle',lastConnectedAtMs=round(time.time()*1000),
                      firstFrameSentAtMs=None,lastFrameSentAtMs=None,nextRetryDelayMs=None)
-        tasks=[asyncio.create_task(work) for work in (self._receive(ws,device_id),self._send(ws,client),
-                 self._capture(client,device_id),self._heartbeat(ws),self._permission(client),self._diagnose())]
-        try:
-            done,_=await asyncio.wait(tasks,return_when=asyncio.FIRST_COMPLETED)
-            for task in done: task.result()
-        finally:
+        def end_session():
             self._invalidate(); self._client=None; self._update(connected=False)
             self._count('disconnects')
-            for task in tasks: task.cancel()
-            await asyncio.gather(*tasks,return_exceptions=True)
+        await supervise_preview_session((self._receive(ws,device_id),self._send(ws,client),
+            self._capture(client,device_id),self._heartbeat(ws),self._permission(client),self._diagnose()),
+            invalidate=end_session)
 
     @staticmethod
     def _capability_error(error):

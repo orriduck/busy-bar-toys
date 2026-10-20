@@ -63,13 +63,14 @@ Do not unify their queues or retries.
 
 `Producer` remains the composition root and content-outbox implementation.
 Storage primitives (`State`) and content packaging are not gratuitously moved.
-Preview transport/rendering has not yet been refactored in this stage.
+A separate fourth stage extracts preview session task supervision and the
+lossy latest-frame handoff; see `../preview-lifecycle-boundaries.md`.
 
 ## Remaining work
 
-- Extract preview session supervision from frame rendering/capture only after
-  contracts cover permission revocation, generation invalidation and late frame
-  completion. Keep one-frame lossy buffering, separate from durable content.
+- The full preview bridge coordinator/reconnect classifier remains intact.
+  Any further extraction must preserve permission revocation, generation fences
+  and late-completion checks; the implemented one-frame buffer stays lossy.
 - Version business item renewal before making it concurrent with publishing.
   Current server heartbeat assigns item `validUntil`; an old delayed renewal
   could shorten a newer publish. Empty presence cannot do this.
