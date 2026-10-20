@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startEventStream } from "../ui/event-stream";
+import { startEventStream, startPageEventStream } from "../ui/event-stream";
 
 class FakeSource {
   readyState = 0;
@@ -65,7 +65,10 @@ function setup() {
   };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("snapshot EventSource recovery", () => {
   it("replaces a permanently CLOSED stream after a delay", () => {
@@ -79,13 +82,14 @@ describe("snapshot EventSource recovery", () => {
     stream.close();
   });
 
-  it("leaves CONNECTING recovery to EventSource without opening duplicate streams", () => {
+  it("closes CONNECTING native retry and owns exactly one recovery timer", () => {
     const { sources, stream } = setup();
     sources[0].error(0);
-    vi.advanceTimersByTime(60000);
-    expect(sources).toHaveLength(1);
-    expect(sources[0].close).not.toHaveBeenCalled();
-    sources[0].open();
+    expect(sources[0].close).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(1);
+    sources[0].error(0);
+    vi.advanceTimersByTime(1000);
+    expect(sources).toHaveLength(2);
     stream.close();
   });
 
@@ -103,15 +107,38 @@ describe("snapshot EventSource recovery", () => {
     stream.close();
   });
 
-  it.each(["open", "snapshot"] as const)("resets backoff after %s", (event) => {
+  it.each(["snapshot", "error"] as const)(
+    "resets backoff after useful stable progress at %s",
+    (event) => {
+      const { sources, stream } = setup();
+      sources[0].error();
+      vi.advanceTimersByTime(1000);
+      sources[1].open();
+      sources[1].snapshot();
+      vi.advanceTimersByTime(5000);
+      if (event === "snapshot") sources[1].snapshot();
+      sources[1].error();
+      vi.advanceTimersByTime(1000);
+      expect(sources).toHaveLength(3);
+      stream.close();
+    },
+  );
+
+  it("does not reset retry backoff for repeated short-lived successful handshakes", () => {
     const { sources, stream } = setup();
-    sources[0].error();
-    vi.advanceTimersByTime(1000);
-    sources[1][event]();
-    sources[1].error();
-    vi.advanceTimersByTime(1000);
-    expect(sources).toHaveLength(3);
+    for (const delay of [1000, 2000, 4000, 8000, 16000, 30000]) {
+      const count = sources.length;
+      sources.at(-1)!.open();
+      sources.at(-1)!.snapshot();
+      sources.at(-1)!.error(0);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(delay - 1);
+      expect(sources).toHaveLength(count);
+      vi.advanceTimersByTime(1);
+      expect(sources).toHaveLength(count + 1);
+    }
     stream.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("does not reset backoff for rejected snapshots", () => {
@@ -120,6 +147,7 @@ describe("snapshot EventSource recovery", () => {
     vi.advanceTimersByTime(1000);
     onSnapshot.mockReturnValue(false);
     sources[1].snapshot();
+    vi.advanceTimersByTime(5000);
     sources[1].error();
     vi.advanceTimersByTime(1999);
     expect(sources).toHaveLength(2);
@@ -175,7 +203,7 @@ describe("snapshot EventSource recovery", () => {
   });
 });
 
-it("recovers CLOSED preview transports and resets backoff on authenticated preview events", () => {
+it("recovers CLOSED preview transports and resets backoff after stable authenticated preview", () => {
   vi.useFakeTimers();
   const sources: FakeSource[] = [],
     status = vi.fn(() => true);
@@ -198,10 +226,65 @@ it("recovers CLOSED preview transports and resets backoff on authenticated previ
     vi.advanceTimersByTime(1000);
     expect(sources).toHaveLength(2);
     sources[1].emit("preview", "{}");
+    vi.advanceTimersByTime(5000);
     sources[1].error();
     vi.advanceTimersByTime(1000);
     expect(sources).toHaveLength(3);
   } finally {
     connection.close();
   }
+});
+
+it("owns one visible queue stream, cancels hidden recovery, and cleans up page lifecycle listeners", () => {
+  vi.useFakeTimers();
+  const page = Object.assign(new EventTarget(), { hidden: true }),
+    lifecycle = new EventTarget();
+  vi.stubGlobal("document", page);
+  vi.stubGlobal("window", lifecycle);
+  const sources: FakeSource[] = [],
+    onSnapshot = vi.fn(() => true);
+  const stream = startPageEventStream({
+    createSource: () => {
+      const s = new FakeSource();
+      sources.push(s);
+      return s;
+    },
+    isCurrent: () => true,
+    onOpen: vi.fn(),
+    onError: vi.fn(),
+    onSnapshot,
+  });
+  try {
+    expect(sources).toHaveLength(0);
+    page.hidden = false;
+    page.dispatchEvent(new Event("visibilitychange"));
+    page.dispatchEvent(new Event("visibilitychange"));
+    expect(sources).toHaveLength(1);
+    sources[0].error(0);
+    expect(vi.getTimerCount()).toBe(1);
+    page.hidden = true;
+    page.dispatchEvent(new Event("visibilitychange"));
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(30000);
+    expect(sources).toHaveLength(1);
+    page.hidden = false;
+    page.dispatchEvent(new Event("visibilitychange"));
+    expect(sources).toHaveLength(2);
+    sources[0].snapshot();
+    expect(onSnapshot).not.toHaveBeenCalled();
+    sources[1].snapshot();
+    expect(onSnapshot).toHaveBeenCalledOnce();
+    lifecycle.dispatchEvent(new Event("pagehide"));
+    expect(sources[1].close).toHaveBeenCalledOnce();
+    lifecycle.dispatchEvent(new Event("pageshow"));
+    lifecycle.dispatchEvent(new Event("pageshow"));
+    expect(sources).toHaveLength(3);
+  } finally {
+    stream.close();
+  }
+  lifecycle.dispatchEvent(new Event("pageshow"));
+  page.dispatchEvent(new Event("visibilitychange"));
+  expect(sources).toHaveLength(3);
+  expect(sources[2].close).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });

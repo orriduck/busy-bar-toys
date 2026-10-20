@@ -33,7 +33,7 @@ import type { Page } from "./pages";
 import { Preview } from "./preview";
 import type { PreviewStats } from "./preview";
 import { SessionFence, collectorSetupMode } from "./session";
-import { startEventStream } from "./event-stream";
+import { startEventStream, startPageEventStream } from "./event-stream";
 import { MotionPage } from "./motion";
 import "./style.css";
 import "./theme.css";
@@ -216,7 +216,9 @@ function App() {
     if (!session) return;
     const generation = fence.current.generation;
     void refresh();
-    const stream = startEventStream({
+    const stream = startPageEventStream({
+      onPause: () => setStream("Paused"),
+      onResume: () => setStream("Connecting"),
       createSource: () => new EventSource("/api/events"),
       isCurrent: () => fence.current.current(generation),
       onOpen: () => setStream("Live"),

@@ -12,7 +12,7 @@ type EventStreamOptions = {
   onError: () => void;
 };
 
-/** Own one authenticated named-event stream with bounded CLOSED recovery. */
+/** Own one authenticated named-event stream and one bounded recovery timer. */
 export function startEventStream(options: EventStreamOptions) {
   let source: EventStreamSource | null = null;
   let recovery: ReturnType<typeof setTimeout> | undefined;
@@ -29,26 +29,33 @@ export function startEventStream(options: EventStreamOptions) {
     source?.close();
     const events = options.createSource();
     source = events;
+    const startedAt = Date.now();
+    let useful = false;
     const active = () => current() && source === events;
     events.onopen = () => {
       if (!active()) return;
-      reset();
       options.onOpen();
     };
     events.addEventListener(options.eventName ?? "snapshot", (event) => {
       if (!active()) return;
-      if (options.onSnapshot((event as MessageEvent<string>).data)) reset();
+      if (options.onSnapshot((event as MessageEvent<string>).data)) {
+        useful = true;
+        if (Date.now() - startedAt >= 5000) reset();
+      }
     });
     events.onerror = () => {
       if (!active()) return;
+      if (useful && Date.now() - startedAt >= 5000) reset();
       options.onError();
-      // CONNECTING already has the browser's native retry. HTTP rejection can
-      // leave CLOSED permanently, so only that state needs an explicit retry.
-      if (!active() || events.readyState !== 2 || recovery !== undefined)
-        return;
+      if (!active()) return;
+      // Own CONNECTING and CLOSED recovery alike: native retries otherwise
+      // bypass our backoff and race explicit recovery after capacity rejection.
+      events.close();
+      source = null;
+      if (recovery !== undefined) return;
       recovery = setTimeout(() => {
         recovery = undefined;
-        if (active() && events.readyState === 2) connect();
+        if (current() && source === null) connect();
       }, delay);
       delay = Math.min(delay * 2, 30000);
     };
@@ -60,6 +67,51 @@ export function startEventStream(options: EventStreamOptions) {
       reset();
       source?.close();
       source = null;
+    },
+  };
+}
+
+/** Queue pages release their stream while hidden, including pending recovery. */
+export function startPageEventStream(
+  options: EventStreamOptions & { onPause?: () => void; onResume?: () => void },
+) {
+  let connection: ReturnType<typeof startEventStream> | null = null;
+  let disposed = false,
+    pageActive = true;
+  const current = () =>
+    !disposed && pageActive && !document.hidden && options.isCurrent();
+  const sync = () => {
+    if (current()) {
+      if (!connection) {
+        options.onResume?.();
+        connection = startEventStream({ ...options, isCurrent: current });
+      }
+    } else if (connection) {
+      connection.close();
+      connection = null;
+      options.onPause?.();
+    }
+  };
+  const leave = () => {
+    pageActive = false;
+    sync();
+  };
+  const restore = () => {
+    pageActive = true;
+    sync();
+  };
+  document.addEventListener("visibilitychange", sync);
+  window.addEventListener("pagehide", leave);
+  window.addEventListener("pageshow", restore);
+  sync();
+  return {
+    close() {
+      disposed = true;
+      connection?.close();
+      connection = null;
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", restore);
     },
   };
 }

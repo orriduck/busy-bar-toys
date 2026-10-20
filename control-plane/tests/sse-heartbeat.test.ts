@@ -15,6 +15,78 @@ async function fixture() {
 }
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+it("coalesces snapshot bursts without closing a temporarily full stream or buffering old revisions", async () => {
+  const { stub, auth } = await fixture();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      response = await instance.handle(auth, "/api/events", "GET"),
+      reader = response.body!.getReader();
+    const internals = instance as unknown as {
+      broadcast: (s: NonNullable<ReturnType<StateStore["load"]>>) => void;
+      snapshotStreamHealth: () => {
+        active: number;
+        pending: number;
+        coalesced: number;
+        closed: Record<string, number>;
+      };
+    };
+    try {
+      const initial = store.load()!,
+        state = { ...initial };
+      for (let n = 1; n <= 50; n++) {
+        state.revision = initial.revision + n;
+        store.save(state);
+        internals.broadcast(state);
+      }
+      expect(internals.snapshotStreamHealth()).toMatchObject({
+        active: 1,
+        pending: 1,
+        coalesced: 50,
+        closed: { backpressure: 0 },
+      });
+      const parse = (raw: Uint8Array | undefined) =>
+        JSON.parse(new TextDecoder().decode(raw).split("\ndata: ")[1]);
+      expect(parse((await reader.read()).value).revision).toBe(
+        initial.revision,
+      );
+      const latest = await reader.read();
+      expect(latest.done).toBe(false);
+      expect(parse(latest.value).revision).toBe(initial.revision + 50);
+      expect(internals.snapshotStreamHealth()).toMatchObject({
+        active: 1,
+        pending: 0,
+      });
+    } finally {
+      await reader.cancel();
+    }
+    expect(internals.snapshotStreamHealth()).toMatchObject({
+      active: 0,
+      closed: { cancelled: 1 },
+    });
+  });
+});
+
+it("does not flush a pending snapshot after authority is revoked", async () => {
+  const { stub, auth } = await fixture();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      response = await instance.handle(auth, "/api/events", "GET"),
+      reader = response.body!.getReader();
+    const state = store.load()!;
+    (instance as unknown as { broadcast: (s: typeof state) => void }).broadcast(
+      state,
+    );
+    delete state.sessions[auth.id];
+    store.save(state);
+    try {
+      await reader.read();
+      expect((await reader.read()).done).toBe(true);
+    } finally {
+      await reader.cancel();
+    }
+  });
+});
+
 it("sends bounded idle comments before the Python transport's five-second read timeout", async () => {
   const { stub, auth } = await fixture();
   await runInDurableObject(stub, async (instance) => {
@@ -51,6 +123,22 @@ it("reclaims abandoned idle stream capacity at the heartbeat without raising the
       const full = await instance.handle(auth, "/api/events", "GET");
       expect(full.status).toBe(429);
       expect(await full.json()).toEqual({ error: "SSE_CAPACITY" });
+      const diagnostics = await instance.handle(
+        auth,
+        "/api/diagnostics/display",
+        "GET",
+      );
+      expect(
+        ((await diagnostics.json()) as { snapshotStreams: unknown })
+          .snapshotStreams,
+      ).toMatchObject({
+        active: 16,
+        limit: 16,
+        activeByKind: { session: 16, computer: 0, publisher: 0 },
+        opened: 16,
+        capacityRejected: 1,
+        serviceConnectionCounts: [],
+      });
       await delay(2200);
       const reclaimed = await instance.handle(auth, "/api/events", "GET");
       expect(reclaimed.status).toBe(200);

@@ -124,6 +124,12 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
   private motionClock = new ServiceMotionClock();
   private motionFenceWait = motionFenceTimer;
   private lastBroadcastRevision: number | null = null;
+  private streamStats = {
+    opened: 0,
+    capacityRejected: 0,
+    coalesced: 0,
+    closed: { cancelled: 0, lifetime: 0, backpressure: 0, authority: 0 },
+  };
   private streams = new Map<
     string,
     {
@@ -131,6 +137,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       controller: ReadableStreamDefaultController<Uint8Array>;
       timer: ReturnType<typeof setTimeout>;
       heartbeat: ReturnType<typeof setInterval>;
+      dirty: boolean;
+      openedAt: number;
     }
   >();
   constructor(ctx: DurableObjectState, env: RuntimeEnv) {
@@ -692,6 +700,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         );
         response = json({
           implementation: "shared-service-motion-v2-prepared",
+          snapshotStreams: this.snapshotStreamHealth(),
           generation: s.generation,
           nativeElements: Object.keys(s.nativeElements).length,
           earliestExpiryMs: Object.keys(s.nativeElements).length
@@ -1100,12 +1109,13 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     }
   }
   private openStream(s: State, auth: Auth) {
+    if (this.streams.size >= 16) this.streamStats.capacityRejected++;
     requireThat(this.streams.size < 16, "SSE_CAPACITY", 429);
     const id = crypto.randomUUID();
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         const timer = setTimeout(
-          () => this.closeStream(id),
+          () => this.closeStream(id, "lifetime"),
           Math.min(
             55000,
             auth.kind === "session" ? auth.expiresAt - Date.now() : 55000,
@@ -1116,36 +1126,95 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             const current = this.load();
             requireThat(current, "UNAUTHORIZED", 401);
             this.authorize(current, auth);
-            requireThat((controller.desiredSize ?? 0) > 0, "SLOW_CONSUMER");
+            if ((controller.desiredSize ?? 0) <= 0) {
+              this.closeStream(id, "backpressure");
+              return;
+            }
+            if (this.streams.get(id)?.dirty) {
+              this.flushSnapshotStream(id);
+              return;
+            }
             // Keep the producer's five-second socket read alive without
             // inventing a revision or repeating its full snapshot.
             controller.enqueue(new TextEncoder().encode(": heartbeat\n\n"));
           } catch {
-            this.closeStream(id);
+            this.closeStream(id, "authority");
           }
         }, 2000);
-        this.streams.set(id, { auth, controller, timer, heartbeat });
+        this.streams.set(id, {
+          auth,
+          controller,
+          timer,
+          heartbeat,
+          dirty: false,
+          openedAt: Date.now(),
+        });
+        this.streamStats.opened++;
         controller.enqueue(this.frame(s, auth));
       },
+      pull: () => this.flushSnapshotStream(id),
       cancel: () => this.closeStream(id),
     });
     return new Response(stream, {
       headers: {
         ...headers,
         "Content-Type": "text/event-stream",
+        "Cache-Control": "no-store, no-transform",
         Connection: "keep-alive",
       },
     });
   }
-  private closeStream(id: string) {
+  private closeStream(
+    id: string,
+    reason: keyof typeof this.streamStats.closed = "cancelled",
+  ) {
     const entry = this.streams.get(id);
     if (!entry) return;
     this.streams.delete(id);
+    this.streamStats.closed[reason]++;
     clearTimeout(entry.timer);
     clearInterval(entry.heartbeat);
     try {
       entry.controller.close();
     } catch {}
+  }
+  private snapshotStreamHealth() {
+    const activeByKind = { session: 0, computer: 0, publisher: 0 };
+    let pending = 0,
+      oldestAgeMs = 0;
+    const services = new Map<string, number>();
+    for (const entry of this.streams.values()) {
+      activeByKind[entry.auth.kind]++;
+      pending += Number(entry.dirty);
+      oldestAgeMs = Math.max(oldestAgeMs, Date.now() - entry.openedAt);
+      if (entry.auth.kind !== "session" && entry.auth.serviceId) {
+        const key = entry.auth.serviceId;
+        services.set(key, (services.get(key) ?? 0) + 1);
+      }
+    }
+    return {
+      active: this.streams.size,
+      limit: 16,
+      activeByKind,
+      pending,
+      oldestAgeMs,
+      serviceConnectionCounts: [...services.values()].sort((a, b) => b - a),
+      ...this.streamStats,
+    };
+  }
+  private flushSnapshotStream(id: string) {
+    const entry = this.streams.get(id);
+    if (!entry?.dirty || (entry.controller.desiredSize ?? 0) <= 0) return;
+    try {
+      const current = this.load();
+      requireThat(current, "UNAUTHORIZED", 401);
+      // Serialize only the newest state when the consumer has room. Never
+      // accumulate serialized snapshots or keep an obsolete pending version.
+      entry.controller.enqueue(this.frame(current, entry.auth));
+      entry.dirty = false;
+    } catch {
+      this.closeStream(id, "authority");
+    }
   }
   private frame(s: State, auth: Auth) {
     const serviceId = this.authorize(s, auth);
@@ -1163,10 +1232,16 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
   private broadcast(s: State) {
     for (const [id, entry] of this.streams) {
       try {
-        requireThat((entry.controller.desiredSize ?? 0) > 0, "SLOW_CONSUMER");
+        this.authorize(s, entry.auth);
+        if ((entry.controller.desiredSize ?? 0) <= 0) {
+          entry.dirty = true;
+          this.streamStats.coalesced++;
+          continue;
+        }
+        entry.dirty = false;
         entry.controller.enqueue(this.frame(s, entry.auth));
       } catch {
-        this.closeStream(id);
+        this.closeStream(id, "authority");
       }
     }
   }
