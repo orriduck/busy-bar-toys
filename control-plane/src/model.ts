@@ -176,6 +176,7 @@ export interface Asset {
 export interface Slot {
   slot: number;
   hash: string;
+  /** Immutable filename suffix, not necessarily the current asset format. */
   type: string;
   bytes: number;
   uploaded: boolean;

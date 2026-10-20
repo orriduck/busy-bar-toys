@@ -9,6 +9,8 @@ import {
 } from "../src/security";
 import { cacheAsset, reserveSlots } from "../src/assets";
 import { createState, ProtocolError } from "../src/model";
+import { nativeBlackHoldAsset } from "../src/prepared-handoff";
+import { base64 } from "../src/security";
 it("rejects arbitrary paths, methods, encodings, parameters and namespace escapes", () => {
   for (const [method, path] of [
     ["GET", "/wifi/status"],
@@ -135,6 +137,80 @@ it("global slots never create extra filenames through extension changes", () => 
     usedAt: 1,
   };
   expect(() => reserveSlots(s, [hash], new Set(), 2)).toThrow("SLOT_CAPACITY");
+});
+
+it("reuses a released PNG filename for original bicycle0 bytes without changing pinned files or growing the namespace", async () => {
+  const s = createState("reuse-native");
+  s.slots = Array.from({ length: 16 }, (_, slot) => ({
+    slot,
+    hash: String(slot),
+    type: "png",
+    bytes: 1,
+    uploaded: true,
+  }));
+  const raw = nativeBlackHoldAsset(72, 16),
+    hash = await digest(raw);
+  await cacheAsset(s, "a", { hash, type: "anim", data: base64(raw) }, 1);
+  const before = structuredClone(s.slots),
+    pins = new Set(Array.from({ length: 15 }, (_, i) => i));
+  const [slot] = reserveSlots(s, [hash], pins, 2);
+  expect(slot).toMatchObject({ slot: 15, type: "png", hash, uploaded: false });
+  expect(s.slots.filter((v) => pins.has(v.slot))).toEqual(before.slice(0, 15));
+  expect(s.slots.map((v) => `${v.slot}.${v.type}`).sort()).toEqual(
+    before.map((v) => `${v.slot}.${v.type}`).sort(),
+  );
+  expect(s.assets[hash].data).toBe(base64(raw));
+  expect(() =>
+    reserveSlots(s, [hash], new Set(before.map((v) => v.slot)), 3),
+  ).not.toThrow();
+});
+
+it("reserves suffix-dependent images before flexible native animations", async () => {
+  const s = createState("image-first");
+  s.slots = Array.from({ length: 16 }, (_, slot) => ({
+    slot,
+    hash: String(slot),
+    type: slot === 0 ? "png" : "gif",
+    bytes: 1,
+    uploaded: true,
+  }));
+  const raw = nativeBlackHoldAsset(72, 16),
+    anim = await digest(raw),
+    png = await digest("png");
+  await cacheAsset(s, "a", { hash: anim, type: "anim", data: base64(raw) }, 1);
+  await cacheAsset(s, "a", { hash: png, type: "png", data: btoa("png") }, 1);
+  const pins = new Set(Array.from({ length: 14 }, (_, i) => i + 2));
+  const slots = reserveSlots(s, [anim, png], pins, 2);
+  expect(slots.find((v) => v.hash === png)).toMatchObject({
+    slot: 0,
+    type: "png",
+  });
+  expect(slots.find((v) => v.hash === anim)).toMatchObject({
+    slot: 1,
+    type: "gif",
+  });
+  expect(s.slots).toHaveLength(16);
+});
+
+it("cross-format filename reuse still refuses pinned files and the two-MiB budget", async () => {
+  const s = createState("reuse-bounds");
+  s.slots = Array.from({ length: 16 }, (_, slot) => ({
+    slot,
+    hash: String(slot),
+    type: "png",
+    bytes: 131072,
+    uploaded: true,
+  }));
+  const raw = nativeBlackHoldAsset(160, 80),
+    hash = await digest(raw);
+  await cacheAsset(s, "a", { hash, type: "anim", data: base64(raw) }, 1);
+  expect(() =>
+    reserveSlots(s, [hash], new Set(s.slots.map((v) => v.slot)), 2),
+  ).toThrow("SLOT_CAPACITY");
+  s.assets[hash].bytes = 262144;
+  expect(() => reserveSlots(s, [hash], new Set(), 2)).toThrow(
+    "SLOT_BYTES_CAPACITY",
+  );
 });
 
 it("bootstraps a fresh namespace once and waits for the final scoped clear ACK", async () => {

@@ -317,7 +317,7 @@ describe("native device fade assets", () => {
     );
   });
 
-  it("reuses only historical unpinned animation slots without fragmenting PNG-only history", () => {
+  it("reuses historical unpinned filenames without creating alternate extensions", () => {
     const state = createState("native-fade");
     expect(reuseNativeMotionSlots(state, new Set())).toBe(false);
     expect(state.slots).toEqual([]);
@@ -329,11 +329,24 @@ describe("native device fade assets", () => {
       uploaded: true,
     }));
     const previous = structuredClone(state.slots);
-    expect(reuseNativeMotionSlots(state, new Set())).toBe(false);
+    expect(
+      reuseNativeMotionSlots(
+        state,
+        new Set(Array.from({ length: 15 }, (_, i) => i)),
+      ),
+    ).toBe(false);
     expect(state.slots).toEqual(previous);
+    expect(reuseNativeMotionSlots(state, new Set())).toBe(true);
+    expect(state.slots.every((slot) => slot.type === "png")).toBe(true);
+    state.slots = previous;
     state.slots[3].type = "anim";
     state.slots[4].type = "anim";
-    expect(reuseNativeMotionSlots(state, new Set([3]))).toBe(false);
+    expect(
+      reuseNativeMotionSlots(
+        state,
+        new Set(Array.from({ length: 16 }, (_, i) => i).filter((i) => i !== 4)),
+      ),
+    ).toBe(false);
     expect(reuseNativeMotionSlots(state, new Set())).toBe(true);
     expect(state.slots).toHaveLength(16);
     expect(

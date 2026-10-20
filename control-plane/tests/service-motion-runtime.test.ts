@@ -248,8 +248,7 @@ async function fixture() {
     );
   await publish("old");
   await wait((s) => !!s.displaying);
-  // Historical unused animation slots are safe to reuse. The compositor must
-  // not allocate new file types merely to animate a pure-PNG device.
+  // Historical filenames can be reused without creating alternate extensions.
   await mutate((s) => {
     s.slots = [0, 1].map((slot) => ({
       slot,
@@ -984,8 +983,9 @@ async function preparedFixture() {
           ),
         ),
     );
-  const finish = async () => {
-    await committed();
+  const finish = async (requireMasks = true) => {
+    if (requireMasks) await committed();
+    else await f.wait((s) => s.nativeElements["prepared-text"] !== undefined);
     for (let n = 0; n < 10; n++) {
       const state = await f.state();
       if (state.displaying && !state.commands.length) return state;
@@ -1023,6 +1023,61 @@ async function fragmentedLegacyScene(
 }
 
 describe("prepared single native commit", () => {
+  it("commits a full animated scene through released PNG filenames while keeping the old view through preload", async () => {
+    const f = await preparedFixture();
+    await fragmentedLegacyScene(f);
+    await f.mutate((s) => {
+      for (const slot of s.slots)
+        s.assets[slot.hash] = {
+          hash: slot.hash,
+          type: "png",
+          bytes: 1,
+          data: btoa("x"),
+          owners: ["normal"],
+          usedAt: Date.now(),
+        };
+      for (let n = 8; n < 16; n++) {
+        delete s.nativeElements["legacy-" + n];
+        delete s.elementExpiries["legacy-" + n];
+        native.delete("legacy-" + n);
+      }
+    });
+    const upstream = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    const uploaded: string[] = [];
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname.endsWith("/assets/upload")) {
+        expect(native.get("old-text")?.text).toBe("old");
+        for (let n = 0; n < 8; n++)
+          expect(native.has("legacy-" + n)).toBe(true);
+        expect(url.searchParams.get("file")).toMatch(/^slot-\d+\.png$/);
+        const raw = new Uint8Array(await request.clone().arrayBuffer());
+        expect(new TextDecoder().decode(raw.subarray(0, 8))).toBe("bicycle0");
+        uploaded.push(await digest(raw));
+      }
+      return upstream(request);
+    });
+    await f.publishPrepared("reuse-png");
+    const finished = await f.finish();
+    expect(new Set(uploaded)).toEqual(
+      new Set([...f.assets, ...preparedBlackAssets().map((a) => a.hash)]),
+    );
+    expect(finished.health.status).toBe("healthy");
+    expect(finished.displaying?.generation).toBe(finished.generation);
+    expect(finished.slots).toHaveLength(16);
+    expect(finished.slots.every((slot) => slot.type === "png")).toBe(true);
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "command_ack" &&
+          e.data.filenameType === "png" &&
+          e.data.assetType === "anim",
+      ),
+    ).toBe(true);
+  });
+
   it("keeps native inventory and pins until orphan recovery clear acknowledges", async () => {
     const f = await preparedFixture();
     await fragmentedLegacyScene(f, 100);
@@ -1064,36 +1119,33 @@ describe("prepared single native commit", () => {
       expect(pending.slots).toEqual(slots);
       expect(pending.displaying).toBeNull();
       release();
-      await f.wait(
-        (s) =>
-          s.health.status === "blocked" &&
-          !Object.keys(s.nativeElements).length,
-      );
+      await f.finish(false);
     } finally {
       release();
     }
   });
 
-  it("returns a cancelled opaque legacy mask to the device default while typed capacity stays blocked", async () => {
+  it("clears a cancelled opaque legacy mask before reusing released PNG filenames for the incoming scene", async () => {
     const f = await preparedFixture();
     await fragmentedLegacyScene(f, 100);
     const before = calls.length,
       calendars = calendar,
       slots = structuredClone((await f.state()).slots);
     await f.publishPrepared("blocked");
-    const blocked = await f.wait(
-      (s) =>
-        s.health.status === "blocked" && !Object.keys(s.nativeElements).length,
-    );
-    expect(calls.slice(before).map((c) => c.method)).toEqual(["DELETE"]);
-    expect(calls.at(-1)!.body).toBeUndefined();
+    const finished = await f.finish(false);
+    const writes = calls.slice(before);
+    expect(writes[0].method).toBe("DELETE");
+    expect(writes[0].body).toBeUndefined();
+    expect(
+      writes.findIndex((c) => c.path.endsWith("/assets/upload")),
+    ).toBeGreaterThan(0);
     expect(calendar).toBe(calendars + 1);
-    expect(native.size).toBe(0);
-    expect(blocked.slots).toEqual(slots);
-    expect(blocked.items[blocked.selected!].itemId).toBe("blocked");
-    expect(blocked.items[blocked.selected!].state).toBe("applying");
-    expect(blocked.displaying).toBeNull();
-    expect(blocked.health.confirmedValidUntil).toBe(0);
+    expect(
+      finished.slots.map((slot) => `${slot.slot}.${slot.type}`).sort(),
+    ).toEqual(slots.map((slot) => `${slot.slot}.${slot.type}`).sort());
+    expect(finished.items[finished.selected!].itemId).toBe("blocked");
+    expect(finished.displaying?.generation).toBe(finished.generation);
+    expect(finished.health.status).toBe("healthy");
     expect(
       (await f.diagnostics()).events.some(
         (e) =>
@@ -1166,15 +1218,11 @@ describe("prepared single native commit", () => {
         true,
       );
       release();
-      const blocked = await f.wait(
-        (s) =>
-          s.health.status === "blocked" &&
-          !Object.keys(s.nativeElements).length,
-      );
-      expect(native.size).toBe(0);
-      expect(blocked.items[blocked.selected!].itemId).toBe("blocked");
-      expect(blocked.displaying).toBeNull();
-      expect(calls.at(-1)!.method).toBe("DELETE");
+      const finished = await f.finish(false);
+      expect(finished.items[finished.selected!].itemId).toBe("blocked");
+      expect(finished.displaying?.generation).toBe(finished.generation);
+      expect(finished.health.status).toBe("healthy");
+      expect(calls.some((c) => c.method === "DELETE" && !c.body)).toBe(true);
       expect(
         (await f.diagnostics()).events.some(
           (e) =>
