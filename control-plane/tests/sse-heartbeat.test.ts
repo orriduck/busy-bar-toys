@@ -15,6 +15,54 @@ async function fixture() {
 }
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+it("does not confuse a fresh queued snapshot with a two-second stalled consumer", async () => {
+  const { stub, auth } = await fixture();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const base = Date.now();
+    let now = base;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now),
+      intervals = vi.spyOn(globalThis, "setInterval");
+    const response = await instance.handle(auth, "/api/events", "GET"),
+      reader = response.body!.getReader();
+    const inner = instance as unknown as {
+      broadcast: (s: NonNullable<ReturnType<StateStore["load"]>>) => void;
+      snapshotStreamHealth: () => unknown;
+    };
+    try {
+      await reader.read();
+      await Promise.resolve();
+      const pulse = intervals.mock.calls.find(
+        ([, ms]) => ms === 2000,
+      )![0] as () => void;
+      now = base + 1999;
+      inner.broadcast(new StateStore(ctx.storage).load()!);
+      now = base + 2000;
+      pulse();
+      expect(inner.snapshotStreamHealth()).toMatchObject({
+        active: 1,
+        oldestBackpressureAgeMs: 1,
+        closed: { backpressure: 0 },
+      });
+      now = base + 3998;
+      pulse();
+      expect(inner.snapshotStreamHealth()).toMatchObject({
+        active: 1,
+        closed: { backpressure: 0 },
+      });
+      now = base + 3999;
+      pulse();
+      expect(inner.snapshotStreamHealth()).toMatchObject({
+        active: 0,
+        closed: { backpressure: 1 },
+      });
+    } finally {
+      await reader.cancel();
+      clock.mockRestore();
+      intervals.mockRestore();
+    }
+  });
+});
+
 it("coalesces snapshot bursts without closing a temporarily full stream or buffering old revisions", async () => {
   const { stub, auth } = await fixture();
   await runInDurableObject(stub, async (instance, ctx) => {
@@ -204,7 +252,15 @@ it.each(["cancel", "expiry", "revocation", "backpressure"] as const)(
             delete state.sessions[auth.id];
             store.save(state);
           }
-          (intervals.mock.calls[heartbeatIndex][0] as () => void)();
+          const clock =
+            reason === "backpressure"
+              ? vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2001)
+              : null;
+          try {
+            (intervals.mock.calls[heartbeatIndex][0] as () => void)();
+          } finally {
+            clock?.mockRestore();
+          }
         }
         expect(clearLifetime).toHaveBeenCalledWith(
           timeouts.mock.results[lifetimeIndex].value,
