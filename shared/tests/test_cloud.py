@@ -9,6 +9,52 @@ from busybar_shared import cloud
 
 
 class CloudTest(unittest.TestCase):
+    def test_state_exact_byte_limit_round_trip_and_overflow_preserve_prior_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=cloud.State(Path(directory)/'state.json')
+            state.data['sample']=['a','b','non-ascii-\u00e9']
+            raw=json.dumps(state.data,separators=(',',':'),allow_nan=False).encode()
+            with patch.object(cloud,'LOCAL_STATE_BYTES',len(raw)):
+                state.save()
+                self.assertEqual(state.path.read_bytes(),raw)
+                self.assertEqual(cloud.State(state.path).data,state.data)
+                self.assertEqual(state.path.stat().st_mode&0o777,0o600)
+                state.data['sample'].append('overflow')
+                with self.assertRaisesRegex(cloud.CloudError,'local_state_capacity'):state.save()
+                self.assertEqual(state.path.read_bytes(),raw)
+
+    def test_failed_state_fsync_keeps_durable_file_and_removes_temporary_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=cloud.State(Path(directory)/'state.json');state.save()
+            before=state.path.read_bytes();state.data['new']='not durable'
+            with patch.object(cloud.os,'fsync',side_effect=OSError('fixture')):
+                with self.assertRaises(OSError):state.save()
+            self.assertEqual(state.path.read_bytes(),before)
+            self.assertEqual([p.name for p in Path(directory).iterdir()],['state.json'])
+
+    def test_indexed_tombstone_checks_replaced_occurrences_and_preserves_duplicates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=cloud.State(Path(directory)/'state.json',clock=lambda:100)
+            old=state.recognize('source',kind='condition',level='urgent',title='Old',detail='',scene={})
+            state.clear('source')
+            new=state.recognize('source',kind='condition',level='urgent',title='New',detail='',scene={})
+            self.assertFalse(state.tombstone(old['itemId'],'expired',record_keys=['source']))
+            self.assertNotIn('tombstone',state.records['source'])
+            self.assertEqual(state.records['source']['itemId'],new['itemId'])
+            state.records['duplicate']=state.records['source'].copy()
+            state.save(); durable_before=state.path.read_bytes()
+            records_before=json.loads(json.dumps(state.records))
+            with patch.object(state,'save',side_effect=OSError('fixture')):
+                with self.assertRaises(OSError):
+                    state.tombstone(new['itemId'],'expired',record_keys=['source','duplicate'])
+            self.assertEqual(state.records,records_before)
+            self.assertEqual(state.path.read_bytes(),durable_before)
+            self.assertTrue(state.tombstone(new['itemId'],'expired',record_keys=['source','duplicate']))
+            for key in ('source','duplicate'):
+                self.assertEqual(state.records[key]['tombstone'],'expired')
+                self.assertTrue(state.records[key]['fallbackPending'])
+            self.assertEqual(cloud.State(state.path).records,state.records)
+
     def test_url_and_scoped_setup_metadata(self):
         for bad in ('http://example.com', 'https://u:p@host', 'https://host/?x=1', 'https://host/#x', 'https://host/path'):
             with self.assertRaises(ValueError): cloud.base_url(bad)
@@ -465,6 +511,26 @@ class CloudTest(unittest.TestCase):
             self.assertLess(dumps.call_count,count*3,'history must not serialize every record per receipt')
             self.assertNotIn('tombstone',producer.state.records['live'])
             self.assertEqual(callbacks,[],'repeated receipts must retain existing no-op semantics')
+
+    def test_receipt_history_does_not_scan_all_records_again_for_each_receipt(self):
+        class CountedRecords(dict):
+            visited=0
+            def values(self):
+                for value in super().values():
+                    self.visited+=1
+                    yield value
+        with tempfile.TemporaryDirectory() as directory:
+            producer=cloud.Producer(directory,{'role':'notifier','serviceId':'n','instanceId':'m','epoch':'e'},object(),clock=lambda:100,notify=lambda *args:None)
+            count=1000
+            records=CountedRecords({str(n):{'itemId':str(n),'version':2,'acked':2,'level':'info','kind':'event','firstRecognizedAt':1,'lastSourceAt':1,'tombstone':'expired','fallbackPending':False}for n in range(count)})
+            records['duplicate-zero']={**records['0'],'acked':0}
+            producer.state.records=producer.state.data['records']=records
+            receipts=[{'itemKey':json.dumps(['n','m',str(n)],separators=(',',':')),'reason':'expired'}for n in range(count)]
+            callbacks=[];producer.on_tombstone=lambda *args:callbacks.append(args)
+            producer.accept({'protocol':1,'revision':1,'services':[{'id':'n'}],'items':[],'tombstones':receipts})
+            self.assertLessEqual(records.visited,count*2,'one receipt index must not trigger a full history scan per receipt')
+            self.assertEqual(records['duplicate-zero']['acked'],2)
+            self.assertEqual(callbacks,[('0','expired')])
 
     def test_bounded_sse_full_snapshot(self):
         raw=[b'event: snapshot\n',b'data: {"revision":1}\n',b'\n']
