@@ -26,7 +26,7 @@ only the unambiguous local-producer/BTC boundary.
 | Component | Owns | Does not own |
 | --- | --- | --- |
 | Content uplink (`Producer.flush`) | Ordered durable outbox, immutable retry payload, occurrence/version, business acknowledgement | Snapshot polling/reconnect policy |
-| Service state owner (`Producer.accept`, `State`) | Revision order, tombstones, admission evidence, persistent occurrences and acknowledgements | Socket lifetime or retry timer |
+| Service state owner (`ServiceQueue`, durable `State`) | Revision order, tombstones, admission evidence, persistent occurrences and acknowledgements | Socket lifetime or retry timer |
 | Lifecycle (`PeriodicChannel`, `SnapshotStreamChannel`) | Per-channel retry budget, stop behavior, terminal-error handling | Queue, occurrence, ack, persistence, frame cache |
 | Presence lane | Empty `itemIds=[]` check-ins | Item renewal, queue reconciliation, callbacks |
 | Preview bridge (unchanged) | Demand, stream/generation fence, one latest frame, capture safety | Durable delivery of frames or business acknowledgement |
@@ -53,15 +53,20 @@ Do not unify their queues or retries.
    is serialized by its owner; expired frozen-body version recovery requires
    fresh authoritative absence and a still-live occurrence.
 
-The `Producer` remains the composition root and business state owner. These
-steps do **not** claim that all queue implementation has moved into its own
-module, or that preview transport/rendering has already been refactored.
+4. Extract `ServiceQueue` as the service-state owner. It accepts snapshots,
+   exposes detached views, owns freshness and serial reconciliation, processes
+   tombstones/admission callbacks, gates expired-body recovery and advances
+   explicit business acknowledgements. It has no HTTP/socket/retry dependency.
+   The same durable `State` object and schema are retained. `Producer` keeps
+   compatibility properties for existing adapters and composes the queue with
+   transport; it no longer implements queue reconciliation.
+
+`Producer` remains the composition root and content-outbox implementation.
+Storage primitives (`State`) and content packaging are not gratuitously moved.
+Preview transport/rendering has not yet been refactored in this stage.
 
 ## Remaining work
 
-- Extract a dedicated ServiceQueue interface from the existing state owner,
-  without changing schema or lifecycle behavior. Preserve durable queue/ack on
-  process restart, disconnect, duplicate snapshots and cancellation.
 - Extract preview session supervision from frame rendering/capture only after
   contracts cover permission revocation, generation invalidation and late frame
   completion. Keep one-frame lossy buffering, separate from durable content.
