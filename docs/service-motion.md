@@ -57,7 +57,27 @@ The controller returns only its own namespace to the device default while the
 incoming occurrence remains pending and unconfirmed. Already-transparent legacy
 masks retire selectively, preserving the old visible content. Native inventory
 and pins change only after the retirement ACK. This does not delete asset files
-or bypass their16-file/type constraints; a scene can still remain capacity-blocked.
+or bypass their16-file/byte/pin constraints; a scene can still remain capacity-blocked when all compatible files are live.
+
+### Reuse filenames without changing motion
+
+The16-file/two-MiB limit is this application's resource budget. A slot's stored
+`type` is its immutable filename suffix, independently of current content format.
+Firmware1.2.4 opens native animations by the bicycle0 header, not their suffix.
+The controller can therefore overwrite an **unpinned** `slot-N.png` (or another
+already allowed suffix) with the original native animation bytes and draw it as
+an animation under that same filename. No new filename, endpoint, file deletion,
+transcoding, changed FPS, altered frame duration or dropped motion is involved.
+Static image requests still reserve suffix-compatible filenames first. Native
+motion masks prefer existing anim filenames, then other unpinned filenames.
+All live view/selected scene/command pins and the byte budget still apply.
+Invalid or unsupported native headers cannot use cross-suffix reuse. Upload ACK
+metadata reports only `filenameType` and `assetType` for verification, never
+hashes or content.
+
+Firmware evidence: [header-based opening](https://github.com/busy-app/busybar-firmware/blob/1.2.4/lib/anim_file/anim_file.c),
+[header validation](https://github.com/busy-app/busybar-firmware/blob/1.2.4/lib/anim_file/components/anim_file_load.c),
+and [raw asset upload](https://github.com/busy-app/busybar-firmware/blob/1.2.4/applications/services/web_server/http_api/api_assets.c).
 
 The diagnostics implementation is `shared-service-motion-v2-prepared`.
 `prepared_handoff` records the commit preparation boundary and pending upload

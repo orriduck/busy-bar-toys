@@ -185,6 +185,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       pendingUploads?: number;
       requestMs?: number;
       preRequestMs?: number;
+      filenameType?: string;
+      assetType?: string;
       cachedAssets?: number;
       cachedAssetBytes?: number;
       missingMotionAssets?: number;
@@ -2345,6 +2347,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
             requestMs,
             preRequestMs,
             stage,
+            ...(cmd.kind === "upload"
+              ? {
+                  filenameType: live.slots.find(
+                    (slot) => slot.slot === cmd.slot && slot.hash === cmd.hash,
+                  )?.type,
+                  assetType: cmd.hash ? live.assets[cmd.hash]?.type : undefined,
+                }
+              : {}),
             elementCount:
               cmd.elements?.length ?? cmd.elementIds?.length ?? null,
           });

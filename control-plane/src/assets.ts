@@ -1,5 +1,24 @@
 import { State, Slot, requireThat, text } from "./model";
 import { digest, unbase64 } from "./security";
+
+/** Firmware 1.2.4 opens bicycle0 by signature, independently of filename suffix. */
+export function isNativeAnimation(asset: State["assets"][string]) {
+  if (asset.type !== "anim") return false;
+  const data = unbase64(asset.data);
+  if (data.length < 36) return false;
+  const header = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return (
+    new TextDecoder().decode(data.subarray(0, 8)) === "bicycle0" &&
+    data[8] === 0 &&
+    data[9] > 0 &&
+    data[10] > 0 &&
+    [0, 2].includes(data[11]) &&
+    data[12] > 0 &&
+    header.getUint32(24, true) > 0 &&
+    header.getUint32(28, true) > 0 &&
+    36 + header.getUint32(16, true) + header.getUint32(20, true) === data.length
+  );
+}
 export function referencedHashes(s: State) {
   const hashes = new Set<string>(
     Object.values(s.nativeElements)
@@ -104,7 +123,14 @@ export function reserveSlots(
 ): Slot[] {
   const reserved = new Set(pins),
     result: Slot[] = [];
-  for (const hash of new Set(hashes)) {
+  // Images can depend on suffix-based decoders. Reserve their typed filenames
+  // first; native animations can then use any remaining unpinned filename.
+  const ordered = [...new Set(hashes)].sort(
+    (a, b) =>
+      Number(s.assets[a]?.type === "anim") -
+      Number(s.assets[b]?.type === "anim"),
+  );
+  for (const hash of ordered) {
     const asset = s.assets[hash];
     requireThat(asset, "ASSET_MISSING", 409);
     let slot = s.slots.find((slot) => slot.hash === hash);
@@ -115,7 +141,10 @@ export function reserveSlots(
         ) ??
         s.slots.find(
           (slot) => !reserved.has(slot.slot) && slot.type === asset.type,
-        )?.slot;
+        )?.slot ??
+        (isNativeAnimation(asset)
+          ? s.slots.find((slot) => !reserved.has(slot.slot))?.slot
+          : undefined);
       requireThat(index !== undefined, "SLOT_CAPACITY", 413);
       const otherBytes = s.slots
         .filter((slot) => slot.slot !== index)
@@ -125,10 +154,12 @@ export function reserveSlots(
         "SLOT_BYTES_CAPACITY",
         413,
       );
+      const filenameType =
+        s.slots.find((slot) => slot.slot === index)?.type ?? asset.type;
       slot = {
         slot: index,
         hash,
-        type: asset.type,
+        type: filenameType,
         bytes: asset.bytes,
         uploaded: false,
       };

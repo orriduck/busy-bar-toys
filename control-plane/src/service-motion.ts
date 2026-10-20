@@ -306,13 +306,11 @@ export function nativeMotionCapacity(
     slotCount: state.slots.length,
     slotBytes: state.slots.reduce((n, s) => n + s.bytes, 0),
     pinnedSlotCount: pins.size,
-    reusableAnimationSlots: state.slots.filter(
-      (s) => s.type === "anim" && !pins.has(s.slot),
-    ).length,
+    reusableAnimationSlots: state.slots.filter((s) => !pins.has(s.slot)).length,
   };
 }
 
-/** Reuse historical unpinned anim slots only; never fragment a pure-PNG device. */
+/** Reuse existing unpinned filenames; bicycle0 loading is suffix independent. */
 export function reuseNativeMotionSlots(
   state: State,
   pins: Set<number>,
@@ -321,13 +319,12 @@ export function reuseNativeMotionSlots(
   const plan = state.slots.map((slot) => ({ ...slot }));
   const reserved = new Set(pins);
   for (const asset of assets) {
-    let slot = plan.find(
-      (value) => value.hash === asset.hash && value.type === "anim",
-    );
+    let slot = plan.find((value) => value.hash === asset.hash);
     if (!slot) {
       slot = plan.find(
         (value) => value.type === "anim" && !reserved.has(value.slot),
       );
+      slot ??= plan.find((value) => !reserved.has(value.slot));
       if (!slot) return false;
       Object.assign(slot, {
         hash: asset.hash,
