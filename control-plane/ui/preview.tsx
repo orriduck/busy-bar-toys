@@ -80,6 +80,8 @@ export function Preview({
     let shownFrame: PreviewFrame | null = null,
       announcedStream: string | null = null,
       shown = false;
+    let delayed = false,
+      lastFrameArrival = performance.now();
     const pacer = new FramePacer();
     const playout = new PreviewPlayout();
     surface.dataset.receivedFrames = "0";
@@ -111,6 +113,7 @@ export function Preview({
     };
     const clearSurface = (text: string) => {
       shown = false;
+      delayed = false;
       shownFrame = null;
       latency = null;
       ctx.clearRect(0, 0, surface.width, surface.height);
@@ -171,6 +174,7 @@ export function Preview({
           JSON.parse((event as MessageEvent<string>).data),
         );
         if (!frame) return;
+        lastFrameArrival = performance.now();
         playout.push(frame, performance.now());
         received++;
         surface.dataset.receivedFrames = String(received);
@@ -200,7 +204,22 @@ export function Preview({
         void verifySession();
       },
     });
+    const restart = () => {
+      closeLease();
+      currentEvents = null;
+      connection.close();
+      if (!restarting)
+        restarting = setTimeout(() => {
+          if (live) setAttempt((n) => n + 1);
+        }, 1000);
+    };
     const renewal = setInterval(() => {
+      // An OPEN EventSource can stop delivering frames without an error.
+      // Recover one existing lease, with no extra device reads or polling.
+      if (live && performance.now() - lastFrameArrival > 15000) {
+        restart();
+        return;
+      }
       const id = viewerId;
       if (!id || !live) return;
       void api(
@@ -217,14 +236,8 @@ export function Preview({
           blank("Sign in to resume preview");
           onSessionEnd();
         } else if (error instanceof APIError && error.status === 404) {
-          closeLease();
-          currentEvents = null;
-          connection.close();
           blank("Reconnecting preview…");
-          if (!restarting)
-            restarting = setTimeout(() => {
-              if (live) setAttempt((n) => n + 1);
-            }, 1000);
+          restart();
         }
       });
     }, 2000);
@@ -236,9 +249,13 @@ export function Preview({
       const playoutNow = performance.now();
       const ready = playout.ready(playoutNow, now);
       if (shownFrame && !frameIsFresh(shownFrame, now)) {
-        // Expire displayed pixels without discarding fresh arrivals waiting
-        // for their reanchored startup gate after a stalled main thread.
-        clearSurface("Preview delayed");
+        // Retain the last verified pixels with an explicit age. A short pause
+        // while native writes take priority must not turn the preview black.
+        delayed = true;
+        latency = null;
+        setMessage(
+          `Last preview · ${Math.max(2, Math.floor((now - shownFrame.receivedAt) / 1000))}s ago`,
+        );
       }
       const frame =
         ready && pacer.allow(t) ? playout.take(playoutNow, now) : null;
@@ -267,8 +284,9 @@ export function Preview({
         latency = Math.max(0, Date.now() - frame.capturedAt);
         surface.dataset.drawnFrames = String(drawn);
         surface.dataset.drawnSequence = String(frame.sequence);
-        if (!shown) {
+        if (!shown || delayed) {
           shown = true;
+          delayed = false;
           setMessage("");
         }
       }
@@ -329,7 +347,10 @@ export function Preview({
         data-device-id={deviceId}
       />
       {message && (
-        <div className="preview-message" role="status">
+        <div
+          className={`preview-message${message.startsWith("Last preview") ? " preview-stale" : ""}`}
+          role="status"
+        >
           {message}
         </div>
       )}

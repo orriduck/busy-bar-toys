@@ -4,6 +4,7 @@ export interface PreviewFrame {
   sequence: number;
   capturedAt: number;
   receivedAt: number;
+  serverNow?: number;
   width: 72;
   height: 16;
   pixels: string;
@@ -86,12 +87,21 @@ export class PreviewFence {
       v.height !== 16 ||
       !Number.isSafeInteger(v.receivedAt) ||
       !Number.isSafeInteger(v.capturedAt) ||
-      !frameIsFresh(v, now) ||
+      !(v.serverNow === undefined
+        ? frameIsFresh(v, now)
+        : Number.isSafeInteger(v.serverNow) &&
+          v.serverNow >= v.receivedAt &&
+          v.serverNow - v.receivedAt <= 2000) ||
       typeof v.pixels !== "string" ||
       !/^[A-Za-z0-9+/]{4608}$/.test(v.pixels)
     )
       return null;
     this.sequence = v.sequence;
-    return v;
+    // Keep the relay's age budget, then expire on this browser's clock.
+    // Transport queues remain latest-only; playout also drops coalesced history
+    // and frames waiting more than 500 ms on the browser main thread.
+    return v.serverNow === undefined
+      ? v
+      : { ...v, receivedAt: now - (v.serverNow - v.receivedAt) };
   }
 }

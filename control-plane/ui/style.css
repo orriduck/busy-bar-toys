@@ -320,6 +320,11 @@ a {
 .preview-host-dock .preview-message {
   font-size: 0.6875rem;
 }
+.preview-message.preview-stale {
+  top: 88%;
+  transform: none;
+  font-size: 0.75rem;
+}
 .queue-scroll {
   width: min(100%, 42.75rem);
   min-width: 0;

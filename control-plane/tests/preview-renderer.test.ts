@@ -23,7 +23,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("clears expired shown pixels without losing a fresh frame waiting after a main-thread stall", () => {
+it("labels retained pixels after a stall, resumes fresh frames, and recovers an OPEN silent stream", () => {
   const epoch = 1_800_000_000_000;
   let now = 0;
   const context = { clearRect: vi.fn() };
@@ -40,7 +40,11 @@ it("clears expired shown pixels without losing a fresh frame waiting after a mai
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("performance", { now: () => now });
   vi.spyOn(Date, "now").mockImplementation(() => epoch + now);
-  vi.stubGlobal("setInterval", () => 1);
+  let renew: () => void = () => {};
+  vi.stubGlobal("setInterval", (callback: () => void) => {
+    renew = callback;
+    return 1;
+  });
   vi.stubGlobal("clearInterval", () => {});
   const callbacks = new Map<number, FrameRequestCallback>();
   let nextRaf = 0;
@@ -111,7 +115,7 @@ it("clears expired shown pixels without losing a fresh frame waiting after a mai
     advance(2100);
     expect(hooks.surface.dataset.receivedFrames).toBe("2");
     expect(hooks.surface.dataset.drawnFrames).toBe("1");
-    expect(hooks.messages.at(-1)).toBe("Preview delayed");
+    expect(hooks.messages.at(-1)).toBe("Last preview · 2s ago");
     expect(stats.mock.lastCall?.[0].latencyMs).toBeNull();
     const blanks = context.clearRect.mock.calls.length;
 
@@ -124,6 +128,14 @@ it("clears expired shown pixels without losing a fresh frame waiting after a mai
     expect(hooks.messages.at(-1)).toBe("");
     advance(2300);
     expect(hooks.surface.dataset.drawnFrames).toBe("2");
+    advance(18000);
+    expect(hooks.messages.at(-1)).toBe("Last preview · 15s ago");
+    expect(context.clearRect.mock.calls.length).toBe(blanks + 1);
+    renew();
+    expect(close).toHaveBeenCalledOnce();
+    const beforeRestart = hooks.surface.dataset.receivedFrames;
+    sendFrame(3);
+    expect(hooks.surface.dataset.receivedFrames).toBe(beforeRestart);
     window.dispatchEvent(new Event("blur"));
     expect(close).toHaveBeenCalled();
     expect(JSON.parse(fetch.mock.lastCall?.[1].body)).toEqual({

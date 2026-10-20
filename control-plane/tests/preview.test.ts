@@ -205,6 +205,8 @@ describe("read-only pixel preview Worker/DO relay", () => {
       pixels,
     });
     expect(frame.receivedAt).toBeGreaterThan(0);
+    expect(frame.serverNow).toBeGreaterThanOrEqual(frame.receivedAt);
+    expect(frame.serverNow - frame.receivedAt).toBeLessThanOrEqual(2000);
     const status = (await (await s.admin("/api/preview/status")).json()) as any;
     expect(status).toMatchObject({
       connected: true,
