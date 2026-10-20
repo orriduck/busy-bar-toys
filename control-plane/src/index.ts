@@ -27,6 +27,7 @@ import {
   materializePreparedElements,
   setPreparedEntryIds,
   hideObsoleteElement,
+  upgradePreparedElementIds,
 } from "./prepared-handoff";
 import {
   BLACK_MS,
@@ -165,6 +166,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       | "command_failed"
       | "motion_fallback"
       | "prepared_handoff"
+      | "prepared_alias"
       | "retirement_expired",
     data: {
       generation: number;
@@ -1421,6 +1423,12 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
   }
   private prepareHandoff(s: State, command: Command, now: number) {
     if (command.prepared === "pending" || command.prepared === "fallback") {
+      const aliases = upgradePreparedElementIds(s, command.elements ?? []);
+      if (aliases)
+        this.traceDisplay("prepared_alias", {
+          generation: s.generation,
+          elementCount: aliases,
+        });
       const nativeHold = command.prepared === "pending";
       const incoming = new Map((command.elements ?? []).map((e) => [e.id, e])),
         old = Object.values(s.nativeElements),

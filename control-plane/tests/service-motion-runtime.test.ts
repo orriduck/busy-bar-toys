@@ -976,7 +976,10 @@ async function preparedFixture() {
   const committed = () =>
     f.wait(
       (s) =>
-        s.nativeElements["prepared-text"] !== undefined &&
+        s.nativeElements[
+          s.preparedEntryIds?.[scene.commands[0].elements[0].id] ??
+            scene.commands[0].elements[0].id
+        ] !== undefined &&
         Object.keys(s.nativeElements).some((id) =>
           id.startsWith(
             "control-service-motion-prepared-" + s.generation + "-",
@@ -985,7 +988,14 @@ async function preparedFixture() {
     );
   const finish = async (requireMasks = true) => {
     if (requireMasks) await committed();
-    else await f.wait((s) => s.nativeElements["prepared-text"] !== undefined);
+    else
+      await f.wait(
+        (s) =>
+          s.nativeElements[
+            s.preparedEntryIds?.[scene.commands[0].elements[0].id] ??
+              scene.commands[0].elements[0].id
+          ] !== undefined,
+      );
     for (let n = 0; n < 10; n++) {
       const state = await f.state();
       if (state.displaying && !state.commands.length) return state;
@@ -1307,45 +1317,126 @@ describe("prepared single native commit", () => {
       vi.useRealTimers();
     }
   });
-  it.each(["type", "draw-capacity"])(
-    "does not stage an entrance under old widgets after a prepared %s conflict",
-    async (failure) => {
-      const f = await preparedFixture(),
-        before = calls.length;
-      if (failure === "type")
-        f.scene.commands[0].elements[0] = {
-          id: "old-text",
+  it("commits a same-name different-type incoming widget under a fresh ID without clearing the old view first", async () => {
+    const f = await preparedFixture();
+    f.scene.commands[0].elements[0] = {
+      id: "old-text",
+      type: "rectangle",
+      width: 1,
+      height: 1,
+    } as never;
+    const before = calls.length;
+    await f.publishPrepared("type-change");
+    const finished = await f.finish();
+    const physical = finished.preparedEntryIds!["old-text"];
+    expect(physical).not.toBe("old-text");
+    expect(native.get(physical)?.type).toBe("rectangle");
+    expect(finished.health.status).toBe("healthy");
+    const writes = calls.slice(before),
+      commit = writes.findIndex((c) =>
+        c.body?.elements?.some((e) => e.id === physical),
+      );
+    expect(
+      writes.slice(0, commit).every((c) => c.path.endsWith("/assets/upload")),
+    ).toBe(true);
+    expect(writes[commit].body!.elements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "old-text", type: "text", text: " " }),
+        expect.objectContaining({ id: physical, type: "rectangle" }),
+      ]),
+    );
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "motion_fallback" &&
+          e.data.reason === "prepared_type_conflict",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a late old-widget ACK separate from a prepared incoming logical ID", async () => {
+    const f = await preparedFixture();
+    const upstream = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let release!: () => void,
+      held = false;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (!held && new URL(request.url).pathname.endsWith("/assets/upload")) {
+        held = true;
+        const response = await upstream(request);
+        await gate;
+        return response;
+      }
+      return upstream(request);
+    });
+    try {
+      await f.publishPrepared("late-type");
+      await f.observe(
+        (s) =>
+          held &&
+          s.commands.some(
+            (c) => c.kind === "upload" && c.status === "inflight",
+          ),
+      );
+      await f.mutate((s) => {
+        const e: Element = {
+          id: "prepared-text",
           type: "rectangle",
           width: 1,
           height: 1,
-        } as never;
-      else
-        f.scene.commands[0].elements = Array.from({ length: 32 }, (_, n) => ({
-          id: "new-" + n,
-          type: "text",
-          text: "new",
-          font: "small",
-        })) as never;
-      await f.publishPrepared("blocked");
-      const blocked = await f.wait((s) => s.health.status === "blocked");
-      expect(native.get("old-text")?.text).toBe("old");
+        };
+        s.nativeElements[e.id] = e;
+        s.elementExpiries[e.id] = {
+          type: e.type,
+          expiresAt: Date.now() + 60000,
+        };
+        native.set(e.id, e);
+      });
+      release();
+      const finished = await f.finish();
       expect(
-        calls.slice(before).some((c) => c.path.endsWith("/display/draw")),
-      ).toBe(false);
-      expect(blocked.commands[0].attempts).toBeGreaterThan(0);
+        native.get(finished.preparedEntryIds!["prepared-text"])?.type,
+      ).toBe("text");
+      expect(finished.health.status).toBe("healthy");
       expect(
         (await f.diagnostics()).events.some(
           (e) =>
             e.kind === "motion_fallback" &&
-            e.data.reason ===
-              (failure === "type"
-                ? "prepared_type_conflict"
-                : "prepared_draw_capacity") &&
-            e.data.expectedBlackMs === 0,
+            e.data.reason === "prepared_type_conflict",
         ),
-      ).toBe(true);
-    },
-  );
+      ).toBe(false);
+    } finally {
+      release();
+    }
+  });
+
+  it("does not stage an entrance under old widgets after a prepared draw-capacity conflict", async () => {
+    const f = await preparedFixture(),
+      before = calls.length;
+    f.scene.commands[0].elements = Array.from({ length: 32 }, (_, n) => ({
+      id: "new-" + n,
+      type: "text",
+      text: "new",
+      font: "small",
+    })) as never;
+    await f.publishPrepared("blocked");
+    const blocked = await f.wait((s) => s.health.status === "blocked");
+    expect(native.get("old-text")?.text).toBe("old");
+    expect(
+      calls.slice(before).some((c) => c.path.endsWith("/display/draw")),
+    ).toBe(false);
+    expect(blocked.commands[0].attempts).toBeGreaterThan(0);
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "motion_fallback" &&
+          e.data.reason === "prepared_draw_capacity" &&
+          e.data.expectedBlackMs === 0,
+      ),
+    ).toBe(true);
+  });
   it("omits only the masks when their historical slots are unavailable, keeping the old view until the normal commit", async () => {
     const f = await preparedFixture();
     await f.mutate((s) => {
@@ -1354,7 +1445,9 @@ describe("prepared single native commit", () => {
     const before = calls.length;
     await f.publishPrepared("fallback");
     await f.wait(
-      (s) => native.has("prepared-text") && !s.commands.some((c) => c.handoff),
+      (s) =>
+        native.has(s.preparedEntryIds!["prepared-text"]) &&
+        !s.commands.some((c) => c.handoff),
     );
     const sent = calls.slice(before),
       firstDraw = sent.findIndex(
@@ -1393,7 +1486,7 @@ describe("prepared single native commit", () => {
       return upstream(request);
     });
     await f.publishPrepared("one");
-    await f.finish();
+    const committed = await f.finish();
     const sent = calls.slice(start),
       firstDraw = sent.findIndex(
         (c) => c.method === "POST" && c.path.endsWith("/display/draw"),
@@ -1407,7 +1500,9 @@ describe("prepared single native commit", () => {
       text: " ",
       scroll_rate: 0,
     });
-    expect(commit.find((e) => e.id === "prepared-text")).toMatchObject({
+    expect(
+      commit.find((e) => e.id === committed.preparedEntryIds!["prepared-text"]),
+    ).toMatchObject({
       scroll_start_delay: 200,
     });
     const masks = commit.filter((e) => isMotionElement(e.id));
