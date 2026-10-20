@@ -38,3 +38,10 @@ no accepted frame for15seconds releases its lease and reconnects once. These
 changes add no local reads and do not resume capture while display writes are
 unconfirmed. Empty queue/default clock uses the same preview path as a stable
 selected scene.
+
+Rolling upgrades may leave a live relay sending the previous frame format.
+Its authenticated status supplies a receipt/sequence floor; the browser rejects
+older or replayed frames and starts the local two-second budget on arrival.
+The old relay still owns its two-second cache/emission limit. Acceptance must
+check real packets as well as deployment metadata; a new static bundle alone
+does not prove that a live relay switched formats.
