@@ -51,6 +51,14 @@ old inventory and retries with a bound, without clearing old files or claiming
 the scene ready. Such capacity fallbacks are not a successful200ms transition.
 Native TTL/source validity still bound how long old content can be retained.
 
+If a cancelled legacy exit left an acknowledged black mask and the next prepared
+scene cannot fit, retaining that mask would keep the device black until expiry.
+The controller returns only its own namespace to the device default while the
+incoming occurrence remains pending and unconfirmed. Already-transparent legacy
+masks retire selectively, preserving the old visible content. Native inventory
+and pins change only after the retirement ACK. This does not delete asset files
+or bypass their16-file/type constraints; a scene can still remain capacity-blocked.
+
 The diagnostics implementation is `shared-service-motion-v2-prepared`.
 `prepared_handoff` records the commit preparation boundary and pending upload
 count. Native command acknowledgements separate `requestMs` from

@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { StateStore } from "../src/store";
-import { ServiceMotionClock, isMotionElement } from "../src/service-motion";
+import {
+  ServiceMotionClock,
+  isMotionElement,
+  motionElements,
+} from "../src/service-motion";
 import type { Element, State } from "../src/model";
 import { enrollTestBrowser } from "./helpers/computer";
 import {
@@ -992,7 +996,196 @@ async function preparedFixture() {
   return { ...f, scene, assets, publishPrepared, committed, finish };
 }
 
+async function fragmentedLegacyScene(
+  f: Awaited<ReturnType<typeof preparedFixture>>,
+  opacity?: number,
+) {
+  await f.mutate((s) => {
+    s.slots = Array.from({ length: 16 }, (_, slot) => ({
+      slot,
+      hash: slot.toString(16).padStart(64, "f"),
+      type: "png",
+      bytes: 1,
+      uploaded: true,
+    }));
+    const elements: Element[] = s.slots.map((slot) => ({
+      id: "legacy-" + slot.slot,
+      type: "image",
+      assetHash: slot.hash,
+    }));
+    if (opacity !== undefined) elements.push(...motionElements(opacity));
+    for (const e of elements) {
+      s.nativeElements[e.id] = e;
+      s.elementExpiries[e.id] = { type: e.type, expiresAt: Date.now() + 60000 };
+      native.set(e.id, e);
+    }
+  });
+}
+
 describe("prepared single native commit", () => {
+  it("keeps native inventory and pins until orphan recovery clear acknowledges", async () => {
+    const f = await preparedFixture();
+    await fragmentedLegacyScene(f, 100);
+    const upstream = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let release!: () => void,
+      held = false;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (
+        !held &&
+        request.method === "DELETE" &&
+        new URL(request.url).pathname.endsWith("/display/draw")
+      ) {
+        held = true;
+        const response = await upstream(request);
+        await gate;
+        return response;
+      }
+      return upstream(request);
+    });
+    const slots = structuredClone((await f.state()).slots);
+    try {
+      await f.publishPrepared("blocked");
+      const pending = await f.observe(
+        (s) =>
+          held &&
+          s.commands.some((c) => c.kind === "clear" && c.status === "inflight"),
+      );
+      expect(Object.keys(pending.nativeElements).some(isMotionElement)).toBe(
+        true,
+      );
+      expect(
+        Object.keys(pending.nativeElements).filter((id) =>
+          id.startsWith("legacy-"),
+        ),
+      ).toHaveLength(16);
+      expect(pending.slots).toEqual(slots);
+      expect(pending.displaying).toBeNull();
+      release();
+      await f.wait(
+        (s) =>
+          s.health.status === "blocked" &&
+          !Object.keys(s.nativeElements).length,
+      );
+    } finally {
+      release();
+    }
+  });
+
+  it("returns a cancelled opaque legacy mask to the device default while typed capacity stays blocked", async () => {
+    const f = await preparedFixture();
+    await fragmentedLegacyScene(f, 100);
+    const before = calls.length,
+      calendars = calendar,
+      slots = structuredClone((await f.state()).slots);
+    await f.publishPrepared("blocked");
+    const blocked = await f.wait(
+      (s) =>
+        s.health.status === "blocked" && !Object.keys(s.nativeElements).length,
+    );
+    expect(calls.slice(before).map((c) => c.method)).toEqual(["DELETE"]);
+    expect(calls.at(-1)!.body).toBeUndefined();
+    expect(calendar).toBe(calendars + 1);
+    expect(native.size).toBe(0);
+    expect(blocked.slots).toEqual(slots);
+    expect(blocked.items[blocked.selected!].itemId).toBe("blocked");
+    expect(blocked.items[blocked.selected!].state).toBe("applying");
+    expect(blocked.displaying).toBeNull();
+    expect(blocked.health.confirmedValidUntil).toBe(0);
+    expect(
+      (await f.diagnostics()).events.some(
+        (e) =>
+          e.kind === "recovery" &&
+          e.data.reason === "orphan_legacy_mask" &&
+          e.data.scope === "full",
+      ),
+    ).toBe(true);
+  });
+
+  it("retires transparent orphan masks selectively and keeps the visible pinned PNG scene", async () => {
+    const f = await preparedFixture();
+    await fragmentedLegacyScene(f, 0);
+    const before = calls.length,
+      calendars = calendar;
+    await f.publishPrepared("blocked");
+    const blocked = await f.wait(
+      (s) =>
+        s.health.status === "blocked" &&
+        !Object.keys(s.nativeElements).some(isMotionElement),
+    );
+    const writes = calls.slice(before);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].method).toBe("DELETE");
+    expect(writes[0].body!.element_ids).toEqual(
+      motionElements(0).map((e) => e.id),
+    );
+    expect(native.get("old-text")?.text).toBe("old");
+    expect(
+      [...native.keys()].filter((id) => id.startsWith("legacy-")),
+    ).toHaveLength(16);
+    expect(calendar).toBe(calendars);
+    expect(blocked.displaying).toBeNull();
+  });
+
+  it("cleans a late old-generation black-mask ACK before retrying a prepared capacity failure", async () => {
+    const f = await preparedFixture();
+    await fragmentedLegacyScene(f);
+    const upstream = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let release!: () => void,
+      held = false;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (
+        !held &&
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/display/draw")
+      ) {
+        const body = (await request.clone().json()) as { elements: Element[] };
+        if (body.elements.some((e) => isMotionElement(e.id))) {
+          held = true;
+          const response = await upstream(request);
+          await gate;
+          return response;
+        }
+      }
+      return upstream(request);
+    });
+    try {
+      await f.publish("legacy", "urgent");
+      const old = await f.observe(
+        (s) => held && s.commands.some((c) => c.status === "inflight"),
+      );
+      await f.end("legacy");
+      await f.publishPrepared("blocked");
+      expect((await f.state()).generation).toBeGreaterThan(old.generation);
+      expect([...native.values()].some((e) => isMotionElement(e.id))).toBe(
+        true,
+      );
+      release();
+      const blocked = await f.wait(
+        (s) =>
+          s.health.status === "blocked" &&
+          !Object.keys(s.nativeElements).length,
+      );
+      expect(native.size).toBe(0);
+      expect(blocked.items[blocked.selected!].itemId).toBe("blocked");
+      expect(blocked.displaying).toBeNull();
+      expect(calls.at(-1)!.method).toBe("DELETE");
+      expect(
+        (await f.diagnostics()).events.some(
+          (e) =>
+            e.kind === "recovery" && e.data.reason === "orphan_legacy_mask",
+        ),
+      ).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
   it("does not exceed the installed firmware's 100-widget prepared union with fresh players", async () => {
     const f = await preparedFixture();
     await f.mutate((s) => {

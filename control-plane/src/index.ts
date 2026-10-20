@@ -178,7 +178,8 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         | "incoming_slot_bytes"
         | "prepared_type_conflict"
         | "prepared_draw_capacity"
-        | "prepared_native_capacity";
+        | "prepared_native_capacity"
+        | "orphan_legacy_mask";
       stage?: "prepare" | "commit" | "retire";
       expectedBlackMs?: number;
       pendingUploads?: number;
@@ -1647,6 +1648,48 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       ...nativeMotionCapacity(s, pinnedSlots(s), preparedBlackAssets()),
     });
   }
+  private retireOrphanedLegacyMasks(s: State, command: Command, now: number) {
+    if (s.serviceMotion || !command.prepared) return false;
+    const masks = Object.values(s.nativeElements).filter(
+      (e) =>
+        isMotionElement(e.id) &&
+        !e.id.startsWith("control-service-motion-prepared-"),
+    );
+    if (!masks.length) return false;
+    // Transparent old masks can retire without changing the old picture.
+    // An opaque cancelled legacy exit has no device-local reveal. Do not
+    // uncover potentially expired/partial old content: return our namespace
+    // to the device default while capacity recovery remains pending.
+    const selective = masks.every((e) => e.opacity === 0);
+    this.traceDisplay("recovery", {
+      generation: s.generation,
+      reason: "orphan_legacy_mask",
+      scope: selective ? "selective" : "full",
+      elementCount: masks.length,
+    });
+    const groups = selective
+      ? Array.from({ length: Math.ceil(masks.length / 64) }, (_, n) =>
+          masks.slice(n * 64, (n + 1) * 64).map((e) => e.id),
+        )
+      : [undefined];
+    const clears: Command[] = [];
+    for (const elementIds of groups) {
+      enqueue(s, {
+        generation: s.generation,
+        kind: "clear",
+        dueAt: now,
+        elementIds,
+      });
+      clears.push(s.commands.pop()!);
+    }
+    s.commands.splice(s.commands.indexOf(command), 0, ...clears);
+    s.health.status = "blocked";
+    s.health.confirmedValidUntil = 0;
+    s.displaying = null;
+    s.visibleSince = null;
+    // Native inventory and slot pins change only after these clears ACK.
+    return true;
+  }
   private queueRefresh(
     s: State,
     elements: Element[],
@@ -1987,6 +2030,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
                     ? "incoming_slot_bytes"
                     : "prepared_native_capacity",
               );
+              if (this.retireOrphanedLegacyMasks(s, cmd, now)) {
+                this.save(s);
+                continue;
+              }
               cmd.attempts++;
               cmd.dueAt =
                 now + Math.min(60000, 1000 * 2 ** Math.min(cmd.attempts, 6));
