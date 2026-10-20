@@ -36,11 +36,12 @@ inserted before that request.
 | Same occurrence changes content | Preserve generation and entrance; publish only the latest delta. |
 | Cold/recovery entry | Preload first, then use the same local black/reveal commit. |
 
-First-command non-loop animation IDs are materialized to generation-specific
-native IDs. Updates, completion targets, renewal, recovery and acknowledgement
-inventory use the same mapping; logical producer IDs remain stable. This avoids
-reusing a finished same-path player without replaying entrances on ordinary
-value updates. Old widgets become invisible in the commit itself, so a later
+All prepared scene element IDs (including static text, looping players and
+later commands) are materialized to generation-specific native IDs. Updates, completion targets, renewal, recovery and acknowledgement
+inventory use the same mapping; logical producer IDs remain stable. This avoids same-name/different-type collisions across services and late old
+ACKs, and avoids reusing a finished same-path player. The mapping remains stable
+for ordinary value updates, preserving scrolling and loop playback. Already
+pending handoffs from an older deployment upgrade their mapping before commit. Old widgets become invisible in the commit itself, so a later
 retirement DELETE cannot cover or postpone the new entrance.
 
 The16-slot/two-MiB native file budget and64-entry/four-MiB cloud cache remain

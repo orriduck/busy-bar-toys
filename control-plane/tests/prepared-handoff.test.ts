@@ -6,6 +6,7 @@ import {
   registerService,
   publish,
   finishItem,
+  type Element,
 } from "../src/model";
 import { digest } from "../src/security";
 import {
@@ -15,6 +16,7 @@ import {
   materializePreparedElements,
   setPreparedEntryIds,
   hideObsoleteElement,
+  upgradePreparedElementIds,
   PREPARED_ENTRY_PREFIX,
 } from "../src/prepared-handoff";
 import { pinnedSlots, referencedHashes } from "../src/assets";
@@ -205,6 +207,125 @@ describe("prepared device-local black hold", () => {
     });
     expect(referencedHashes(s).has(hash)).toBe(true);
     expect(pinnedSlots(s).has(0)).toBe(true);
+  });
+
+  function allWidgetState() {
+    const s = createState("all-widgets");
+    registerService(
+      s,
+      { id: "test", name: "Test", template: "notifier" },
+      "hash",
+      "epoch",
+      100,
+    );
+    publish(
+      s,
+      "test",
+      {
+        instanceId: "mac",
+        epoch: "epoch",
+        itemId: "one",
+        version: 1,
+        firstRecognizedAt: 100,
+        kind: "event",
+        level: "info",
+        title: "one",
+        detail: "",
+        validUntil: 100000,
+        scene: {
+          ...scene,
+          commands: [
+            {
+              offsetMs: 0,
+              elements: [
+                ...scene.commands[0].elements,
+                { id: "title", type: "text", text: "TEST", font: "small" },
+                {
+                  id: "loop",
+                  type: "animation",
+                  assetHash: "c".repeat(64),
+                  loop: true,
+                },
+              ],
+            },
+            {
+              offsetMs: 740,
+              elements: [
+                ...scene.commands[1].elements,
+                {
+                  id: "constructor",
+                  type: "text",
+                  text: "LATER",
+                  font: "small",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      100,
+    );
+    return s;
+  }
+
+  it("gives static, looping and later widgets stable bounded IDs as well as entrance players", () => {
+    const s = allWidgetState(),
+      mapping = { ...s.preparedEntryIds };
+    expect(Object.keys(mapping).sort()).toEqual([
+      "constructor",
+      "entry",
+      "loop",
+      "title",
+    ]);
+    expect(new Set(Object.values(mapping)).size).toBe(4);
+    expect(
+      Object.values(mapping).every(
+        (id) =>
+          id.startsWith(PREPARED_ENTRY_PREFIX + s.generation + "-") &&
+          id.length <= 64,
+      ),
+    ).toBe(true);
+    const elements: Element[] = [
+      { id: "title", type: "text", text: "UPDATE", font: "small" },
+      { id: "loop", type: "animation", loop: true },
+    ];
+    expect(
+      materializePreparedElements(s, materializePreparedElements(s, elements)),
+    ).toEqual(materializePreparedElements(s, elements));
+    expect(s.preparedEntryIds).toEqual(mapping);
+    expect(s.items[s.selected!].scene.commands[0].elements[1].id).toBe("title");
+  });
+
+  it("upgrades an old pending mapping without altering existing players, in-flight writes or native proof", () => {
+    const s = allWidgetState(),
+      entry = PREPARED_ENTRY_PREFIX + s.generation + "-2";
+    s.preparedEntryIds = { entry };
+    s.commands = [];
+    for (const c of s.items[s.selected!].scene.commands)
+      enqueue(s, {
+        generation: s.generation,
+        kind: "draw",
+        dueAt: 100,
+        elements: c.elements,
+      });
+    s.commands.push({
+      id: 100,
+      generation: s.generation - 1,
+      kind: "draw",
+      status: "inflight",
+      attempts: 1,
+      dueAt: 100,
+      elements: [{ id: "title", type: "rectangle" }],
+    });
+    s.nativeElements.title = { id: "title", type: "rectangle" };
+    expect(upgradePreparedElementIds(s, s.commands[0].elements!)).toBe(3);
+    expect(s.preparedEntryIds.entry).toBe(entry);
+    expect(new Set(Object.values(s.preparedEntryIds)).size).toBe(4);
+    expect(s.commands[0].elements![1].id).toBe(s.preparedEntryIds.title);
+    expect(s.commands.at(-1)!.elements![0].id).toBe("title");
+    expect(s.nativeElements.title.type).toBe("rectangle");
+    expect(s.displaying).toBeNull();
+    expect(upgradePreparedElementIds(s, s.commands[0].elements!)).toBe(0);
   });
 
   it("hides every obsolete type in the commit, including widgets without native opacity", () => {

@@ -110,18 +110,20 @@ export function preparedBlackElements(generation: number): Element[] {
   }));
 }
 
-/** Logical producer IDs stay stable; every genuine re-entry gets a fresh player. */
+/** All prepared widget IDs are generation-scoped; logical producer IDs stay stable. */
 export function setPreparedEntryIds(state: State) {
   const item = state.selected ? state.items[state.selected] : undefined;
   state.preparedEntryIds =
     item?.scene.entryLeadMs === 200
       ? Object.fromEntries(
-          item.scene.commands[0].elements
-            .filter((e) => e.type === "animation" && e.loop !== true)
-            .map((e, index) => [
-              e.id,
-              PREPARED_ENTRY_PREFIX + state.generation + "-" + index,
-            ]),
+          [
+            ...new Set(
+              item.scene.commands.flatMap((c) => c.elements.map((e) => e.id)),
+            ),
+          ].map((id, index) => [
+            id,
+            PREPARED_ENTRY_PREFIX + state.generation + "-" + index,
+          ]),
         )
       : {};
 }
@@ -135,6 +137,48 @@ export function materializePreparedElements(
       ? { ...e, id: state.preparedEntryIds[e.id] }
       : e,
   );
+}
+
+/** Upgrade an already pending pre-deployment handoff once, preserving its
+ * existing player IDs and rebinding only this generation's pending commands. */
+export function upgradePreparedElementIds(state: State, elements: Element[]) {
+  const item = state.selected ? state.items[state.selected] : undefined;
+  if (
+    item?.scene.entryLeadMs !== 200 ||
+    !elements.some(
+      (e) =>
+        !e.id.startsWith(PREPARED_ENTRY_PREFIX) &&
+        !e.id.startsWith("control-service-motion-"),
+    )
+  )
+    return 0;
+  const mapping = (state.preparedEntryIds ??= {});
+  const used = new Set([
+    ...Object.values(mapping),
+    ...Object.keys(state.nativeElements),
+  ]);
+  let count = 0;
+  for (const element of item.scene.commands.flatMap((c) => c.elements)) {
+    if (Object.hasOwn(mapping, element.id)) continue;
+    let index = Object.keys(mapping).length;
+    let physical = PREPARED_ENTRY_PREFIX + state.generation + "-" + index;
+    while (used.has(physical))
+      physical = PREPARED_ENTRY_PREFIX + state.generation + "-" + ++index;
+    mapping[element.id] = physical;
+    used.add(physical);
+    count++;
+  }
+  if (count)
+    for (const command of state.commands) {
+      if (
+        command.generation === state.generation &&
+        command.kind === "draw" &&
+        command.status === "pending" &&
+        command.elements
+      )
+        command.elements = materializePreparedElements(state, command.elements);
+    }
+  return count;
 }
 
 export function hideObsoleteElement(element: Element): Element {
