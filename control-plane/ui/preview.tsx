@@ -153,6 +153,7 @@ export function Preview({
         const stream = value.connected ? value.streamId : null;
         if (stream !== announcedStream) {
           announcedStream = stream;
+          lastFrameArrival = performance.now();
           blank(stream ? "Waiting for preview" : "Preview bridge unavailable");
         }
         if (
@@ -198,6 +199,7 @@ export function Preview({
       onOpen: () => {},
       onSnapshot: receiveStatus,
       onError: () => {
+        currentEvents = null;
         closeLease();
         fence = new PreviewFence(deviceId);
         blank("Reconnecting preview…");
@@ -216,7 +218,12 @@ export function Preview({
     const renewal = setInterval(() => {
       // An OPEN EventSource can stop delivering frames without an error.
       // Recover one existing lease, with no extra device reads or polling.
-      if (live && performance.now() - lastFrameArrival > 15000) {
+      if (
+        live &&
+        viewerId &&
+        announcedStream &&
+        performance.now() - lastFrameArrival > 15000
+      ) {
         restart();
         return;
       }
