@@ -108,6 +108,61 @@ describe("actual preview frame isolation", () => {
     for (const serverNow of [now + 2000, now - 11, NaN, "now"])
       expect(fence.frame({ ...frame, serverNow }, now + 60000)).toBeNull();
   });
+  it.each([-60000, 60000])(
+    "accepts an authenticated old relay during rollout with %i ms clock skew",
+    (offset) => {
+      const fence = new browser.PreviewFence(device);
+      fence.status({
+        ...status,
+        lastFrameAt: frame.receivedAt,
+        lastSequence: 1,
+      });
+      const accepted = fence.frame(frame, now + offset);
+      expect(accepted?.receivedAt).toBe(now + offset);
+      expect(browser.frameIsFresh(accepted!, now + offset + 2001)).toBe(false);
+      expect(fence.frame(frame, now + offset)).toBeNull();
+      expect(
+        fence.frame(
+          { ...frame, sequence: 2, receivedAt: frame.receivedAt - 1 },
+          now + offset,
+        ),
+      ).toBeNull();
+      expect(
+        fence.frame(
+          { ...frame, sequence: 2, receivedAt: frame.receivedAt + 500 },
+          now + offset + 500,
+        )?.receivedAt,
+      ).toBe(now + offset + 500);
+    },
+  );
+  it("fences old-relay cached sequence and resets floors on stream change", () => {
+    const fence = new browser.PreviewFence(device);
+    fence.status({ ...status, lastFrameAt: null, lastSequence: null });
+    expect(fence.frame(frame, now + 60000)?.receivedAt).toBe(now + 60000);
+    fence.status({ ...status, lastFrameAt: now, lastSequence: 5 });
+    expect(
+      fence.frame({ ...frame, sequence: 4, receivedAt: now }, now + 60000),
+    ).toBeNull();
+    expect(
+      fence.frame({ ...frame, sequence: 5, receivedAt: now }, now + 60000),
+    ).not.toBeNull();
+    fence.status({
+      ...status,
+      streamId: "two",
+      lastFrameAt: now - 100,
+      lastSequence: 1,
+    });
+    expect(
+      fence.frame(
+        { ...frame, streamId: "two", receivedAt: now - 100 },
+        now + 60000,
+      ),
+    ).not.toBeNull();
+    fence.status({ ...status, connected: false, streamId: null });
+    expect(
+      fence.frame({ ...frame, streamId: "two", sequence: 2 }, now + 60000),
+    ).toBeNull();
+  });
 });
 describe("compact queue provenance", () => {
   const item = {
