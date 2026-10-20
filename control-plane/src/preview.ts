@@ -517,7 +517,13 @@ export class PreviewRelay {
         });
       } else if (v.framePending) {
         v.framePending = false;
-        if (this.freshFrame()) payload = this.event("frame", this.latest);
+        if (this.freshFrame())
+          payload = this.event("frame", {
+            ...this.latest,
+            // Both timestamps belong to the relay clock. Browsers must not
+            // compare receivedAt directly with a different machine's clock.
+            serverNow: this.now(),
+          });
       }
       if (!payload && v.keepalivePending) {
         v.keepalivePending = false;

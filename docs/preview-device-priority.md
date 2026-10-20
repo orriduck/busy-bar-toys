@@ -29,3 +29,12 @@ Historical30fps acceptance targets do not apply to this policy.
 Acceptance distinguishes native framebuffer pixels, request acknowledgements,
 and browser preview. Low-frequency passive scheduler observations do not prove
 first-pixel latency, exact200ms black, or absence of transient flicker.
+
+The management browser uses relay emission age plus its own receipt clock, so
+a cloud/browser clock offset cannot blank continuously arriving two-fps frames.
+After a pause it retains the last frame with an explicit seconds-old label;
+new device/stream/session boundaries clear the old pixels. An OPEN stream with
+no accepted frame for15seconds releases its lease and reconnects once. These
+changes add no local reads and do not resume capture while display writes are
+unconfirmed. Empty queue/default clock uses the same preview path as a stable
+selected scene.

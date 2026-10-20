@@ -88,6 +88,26 @@ describe("actual preview frame isolation", () => {
       fence.frame({ ...frame, streamId: "new-stream" }, now),
     ).not.toBeNull();
   });
+  it.each([-60000, -2300, 60000])(
+    "uses relay age and local arrival when the browser clock differs by %i ms",
+    (offset) => {
+      const fence = new browser.PreviewFence(device);
+      fence.status(status);
+      const accepted = fence.frame({ ...frame, serverNow: now }, now + offset);
+      expect(accepted?.receivedAt).toBe(now + offset - 10);
+      expect(browser.frameIsFresh(accepted!, now + offset + 1990)).toBe(true);
+      expect(browser.frameIsFresh(accepted!, now + offset + 1991)).toBe(false);
+      expect(
+        fence.frame({ ...frame, serverNow: now }, now + offset),
+      ).toBeNull();
+    },
+  );
+  it("rejects expired or invalid relay age even with browser clock skew", () => {
+    const fence = new browser.PreviewFence(device);
+    fence.status(status);
+    for (const serverNow of [now + 2000, now - 11, NaN, "now"])
+      expect(fence.frame({ ...frame, serverNow }, now + 60000)).toBeNull();
+  });
 });
 describe("compact queue provenance", () => {
   const item = {
