@@ -5,6 +5,7 @@ from the collector, publisher, input monitor, actions, and urgent watchdog.
 """
 import asyncio
 import base64
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from http.client import HTTPConnection, HTTPException, HTTPResponse
@@ -35,6 +36,16 @@ _HEX = re.compile(r'^[a-f0-9]{64}$')
 _STREAM = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
 # A fresh authenticated socket resets frame sequence and discards stale work.
 _TRANSIENT_CLOUD_ERRORS = frozenset(('PREVIEW_STALE_FRAME','PREVIEW_RATE_LIMIT','PREVIEW_SEQUENCE'))
+_DIAGNOSTIC_PEER_CODES = _TRANSIENT_CLOUD_ERRORS | frozenset((
+    'PREVIEW_PUBLISHER_IDLE','PREVIEW_DISCONNECTED','PREVIEW_CAPABILITY_REQUIRED','PREVIEW_AUTH_REVOKED',
+    'UNAUTHORIZED','EPOCH_EXPIRED','INVALID_PREVIEW_FRAME','PREVIEW_FRAME_SIZE',
+))
+_DIAGNOSTIC_CODES = _DIAGNOSTIC_PEER_CODES | frozenset((
+    'session_ended','normal_close','no_close_frame','websocket_closed','websocket_error','ping_timeout',
+    'handshake_rejected','transport_error','transport_timeout','cancelled','stopped','unexpected_error','unknown',
+    'auth','body','device_mismatch','frame','identity','invalid_config','not_found','protocol',
+    'redirect_refused','timeout','unavailable',
+))
 _QUIET = logging.Logger('busy-preview-private')
 _QUIET.disabled = True
 
@@ -238,12 +249,16 @@ class PreviewBridge:
         self._capture_failures=0; self._capture_retry_at=0
         self._latest=asyncio.Queue(maxsize=1); self._sequence=0; self._last_sent=0
         self._diag_lock=threading.Lock(); self._started=time.monotonic()
+        self._session_ends=deque(maxlen=16)
+        self._capture_error_events=deque(maxlen=8)
         self._diag={'status':'idle','connected':False,'demand':False,'captureRequested':0,
                     'captured':0,'sent':0,'dropped':0,'busySkipped':0,'captureErrors':0,
                     'invalidatedDropped':0,'outOfOrderDropped':0,'supersededDropped':0,'noDemandDropped':0,
                     'rateLimitedSkipped':0,'displayPausedDropped':0,
                     'targetFps':FPS,'actualTargetFps':FPS,'maxInFlight':MAX_IN_FLIGHT,'pausedForDisplay':False,
-                    'captureRetries':0,'connections':0,'disconnects':0,'lastCaptureError':None,'lastCloudError':None}
+                    'captureRetries':0,'connections':0,'disconnects':0,'lastCaptureError':None,'lastCloudError':None,
+                    'lastConnectedAtMs':None,'firstFrameSentAtMs':None,'lastFrameSentAtMs':None,
+                    'nextRetryDelayMs':None,'lastConnectFailure':None}
 
     def _update(self,**values):
         with self._diag_lock: self._diag.update(values)
@@ -257,11 +272,38 @@ class PreviewBridge:
             self._diag[reason]+=1
 
     def diagnostics(self):
-        with self._diag_lock: result=dict(self._diag)
+        with self._diag_lock:
+            result=dict(self._diag)
+            result['recentSessionEnds']=[dict(row) for row in self._session_ends]
+            result['recentCaptureErrors']=[dict(row) for row in self._capture_error_events]
+            if result['lastConnectFailure'] is not None:result['lastConnectFailure']=dict(result['lastConnectFailure'])
         elapsed=max(.001,time.monotonic()-self._started)
         result.update(timestamp=time.time(),elapsedSeconds=round(elapsed,3),
                       captureFps=round(result['captured']/elapsed,2),sentFps=round(result['sent']/elapsed,2))
         return result
+
+    @staticmethod
+    def _safe_close_code(code):
+        return code if type(code) is int and code in (1000,1001,1002,1003,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015) else None
+
+    def _record_exit(self,code,session_started,sent_before,*,ws_code=None,retry_ms=None,http_status=None):
+        # Only finite categories/numbers. Never retain exception text, peer
+        # reasons, URLs, credentials, stream IDs, bodies or frame pixels.
+        code=code if isinstance(code,str) and code in _DIAGNOSTIC_CODES else 'unknown'
+        retry_ms=retry_ms if type(retry_ms) is int and 0<=retry_ms<=30000 else None
+        http_status=http_status if type(http_status)is int and 100<=http_status<=599 else None
+        row={'atMs':round(time.time()*1000),'code':code,'webSocketCode':self._safe_close_code(ws_code),'httpStatus':http_status}
+        with self._diag_lock:
+            self._diag['nextRetryDelayMs']=retry_ms
+            if session_started is None:
+                self._diag['lastConnectFailure']=row
+            else:
+                delivered=max(0,self._diag['sent']-sent_before)
+                row.update(durationMs=round(max(0,time.monotonic()-session_started)*1000),sentFrames=delivered,
+                           firstFrameSentAtMs=self._diag['firstFrameSentAtMs'] if delivered else None,
+                           lastFrameSentAtMs=self._diag['lastFrameSentAtMs'] if delivered else None,
+                           plannedRetryDelayMs=retry_ms)
+                self._session_ends.append(row)
 
     def write_status(self):
         if self.status_path:
@@ -361,7 +403,11 @@ class PreviewBridge:
 
     def _capture_failed(self,client,generation,error):
         self._count('captureErrors')
-        if not self._valid(client,generation): return
+        current=self._valid(client,generation)
+        code=error.code if isinstance(error.code,str) and error.code in _DIAGNOSTIC_CODES else 'unknown'
+        with self._diag_lock:
+            self._capture_error_events.append({'atMs':round(time.time()*1000),'code':code,'currentContext':current})
+        if not current: return
         self._update(status=error.code)
         if error.code in ('auth','device_mismatch','redirect_refused'):
             self._blocked[id(client)]='terminal'
@@ -534,7 +580,12 @@ class PreviewBridge:
                 await asyncio.gather(sending,return_exceptions=True)
             if not self._capture_ready(client,generation,fence):
                 self._drop('invalidatedDropped'); continue
-            self._last_sent=frame['sequence']; self._count('sent')
+            self._last_sent=frame['sequence']
+            with self._diag_lock:
+                self._diag['sent']+=1
+                sent_at=round(time.time()*1000)
+                self._diag['lastFrameSentAtMs']=sent_at
+                if self._diag['firstFrameSentAtMs'] is None:self._diag['firstFrameSentAtMs']=sent_at
 
     async def _heartbeat(self,ws):
         while True:
@@ -555,7 +606,8 @@ class PreviewBridge:
         self._capture_failures=0; self._capture_retry_at=0
         self._count('connections')
         self._client=client; self._sequence=0; self._last_sent=0
-        self._update(connected=True,status='idle')
+        self._update(connected=True,status='idle',lastConnectedAtMs=round(time.time()*1000),
+                     firstFrameSentAtMs=None,lastFrameSentAtMs=None,nextRetryDelayMs=None)
         tasks=[asyncio.create_task(work) for work in (self._receive(ws,device_id),self._send(ws,client),
                  self._capture(client,device_id),self._heartbeat(ws),self._permission(client),self._diagnose())]
         try:
@@ -585,7 +637,7 @@ class PreviewBridge:
                 if client is None:
                     self._update(connected=False,demand=False)
                     await asyncio.sleep(.05); continue
-                session_started=None
+                session_started=None; exit_code='session_ended'; ws_code=None; http_status=None
                 with self._diag_lock: sent_before=self._diag['sent']
                 try:
                     url,headers,device_id=client.http._preview_connection(client.config)
@@ -596,8 +648,12 @@ class PreviewBridge:
                             max_size=MAX_MESSAGE,max_queue=4,logger=_QUIET) as ws:
                         session_started=time.monotonic()
                         await self._session(ws,client,device_id)
+                        ws_code=self._safe_close_code(getattr(ws,'close_code',None))
+                        exit_code='normal_close' if ws_code==1000 else 'session_ended'
                 except InvalidStatus as error:
+                    exit_code='handshake_rejected'
                     status=error.response.status_code
+                    http_status=status
                     if status in (401,403):
                         capability=self._capability_error(error)
                         self._blocked[id(client)]='capability' if capability else 'terminal'
@@ -607,11 +663,18 @@ class PreviewBridge:
                     else: self._update(status='unavailable')
                 except (PreviewError,CloudError) as error:
                     code=error.code if isinstance(error,PreviewError) else 'auth'
+                    exit_code=code
                     self._update(status=code)
                     if code not in ('unavailable','timeout'): self._blocked[id(client)]='terminal'
                 except WebSocketException as error:
                     received=getattr(error,'rcvd',None)
                     reason=getattr(received,'reason','')
+                    ws_code=self._safe_close_code(getattr(received,'code',None))
+                    exit_code=('websocket_closed' if received is not None else 'no_close_frame') if hasattr(error,'rcvd') else 'websocket_error'
+                    if isinstance(reason,str) and reason in _DIAGNOSTIC_PEER_CODES:exit_code=reason
+                    sent=getattr(error,'sent',None)
+                    if received is None and getattr(sent,'code',None)==1011 and getattr(sent,'reason',None)=='keepalive ping timeout':
+                        exit_code='ping_timeout'
                     if isinstance(reason,str) and reason in _TRANSIENT_CLOUD_ERRORS:
                         self._update(lastCloudError=reason)
                     elif reason=='PREVIEW_CAPABILITY_REQUIRED': self._blocked[id(client)]='capability'
@@ -619,7 +682,15 @@ class PreviewBridge:
                           and reason not in ('PREVIEW_PUBLISHER_IDLE','PREVIEW_DISCONNECTED')):
                         self._blocked[id(client)]='terminal'
                     self._update(status='unavailable')
-                except (OSError,TimeoutError,asyncio.TimeoutError,ValueError): self._update(status='unavailable')
+                except (OSError,TimeoutError,asyncio.TimeoutError,ValueError) as error:
+                    exit_code='transport_timeout' if isinstance(error,(TimeoutError,asyncio.TimeoutError)) else 'transport_error'
+                    self._update(status='unavailable')
+                except asyncio.CancelledError:
+                    exit_code='stopped' if self._stop.is_set() else 'cancelled'
+                    raise
+                except Exception:
+                    exit_code='unexpected_error'
+                    raise
                 finally:
                     self._invalidate(); self._update(connected=False)
                     with self._diag_lock: delivered=self._diag['sent']>sent_before
@@ -627,6 +698,8 @@ class PreviewBridge:
                     # socket health. Preserve retries across immediate failures.
                     if delivered or (session_started is not None and time.monotonic()-session_started>=15):
                         backoff=1
+                    retry_ms=round(backoff*1000) if exit_code not in ('cancelled','stopped','unexpected_error') and not self._stop.is_set() and self._eligible(client) and id(client) not in self._blocked else None
+                    self._record_exit(exit_code,session_started,sent_before,ws_code=ws_code,retry_ms=retry_ms,http_status=http_status)
                 self.write_status()
                 if self._eligible(client) and id(client) not in self._blocked:
                     # Interruptible backoff also observes capability revocation.

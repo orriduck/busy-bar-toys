@@ -810,7 +810,17 @@ class PreviewBackoffTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(preview,'time',fake_time), patch.object(preview.asyncio,'sleep',advance), \
              patch.object(preview,'NoRedirectConnect',Connected), patch.object(bridge,'_session',session):
             await bridge.run()
+        self.last_diagnostics=bridge.diagnostics()
         return [attempts[i+1]-ended[i] for i in range(3)]
+
+    async def test_session_end_diagnostics_record_actual_backoff_without_peer_payload(self):
+        await self.run_sessions()
+        rows=self.last_diagnostics['recentSessionEnds']
+        self.assertEqual(len(rows),4)
+        self.assertEqual([r['plannedRetryDelayMs']for r in rows],[1000,2000,4000,None])
+        self.assertEqual({r['code']for r in rows},{'unavailable'})
+        self.assertTrue(all(r['durationMs']>=0 and type(r['atMs'])is int for r in rows))
+        self.assertTrue(all(r['sentFrames']==0 and r['webSocketCode']is None for r in rows))
 
     async def test_three_consecutive_capture_failures_keep_increasing_backoff(self):
         delays=await self.run_sessions()
@@ -853,6 +863,10 @@ class PreviewRelayCloseTest(unittest.IsolatedAsyncioTestCase):
                             await self.wait_until(lambda:len(attempts)==2 and bridge.diagnostics()['connected'])
                             self.assertGreaterEqual(attempts[1]-attempts[0],.9)
                         self.assertEqual(factories,[])
+                        rows=bridge.diagnostics()['recentSessionEnds']
+                        self.assertEqual(rows[0]['code'],reason)
+                        self.assertEqual(rows[0]['webSocketCode'],1008)
+                        self.assertEqual(rows[0]['plannedRetryDelayMs'],None if reason=='UNAUTHORIZED' else 1000)
                     finally:
                         task.cancel()
                         with self.assertRaises(asyncio.CancelledError): await task
@@ -1002,6 +1016,11 @@ class PreviewTransientRejectionTest(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(device.verified,[DEVICE,DEVICE])
                             self.assertTrue(bridge.diagnostics()['connected'])
                             self.assertEqual(bridge.diagnostics()['lastCloudError'],code)
+                            ended=bridge.diagnostics()['recentSessionEnds'][0]
+                            self.assertIn(ended['code'],(code,'unavailable'))
+                            self.assertGreaterEqual(ended['sentFrames'],1)
+                            self.assertIsNotNone(ended['firstFrameSentAtMs'])
+                            self.assertGreaterEqual(ended['lastFrameSentAtMs'],ended['firstFrameSentAtMs'])
                             self.assertNotIn('secret',json.dumps(bridge.diagnostics()))
                         finally:
                             task.cancel()
@@ -1030,6 +1049,81 @@ class PreviewTransientRejectionTest(unittest.IsolatedAsyncioTestCase):
                 finally:
                     task.cancel()
                     with self.assertRaises(asyncio.CancelledError): await task
+
+
+class PreviewSessionDiagnosticsTest(unittest.IsolatedAsyncioTestCase):
+    async def exit_diagnostic(self,error=None,close_code=None):
+        from types import SimpleNamespace
+        bridge=preview.PreviewBridge('.',{'agent':client_for('http://localhost:1234')},status_path=None)
+        class Connected:
+            def __init__(self,*args,**kwargs):pass
+            async def __aenter__(self):return SimpleNamespace(close_code=close_code)
+            async def __aexit__(self,*args):pass
+        async def session(*args):
+            bridge._stop.set()
+            if error is not None:raise error
+        with patch.object(preview,'NoRedirectConnect',Connected),patch.object(bridge,'_session',session):
+            if type(error)is RuntimeError:
+                with self.assertRaises(RuntimeError):await bridge.run()
+            else:await bridge.run()
+        return bridge.diagnostics()['recentSessionEnds'][-1]
+
+    async def test_normal_eof_ping_and_transport_exits_keep_only_finite_categories(self):
+        from websockets.exceptions import ConnectionClosedError
+        from websockets.frames import Close
+        cases=[(None,1000,'normal_close',1000),
+               (ConnectionClosedError(None,None),None,'no_close_frame',None),
+               (ConnectionClosedError(None,Close(1011,'keepalive ping timeout')),None,'ping_timeout',None),
+               (ConnectionClosedError(Close(1012,'private-peer-payload'),None),None,'websocket_closed',1012),
+               (ConnectionClosedError(Close(1008,'transport_error'),None),None,'websocket_closed',1008),
+               (WebSocketException('private-peer-payload'),None,'websocket_error',None),
+               (OSError('private-peer-payload'),None,'transport_error',None),
+               (TimeoutError('private-peer-payload'),None,'transport_timeout',None),
+               (RuntimeError('private-peer-payload'),None,'unexpected_error',None)]
+        for error,close_code,expected,expected_ws in cases:
+            with self.subTest(expected=expected,expected_ws=expected_ws):
+                row=await self.exit_diagnostic(error,close_code)
+                self.assertEqual(row['code'],expected)
+                self.assertEqual(row['webSocketCode'],expected_ws)
+                self.assertNotIn('private-peer-payload',json.dumps(row))
+                self.assertIsNone(row['plannedRetryDelayMs'])
+
+    async def test_legacy_asyncio_timeout_is_distinguished_from_other_transport_errors(self):
+        class LegacyAsyncTimeout(Exception):pass
+        with patch.object(preview.asyncio,'TimeoutError',LegacyAsyncTimeout):
+            row=await self.exit_diagnostic(LegacyAsyncTimeout('private-peer-payload'))
+        self.assertEqual(row['code'],'transport_timeout')
+        self.assertNotIn('private-peer-payload',json.dumps(row))
+
+    async def test_history_is_bounded_copied_and_never_keeps_unknown_values(self):
+        bridge=preview.PreviewBridge('.',{},status_path=None)
+        for _ in range(40):
+            bridge._record_exit('private-peer-payload',time.monotonic(),0,ws_code=4242,retry_ms='private-peer-payload',http_status='private-peer-payload')
+        result=bridge.diagnostics()
+        self.assertEqual(len(result['recentSessionEnds']),16)
+        self.assertTrue(all(row['code']=='unknown'and row['webSocketCode']is None and row['httpStatus']is None and row['plannedRetryDelayMs']is None for row in result['recentSessionEnds']))
+        self.assertNotIn('private-peer-payload',json.dumps(result))
+        result['recentSessionEnds'][0]['code']='mutated'
+        self.assertEqual(bridge.diagnostics()['recentSessionEnds'][0]['code'],'unknown')
+        bridge._record_exit('handshake_rejected',None,0,retry_ms=1000,http_status=503)
+        result=bridge.diagnostics();result['lastConnectFailure']['code']='mutated'
+        self.assertEqual(bridge.diagnostics()['lastConnectFailure']['code'],'handshake_rejected')
+        self.assertEqual(bridge.diagnostics()['lastConnectFailure']['httpStatus'],503)
+        self.assertEqual(len(bridge.diagnostics()['recentSessionEnds']),16)
+
+    async def test_capture_history_distinguishes_late_completion_from_current_retry(self):
+        client=client_for('http://localhost:1234');bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        for _ in range(12):bridge._capture_failed(client,0,preview.PreviewError('private-peer-payload'))
+        self.assertEqual(len(bridge.diagnostics()['recentCaptureErrors']),8)
+        self.assertTrue(all(not r['currentContext']and r['code']=='unknown'for r in bridge.diagnostics()['recentCaptureErrors']))
+        bridge._client=client;bridge._demand=True
+        bridge._capture_failed(client,0,preview.PreviewError('unavailable'))
+        snapshot=bridge.diagnostics();last=snapshot['recentCaptureErrors'][-1]
+        self.assertTrue(last['currentContext']);self.assertEqual(last['code'],'unavailable')
+        self.assertEqual(snapshot['captureRetries'],1)
+        self.assertNotIn('private-peer-payload',json.dumps(snapshot))
+        last['code']='mutated'
+        self.assertEqual(bridge.diagnostics()['recentCaptureErrors'][-1]['code'],'unavailable')
 
 
 if __name__=='__main__': unittest.main()
