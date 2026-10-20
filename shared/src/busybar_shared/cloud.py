@@ -29,6 +29,7 @@ LOCAL_ASSET_BYTES = 8 * 1024 * 1024
 LOCAL_RECORDS = 4096
 LOCAL_ACTIONS = 512
 LOCAL_INPUTS = 2048
+LOCAL_STATE_BYTES = 32 * 1024 * 1024
 ASSET_ENCODING_VERSION = 'native-rle-v1'
 DELIVERY_FAILURE_REASONS = frozenset(('expired', 'epoch-expired', 'epoch_expired', 'heartbeat-expired', 'source-expired'))
 IDENTIFIER = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
@@ -173,15 +174,19 @@ def parse_sse(lines):
         elif line.startswith('data:'): data.append(line[5:].lstrip(' '))
 
 
-def atomic_json(path, data):
+def _atomic_bytes(path, raw):
     path=Path(path); path.parent.mkdir(parents=True,mode=0o700,exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,delete=False) as stream:
+    with tempfile.NamedTemporaryFile(mode='wb',dir=path.parent,delete=False) as stream:
         tmp=Path(stream.name)
         try:
             os.chmod(tmp,0o600)
-            json.dump(data,stream,separators=(',',':'),allow_nan=False)
+            stream.write(raw)
             stream.flush(); os.fsync(stream.fileno()); tmp.replace(path)
         finally: tmp.unlink(missing_ok=True)
+
+
+def atomic_json(path, data):
+    _atomic_bytes(path,json.dumps(data,separators=(',',':'),allow_nan=False).encode())
 
 
 def keychain(role, value=None):
@@ -249,7 +254,7 @@ class State:
         self.path=Path(path); self.clock=clock or time.time; self.lock=threading.RLock()
         try:
             raw=self.path.read_bytes()
-            if len(raw)>32*1024*1024: raise ValueError()
+            if len(raw)>LOCAL_STATE_BYTES: raise ValueError()
             self.data=json.loads(raw)
             if not isinstance(self.data.get('records'),dict): raise ValueError()
         except FileNotFoundError: self.data={'records':{},'actions':{},'assets':{},'inputs':{}}
@@ -258,9 +263,10 @@ class State:
         self.data.setdefault('ends',{})
 
     def save(self):
-        if len(json.dumps(self.data,separators=(',',':'),allow_nan=False).encode())>32*1024*1024:
+        raw=json.dumps(self.data,separators=(',',':'),allow_nan=False).encode()
+        if len(raw)>LOCAL_STATE_BYTES:
             raise CloudError('local_state_capacity')
-        atomic_json(self.path,self.data)
+        _atomic_bytes(self.path,raw)
 
     @staticmethod
     def compact(record,*,keep_fallback=False):
@@ -325,11 +331,14 @@ class State:
                 if key.startswith(source+':'): rec['sourceUnknown']=True
             self.save()
 
-    def tombstone(self,item_id,reason):
+    def tombstone(self,item_id,reason,*,record_keys=None):
         with self.lock:
             changed=[]
-            for rec in self.records.values():
-                if rec['itemId']==item_id:
+            candidates=self.records.values() if record_keys is None else (self.records.get(key) for key in record_keys)
+            for rec in candidates:
+                # Hints are checked under the same lock: a source may have
+                # replaced an occurrence since its receipt index was built.
+                if rec is not None and rec['itemId']==item_id:
                     before=rec.copy()
                     rec['tombstone']=reason; rec['acked']=rec['version']; rec.pop('ending',None)
                     rec['fallbackPending']=(reason in DELIVERY_FAILURE_REASONS and rec.get('level')=='urgent'
@@ -544,14 +553,17 @@ class Producer:
         # on each SSE, poll and heartbeat snapshot. Keep durable reconciliation
         # and callbacks in State.tombstone, including repeated fallback updates.
         with self.state.lock:
-            receipt_ids={json.dumps([self.config['serviceId'],self.config['instanceId'],rec['itemId']],
-                                    separators=(',',':')):rec['itemId']
-                         for rec in self.state.records.values()}
+            receipt_ids={}
+            for local_key,rec in self.state.records.items():
+                key=json.dumps([self.config['serviceId'],self.config['instanceId'],rec['itemId']],separators=(',',':'))
+                entry=receipt_ids.setdefault(key,(rec['itemId'],[]))
+                entry[1].append(local_key)
         for tomb in snapshot.get('tombstones',[]):
             key=tomb.get('itemKey')
-            item_id=receipt_ids.get(key) if isinstance(key,str) else None
-            if item_id is not None:
-                changed=self.state.tombstone(item_id,tomb.get('reason','ended'))
+            match=receipt_ids.get(key) if isinstance(key,str) else None
+            if match is not None:
+                item_id,record_keys=match
+                changed=self.state.tombstone(item_id,tomb.get('reason','ended'),record_keys=record_keys)
                 if changed and self.on_tombstone: self.on_tombstone(item_id,tomb.get('reason'))
         now=self.clock()*1000
         display=snapshot.get('displaying') or {}

@@ -26,3 +26,5 @@ Run the complete suite from the repository root:
 ```
 
 `activity.ActivityPublisher` provides the shared occurrence lifecycle for Agent and game renderers. It keeps identity, freshness, pending native updates, and withdrawal separate from source detection and cloud scheduling.
+
+`cloud.Producer` indexes scoped receipt keys once per snapshot and reconciles the matching local occurrences under the state lock. Repeated receipt history does not rescan the entire outbox for each receipt. The durable state uses one JSON encoding for both its 32 MiB byte limit and atomic file write; failed saves retain the previous file and receipt transitions remain retryable. Urgent fallback, replay protection, and callbacks still depend on the same durable transitions.
