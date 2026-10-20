@@ -896,3 +896,34 @@ it.each([
     );
   },
 );
+
+it("distinguishes an unreleased same-instance publisher lease from an expired epoch", async () => {
+  const s = await setup();
+  const first = await s.connect();
+  expect(first.status).toBe(101);
+  const socket = first.webSocket!;
+  const events = messages(socket);
+  await waitMessage(events, "demand");
+  try {
+    const overlap = await s.connect();
+    expect(overlap.status).toBe(409);
+    expect(await overlap.json()).toEqual({ error: "PREVIEW_PUBLISHER_EXISTS" });
+    const staleEpoch = await s.connect({ "X-Busy-Epoch": "old" });
+    expect(staleEpoch.status).toBe(409);
+    expect(await staleEpoch.json()).toEqual({ error: "EPOCH_EXPIRED" });
+    expect(
+      ((await (await s.admin("/api/preview/status")).json()) as any).connected,
+    ).toBe(true);
+  } finally {
+    socket.close();
+  }
+  await vi.waitFor(async () => {
+    expect(
+      ((await (await s.admin("/api/preview/status")).json()) as any).connected,
+    ).toBe(false);
+  });
+  const replacement = await s.connect();
+  expect(replacement.status).toBe(101);
+  replacement.webSocket!.accept();
+  replacement.webSocket!.close();
+});

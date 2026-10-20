@@ -278,3 +278,49 @@ it.each(["cancel", "expiry", "revocation", "backpressure"] as const)(
     });
   },
 );
+
+it.each(["backpressure", "lifetime"] as const)(
+  "reclaims %s streams at reconnect admission when the cleanup timer has not run",
+  async (reason) => {
+    const { stub, auth } = await fixture();
+    await runInDurableObject(stub, async (instance) => {
+      const bodies: ReadableStream<Uint8Array>[] = [];
+      const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+      const base = Date.now();
+      let now = base;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        for (let n = 0; n < 16; n++) {
+          const response = await instance.handle(auth, "/api/events", "GET");
+          expect(response.status).toBe(200);
+          if (reason === "lifetime") {
+            const reader = response.body!.getReader();
+            readers.push(reader);
+            await reader.read();
+          } else bodies.push(response.body!);
+        }
+        now = base + (reason === "lifetime" ? 55001 : 2001);
+        const replacement = await instance.handle(auth, "/api/events", "GET");
+        if (replacement.body) bodies.push(replacement.body);
+        expect(replacement.status).toBe(200);
+        const diagnostics = await instance.handle(
+          auth,
+          "/api/diagnostics/display",
+          "GET",
+        );
+        expect(
+          ((await diagnostics.json()) as any).snapshotStreams,
+        ).toMatchObject({
+          active: 1,
+          limit: 16,
+          capacityRejected: 0,
+          closed: { [reason]: 16 },
+        });
+      } finally {
+        await Promise.all(readers.map((reader) => reader.cancel()));
+        await Promise.all(bodies.map((body) => body.cancel()));
+        clock.mockRestore();
+      }
+    });
+  },
+);
