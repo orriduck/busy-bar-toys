@@ -158,7 +158,7 @@ it("preserves other producer instances and legacy streams and rejects unauthoriz
     };
     const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
     try {
-      for (const id of ["mac-a", "mac-b", undefined]) {
+      for (const id of ["mac-a", "mac-b", undefined, undefined]) {
         const response = await instance.handle(
           auth,
           "/api/events",
@@ -197,7 +197,7 @@ it("preserves other producer instances and legacy streams and rejects unauthoriz
           )
         ).status,
       ).toBe(403);
-      expect((instance as any).snapshotStreamHealth().active).toBe(3);
+      expect((instance as any).snapshotStreamHealth().active).toBe(4);
       const replacement = await instance.handle(
         auth,
         "/api/events",
@@ -209,9 +209,23 @@ it("preserves other producer instances and legacy streams and rejects unauthoriz
       readers.push(reader);
       await reader.read();
       expect((instance as any).snapshotStreamHealth()).toMatchObject({
-        active: 3,
+        active: 4,
+        optedInProducerActive: 2,
+        legacyProducerActive: 2,
+        optedInIdentityConnectionCounts: [1, 1],
+        legacyServiceConnectionCounts: [2],
         closed: { replaced: 1 },
       });
+      const serialized = JSON.stringify(
+        (instance as any).snapshotStreamHealth(),
+      );
+      for (const privateValue of [
+        "mac-a",
+        "mac-b",
+        "producer-hash",
+        "peer-hash",
+      ])
+        expect(serialized).not.toContain(privateValue);
       expect((await readers[0].read()).done).toBe(true);
     } finally {
       await Promise.all(readers.map((reader) => reader.cancel()));

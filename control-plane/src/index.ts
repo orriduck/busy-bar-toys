@@ -1249,6 +1249,10 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       backpressured = 0,
       oldestBackpressureAgeMs = 0;
     const services = new Map<string, number>();
+    const optedInIdentities = new Map<string, number>();
+    const legacyServices = new Map<string, number>();
+    let optedInProducerActive = 0,
+      legacyProducerActive = 0;
     for (const entry of this.streams.values()) {
       activeByKind[entry.auth.kind]++;
       pending += Number(entry.dirty);
@@ -1263,6 +1267,26 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       if (entry.auth.kind !== "session" && entry.auth.serviceId) {
         const key = entry.auth.serviceId;
         services.set(key, (services.get(key) ?? 0) + 1);
+        // Report counts only. Never publish credential hashes or collector
+        // identities, and do not conflate independent opted-in instances.
+        const scope = [
+          entry.auth.kind,
+          entry.auth.hash,
+          entry.auth.kind === "computer" ? entry.auth.computerId : null,
+          entry.auth.serviceId,
+        ];
+        if (entry.instanceId !== null) {
+          optedInProducerActive++;
+          const identity = JSON.stringify([...scope, entry.instanceId]);
+          optedInIdentities.set(
+            identity,
+            (optedInIdentities.get(identity) ?? 0) + 1,
+          );
+        } else {
+          legacyProducerActive++;
+          const identity = JSON.stringify(scope);
+          legacyServices.set(identity, (legacyServices.get(identity) ?? 0) + 1);
+        }
       }
     }
     return {
@@ -1274,6 +1298,14 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       backpressured,
       oldestBackpressureAgeMs,
       serviceConnectionCounts: [...services.values()].sort((a, b) => b - a),
+      optedInProducerActive,
+      legacyProducerActive,
+      optedInIdentityConnectionCounts: [...optedInIdentities.values()].sort(
+        (a, b) => b - a,
+      ),
+      legacyServiceConnectionCounts: [...legacyServices.values()].sort(
+        (a, b) => b - a,
+      ),
       ...this.streamStats,
     };
   }
