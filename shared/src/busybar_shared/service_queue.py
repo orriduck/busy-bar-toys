@@ -34,11 +34,13 @@ class ServiceQueue:
         received_at=time.monotonic()
         if any(s.get('id')!=self.config['serviceId'] for s in snapshot.get('services',[])):
             raise self.error_type('scope_violation')
+        # A rejected poll must not publish a foreign cached revision that would
+        # suppress a later valid snapshot from the recovered SSE lane.
+        if any(i.get('serviceId',self.config['serviceId'])!=self.config['serviceId'] for i in snapshot.get('items',[])):
+            raise self.error_type('scope_violation')
         with self._snapshot_lock:
             if snapshot.get('revision',0)<self.snapshot.get('revision',-1): return
             self.snapshot=copy.deepcopy(snapshot)
-        if any(i.get('serviceId',self.config['serviceId'])!=self.config['serviceId'] for i in snapshot.get('items',[])):
-            raise self.error_type('scope_violation')
         self.guard.snapshot(snapshot)
         # Receipt history grows over the enrollment lifetime. Index our exact
         # scoped keys once instead of serializing every record for every receipt
