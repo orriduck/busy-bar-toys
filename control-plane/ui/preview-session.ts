@@ -3,6 +3,7 @@ export interface PreviewFrame {
   streamId: string;
   sequence: number;
   capturedAt: number;
+  displayConfirmed?: boolean;
   receivedAt: number;
   serverNow?: number;
   width: 72;
@@ -104,6 +105,8 @@ export class PreviewFence {
       v.height !== 16 ||
       !Number.isSafeInteger(v.receivedAt) ||
       !Number.isSafeInteger(v.capturedAt) ||
+      (v.displayConfirmed !== undefined &&
+        typeof v.displayConfirmed !== "boolean") ||
       !(v.serverNow === undefined
         ? this.relayFloor === null
           ? frameIsFresh(v, now)

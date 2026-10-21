@@ -50,7 +50,8 @@ def producers(runtime):
     for config in configurations(runtime):
         key='computer' if config.get('computerId') else config['role']
         if key not in secrets: secrets[key]=keychain(key)
-        http=Transport(config['url'],secrets[key],**({'service_id':config['serviceId']} if key=='computer' else {}))
+        http=Transport(config['url'],secrets[key],instance_id=config['instanceId'],
+                       **({'service_id':config['serviceId']} if key=='computer' else {}))
         clients[config.get('key',config['role'])]=Producer(runtime,config,http)
     return clients
 

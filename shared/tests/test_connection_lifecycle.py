@@ -14,6 +14,17 @@ class StopAfter:
 
 
 class LifecycleContractTest(unittest.TestCase):
+    def test_stop_closes_the_owned_iterator_without_waiting_for_gc(self):
+        closed=[];stop=StopAfter(1)
+        class Stream:
+            def __iter__(self):return self
+            def __next__(self):return {'revision':1}
+            def close(self):closed.append(True)
+        def deliver(_):stop.remaining=0
+        SnapshotStreamChannel(stop=stop,connect=Stream,deliver=deliver,
+            errors=(CloudError,),terminal=lambda _:False,on_error=lambda _:None).run()
+        self.assertEqual(closed,[True])
+
     def test_failure_budget_is_independent_and_success_resets_only_its_lane(self):
         def fail():raise CloudError('unavailable')
         first=StopAfter(4);second=StopAfter(2)

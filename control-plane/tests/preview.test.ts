@@ -193,6 +193,7 @@ describe("read-only pixel preview Worker/DO relay", () => {
         sequence: 1,
         capturedAt: Date.now(),
         pixels,
+        displayConfirmed: false,
       }),
     );
     const frame = await readEvent(reader, "frame");
@@ -203,6 +204,7 @@ describe("read-only pixel preview Worker/DO relay", () => {
       width: 72,
       height: 16,
       pixels,
+      displayConfirmed: false,
     });
     expect(frame.receivedAt).toBeGreaterThan(0);
     expect(frame.serverNow).toBeGreaterThanOrEqual(frame.receivedAt);
@@ -934,14 +936,17 @@ it("VM investigation: heartbeat keeps an idle no-demand publisher past its initi
   expect(response.status).toBe(101);
   const socket = response.webSocket!;
   const events = messages(socket);
-  await waitMessage(events, "demand", v => !v.enabled);
+  await waitMessage(events, "demand", (v) => !v.enabled);
   const interval = setInterval(() => socket.send('{"type":"heartbeat"}'), 5000);
   try {
-    await new Promise(resolve => setTimeout(resolve, 17200));
+    await new Promise((resolve) => setTimeout(resolve, 17200));
     expect(await (await s.admin("/api/preview/status")).json()).toMatchObject({
-      connected: true, demand: false, viewers: 0, lastFrameAt: null,
+      connected: true,
+      demand: false,
+      viewers: 0,
+      lastFrameAt: null,
     });
-    expect(events.filter(v => v.type === "error")).toEqual([]);
+    expect(events.filter((v) => v.type === "error")).toEqual([]);
   } finally {
     clearInterval(interval);
     socket.close();

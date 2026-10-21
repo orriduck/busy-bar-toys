@@ -23,6 +23,7 @@ type PreviewFrame = {
   streamId: string;
   sequence: number;
   capturedAt: number;
+  displayConfirmed?: boolean;
   receivedAt: number;
   pixels: string;
   width: 72;
@@ -358,12 +359,20 @@ export class PreviewRelay {
         typeof f === "object" &&
         !Array.isArray(f) &&
         Object.keys(f).every((k) =>
-          ["type", "sequence", "capturedAt", "pixels"].includes(k),
+          [
+            "type",
+            "sequence",
+            "capturedAt",
+            "pixels",
+            "displayConfirmed",
+          ].includes(k),
         ) &&
         f.type === "frame" &&
         Number.isSafeInteger(f.sequence) &&
         Number(f.sequence) > 0 &&
         Number.isSafeInteger(f.capturedAt) &&
+        (f.displayConfirmed === undefined ||
+          typeof f.displayConfirmed === "boolean") &&
         typeof f.pixels === "string" &&
         /^[A-Za-z0-9+/]{4608}$/.test(f.pixels),
       "INVALID_PREVIEW_FRAME",
@@ -384,6 +393,9 @@ export class PreviewRelay {
       streamId: p.streamId,
       sequence: p.sequence,
       capturedAt: Number(f.capturedAt),
+      ...(f.displayConfirmed === undefined
+        ? {}
+        : { displayConfirmed: f.displayConfirmed as boolean }),
       receivedAt: now,
       pixels: f.pixels as string,
       width: 72,

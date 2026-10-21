@@ -5,9 +5,13 @@ HTTP worker and one read in flight. Missed periods are skipped, never repaid as 
 burst. All browser viewers share the existing publisher and its latest-frame
 queue; opening another viewer does not create another local capture loop.
 
-The bridge pauses while the selected display is applying, unconfirmed or
-unhealthy. Late or queued frames from that paused interval are discarded. A
-read already in flight remains subject to the existing bounded read deadline;
+The bridge gives applying, unconfirmed or unhealthy display state a two-second
+head start. If confirmation remains unavailable, it resumes actual device reads
+at 0.5 FPS with `displayConfirmed:false`; cloud ACK failures cannot indefinitely
+block a readable LAN device. Repeated failures and generation changes do not
+restart this grace period. Confirmed state restores the two-FPS ceiling. Frames
+from an older display/session context are discarded before send. A read already
+in flight remains subject to the existing bounded read deadline;
 this is best-effort yielding based on received scheduler state, not a firmware
 priority or preemption guarantee. Collection, publishing and display writes do
 not acquire the preview's worker or wait for its frames.
@@ -35,9 +39,10 @@ a cloud/browser clock offset cannot blank continuously arriving two-fps frames.
 After a pause it retains the last frame with an explicit seconds-old label;
 new device/stream/session boundaries clear the old pixels. An OPEN stream with
 no accepted frame for15seconds releases its lease and reconnects once. These
-changes add no local reads and do not resume capture while display writes are
-unconfirmed. Empty queue/default clock uses the same preview path as a stable
-selected scene.
+browser behavior does not create another capture loop. Unconfirmed pixels carry
+the explicit “Live pixels · display unconfirmed” label; they are never queue
+delivery evidence and do not acknowledge an occurrence. Empty queue/default
+clock uses the same preview path as a stable selected scene.
 
 Rolling upgrades may leave a live relay sending the previous frame format.
 Its authenticated status supplies a receipt/sequence floor; the browser rejects
@@ -45,3 +50,8 @@ older or replayed frames and starts the local two-second budget on arrival.
 The old relay still owns its two-second cache/emission limit. Acceptance must
 check real packets as well as deployment metadata; a new static bundle alone
 does not prove that a live relay switched formats.
+
+Deploy the control plane first. Its authenticated application diagnostics must
+report `previewDisplayConfirmation:true` before upgrading the Python bridge:
+older relays reject the new optional frame field. To roll back the control plane,
+roll back Python first. New relays continue to accept old bridge frames.

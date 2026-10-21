@@ -67,10 +67,15 @@ class SnapshotStreamChannel:
     def run(self):
         while not self.stop.is_set():
             try:
-                for envelope in self.connect():
-                    if self.stop.is_set(): return
-                    self.deliver(envelope)
-                    self.retry.progress()
+                stream=self.connect()
+                try:
+                    for envelope in stream:
+                        if self.stop.is_set(): return
+                        self.deliver(envelope)
+                        self.retry.progress()
+                finally:
+                    close=getattr(stream,'close',None)
+                    if close is not None:close()
             except self.errors as error:
                 self.on_error(error)
                 if self.terminal(error): return

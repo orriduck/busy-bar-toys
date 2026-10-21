@@ -43,3 +43,13 @@ this task-lifetime/buffer boundary.
   display fencing, capture cadence, retry/backoff and diagnostic regressions.
 - `service/tests/test_cloud_preview.py`: exactly one optional bridge lifecycle.
 - Existing control-plane preview tests cover unchanged wire/browser behavior.
+
+
+## Subsequent fault isolation
+
+The coordinator now bounds the display-confirmation pause to two seconds, then
+reads unconfirmed actual pixels at0.5FPS. Frames carry an optional boolean
+`displayConfirmed`, preserved by the relay and labeled by the browser. Confirmed
+reads retain2FPS and one in-flight read. These changes do not affect the extracted
+session/buffer owners or service-queue delivery evidence. Deploy the relay before
+the new bridge; see `preview-device-priority.md` for upgrade/rollback order.

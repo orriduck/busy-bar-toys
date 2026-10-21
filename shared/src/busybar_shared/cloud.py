@@ -68,7 +68,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class Transport:
-    def __init__(self, url, credential, *, timeout=5, opener=None, service_id=None):
+    def __init__(self, url, credential, *, timeout=5, opener=None, service_id=None, instance_id=None):
         self.url = base_url(url)
         if not credential or any(c.isspace() for c in credential): raise CloudError('invalid_credential')
         self._credential = credential
@@ -76,6 +76,10 @@ class Transport:
                                        or service_id in ('__proto__','constructor','prototype')):
             raise CloudError('invalid_service')
         self.service_id = service_id
+        if instance_id is not None and (not isinstance(instance_id,str) or not IDENTIFIER.fullmatch(instance_id)
+                                       or instance_id in ('__proto__','constructor','prototype')):
+            raise CloudError('invalid_instance')
+        self.instance_id = instance_id
         self.timeout = timeout
         self._opener = opener or build_opener(NoRedirect())
 
@@ -106,6 +110,8 @@ class Transport:
         headers = {'Authorization':'Bearer ' + self._credential, 'Accept':'application/json',
                    'User-Agent':'busy-bar-toys/0.1'}
         if self.service_id is not None: headers['X-Busy-Service']=self.service_id
+        if path=='/api/events' and self.instance_id is not None:
+            headers['X-Busy-Instance']=self.instance_id
         data = None if body is None else json.dumps(body, separators=(',',':'),allow_nan=False).encode()
         if data is not None:
             if len(data) > 512 * 1024: raise CloudError('request_too_large')
