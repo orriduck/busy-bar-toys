@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from busybar_shared.cloud import State, CloudError
 from busybar_shared.service_queue import ServiceQueue
+from unittest.mock import patch
 
 class Guard:
     def snapshot(self,snapshot):pass
@@ -72,3 +73,21 @@ class ServiceQueueContractTest(unittest.TestCase):
             self.assertEqual(live['acked'],1);self.assertEqual(live['update'],[{'id':'new'}])
             queue.acknowledge(live['itemId'],2)
             self.assertEqual(live['acked'],2);self.assertNotIn('update',live)
+
+    def test_rejected_foreign_poll_cannot_poison_cache_or_block_lower_valid_sse_revision(self):
+        tick=[100.0]
+        with tempfile.TemporaryDirectory() as root,patch('busybar_shared.service_queue.time.monotonic',side_effect=lambda:tick[0]):
+            queue=self.setup_queue(root)
+            accepted={'protocol':1,'revision':5,'serverNow':100000,'services':[{'id':'a'}],'items':[]}
+            queue.accept(accepted);durable=queue.state.path.read_bytes()
+            tick[0]=106
+            rejected={'protocol':1,'revision':100,'serverNow':106000,'services':[{'id':'a'}],
+                      'items':[{'serviceId':'foreign','itemId':'not-ours'}]}
+            with self.assertRaisesRegex(CloudError,'scope_violation'):queue.accept(rejected)
+            self.assertEqual(queue.read_snapshot(),accepted)
+            self.assertTrue(queue.snapshot_due())
+            self.assertEqual(queue.state.path.read_bytes(),durable)
+            recovered={'protocol':1,'revision':6,'serverNow':106000,'services':[{'id':'a'}],'items':[]}
+            queue.accept(recovered)
+            self.assertEqual(queue.read_snapshot(),recovered)
+            self.assertFalse(queue.snapshot_due())
