@@ -1,8 +1,223 @@
 import { env } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { runInDurableObject, SELF } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
 import { digest } from "../src/security";
 import { StateStore } from "../src/store";
+import { registerService } from "../src/model";
+
+it.each(["publisher", "computer"] as const)(
+  "replaces only an opt-in %s instance at capacity before its old cancellation arrives",
+  async (kind) => {
+    const { stub, auth } = await fixture();
+    await runInDurableObject(stub, async (instance, ctx) => {
+      const store = new StateStore(ctx.storage),
+        state = store.load()!;
+      state.computers.owner = {
+        id: "owner",
+        credentialHash: "computer-hash",
+        createdAt: Date.now(),
+        serviceOrder: [],
+      };
+      registerService(
+        state,
+        {
+          id: "producer",
+          name: "Producer",
+          template: "custom",
+          computerId: "owner",
+        },
+        "producer-hash",
+        "epoch",
+        Date.now(),
+      );
+      store.save(state);
+      const publisher =
+        kind === "publisher"
+          ? { kind, serviceId: "producer", hash: "producer-hash" }
+          : {
+              kind,
+              computerId: "owner",
+              serviceId: "producer",
+              hash: "computer-hash",
+            };
+      const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+      try {
+        const old = await instance.handle(
+          publisher,
+          "/api/events",
+          "GET",
+          {},
+          "mac-a",
+        );
+        const oldReader = old.body!.getReader();
+        readers.push(oldReader);
+        await oldReader.read();
+        const oldStreamId = [...(instance as any).streams.keys()][0];
+        for (let n = 0; n < 15; n++) {
+          const response = await instance.handle(auth, "/api/events", "GET");
+          const reader = response.body!.getReader();
+          readers.push(reader);
+          await reader.read();
+        }
+        const replacement = await instance.handle(
+          publisher,
+          "/api/events",
+          "GET",
+          {},
+          "mac-a",
+        );
+        expect(replacement.status).toBe(200);
+        const reader = replacement.body!.getReader();
+        readers.push(reader);
+        await reader.read();
+        expect((await oldReader.read()).done).toBe(true);
+        const stats = (instance as any).snapshotStreamHealth();
+        expect(stats).toMatchObject({
+          active: 16,
+          limit: 16,
+          capacityRejected: 0,
+          closed: { replaced: 1 },
+          serviceConnectionCounts: [1],
+        });
+        await oldReader.cancel();
+        (instance as any).closeStream(oldStreamId, "cancelled");
+        expect((instance as any).snapshotStreamHealth().active).toBe(16);
+      } finally {
+        await Promise.all(readers.map((reader) => reader.cancel()));
+      }
+    });
+  },
+);
+
+it("forwards the explicit collector instance through the public Worker route", async () => {
+  const { stub } = await fixture();
+  const secret = "p".repeat(40),
+    hash = await digest(secret);
+  const deviceId = await runInDurableObject(stub, (_instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      state = store.load()!;
+    registerService(
+      state,
+      { id: "route", name: "Route", template: "custom" },
+      hash,
+      "epoch",
+      Date.now(),
+    );
+    store.save(state);
+    return state.deviceId;
+  });
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  try {
+    for (let n = 0; n < 2; n++) {
+      const response = await SELF.fetch("https://control.test/api/events", {
+        headers: {
+          Authorization: `Bearer ${deviceId}.route.${secret}`,
+          "X-Busy-Instance": "mac-route",
+        },
+      });
+      expect(response.status).toBe(200);
+      const reader = response.body!.getReader();
+      readers.push(reader);
+      await reader.read();
+    }
+    expect((await readers[0].read()).done).toBe(true);
+    await runInDurableObject(stub, (instance) => {
+      expect((instance as any).snapshotStreamHealth()).toMatchObject({
+        active: 1,
+        closed: { replaced: 1 },
+      });
+    });
+  } finally {
+    await Promise.all(readers.map((reader) => reader.cancel()));
+  }
+});
+
+it("preserves other producer instances and legacy streams and rejects unauthorized replacement", async () => {
+  const { stub } = await fixture();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const store = new StateStore(ctx.storage),
+      state = store.load()!;
+    state.computers.peer = {
+      id: "peer",
+      credentialHash: "peer-hash",
+      createdAt: Date.now(),
+      serviceOrder: [],
+    };
+    registerService(
+      state,
+      { id: "producer", name: "Producer", template: "custom" },
+      "producer-hash",
+      "epoch",
+      Date.now(),
+    );
+    store.save(state);
+    const auth = {
+      kind: "publisher" as const,
+      serviceId: "producer",
+      hash: "producer-hash",
+    };
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    try {
+      for (const id of ["mac-a", "mac-b", undefined]) {
+        const response = await instance.handle(
+          auth,
+          "/api/events",
+          "GET",
+          {},
+          id,
+        );
+        const reader = response.body!.getReader();
+        readers.push(reader);
+        await reader.read();
+      }
+      expect(
+        (
+          await instance.handle(
+            { ...auth, hash: "wrong" },
+            "/api/events",
+            "GET",
+            {},
+            "mac-a",
+          )
+        ).status,
+      ).toBe(401);
+      expect(
+        (
+          await instance.handle(
+            {
+              kind: "computer",
+              computerId: "peer",
+              serviceId: "producer",
+              hash: "peer-hash",
+            },
+            "/api/events",
+            "GET",
+            {},
+            "mac-a",
+          )
+        ).status,
+      ).toBe(403);
+      expect((instance as any).snapshotStreamHealth().active).toBe(3);
+      const replacement = await instance.handle(
+        auth,
+        "/api/events",
+        "GET",
+        {},
+        "mac-a",
+      );
+      const reader = replacement.body!.getReader();
+      readers.push(reader);
+      await reader.read();
+      expect((instance as any).snapshotStreamHealth()).toMatchObject({
+        active: 3,
+        closed: { replaced: 1 },
+      });
+      expect((await readers[0].read()).done).toBe(true);
+    } finally {
+      await Promise.all(readers.map((reader) => reader.cancel()));
+    }
+  });
+});
 
 async function fixture() {
   const deviceId = await digest(crypto.randomUUID()),

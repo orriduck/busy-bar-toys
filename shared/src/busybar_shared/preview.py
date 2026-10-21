@@ -33,6 +33,8 @@ FRAME_BYTES = 3456
 MAX_MESSAGE = 6143
 READ_TIMEOUT = .3
 FPS = 2
+DISPLAY_CONFIRMATION_GRACE = 2
+UNCONFIRMED_FPS = .5
 MAX_IN_FLIGHT = 1
 _HEX = re.compile(r'^[a-f0-9]{64}$')
 _STREAM = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
@@ -248,6 +250,7 @@ class PreviewBridge:
         self._blocked={}; self._generation=0; self._demand=False; self._client=None
         self._capture_error=None; self._active_send=None
         self._last_capture_started=-float('inf')
+        self._display_unconfirmed_at=None
         self._capture_failures=0; self._capture_retry_at=0
         self._latest=LatestFrameBuffer(); self._sequence=0; self._last_sent=0
         self._diag_lock=threading.Lock(); self._started=time.monotonic()
@@ -258,6 +261,7 @@ class PreviewBridge:
                     'invalidatedDropped':0,'outOfOrderDropped':0,'supersededDropped':0,'noDemandDropped':0,
                     'rateLimitedSkipped':0,'displayPausedDropped':0,
                     'targetFps':FPS,'actualTargetFps':FPS,'maxInFlight':MAX_IN_FLIGHT,'pausedForDisplay':False,
+                    'displayConfirmed':False,
                     'captureRetries':0,'connections':0,'disconnects':0,'lastCaptureError':None,'lastCloudError':None,
                     'lastConnectedAtMs':None,'firstFrameSentAtMs':None,'lastFrameSentAtMs':None,
                     'nextRetryDelayMs':None,'lastConnectFailure':None}
@@ -376,15 +380,41 @@ class PreviewBridge:
                 return (s['generation'],selected,version)
         except (KeyError,TypeError,AttributeError):return None
 
+    def _capture_fence(self,client):
+        confirmed=self._display_fence(client)
+        if confirmed is not None:
+            self._display_unconfirmed_at=None
+            return confirmed
+        try:
+            with client._snapshot_lock:
+                s=client.snapshot
+                if (not {'selected','applying','generation','health','displaying'}<=s.keys()
+                        or type(s['generation']) is not int
+                        or s['health'].get('status') not in ('healthy','offline','blocked','unknown')
+                        or s['selected'] is not None and not isinstance(s['selected'],str)
+                        or s['applying'] is not None and not isinstance(s['applying'],str)):
+                    return None
+                fallback=(s['generation'],s['selected'],s['applying'],'unconfirmed')
+        except (KeyError,TypeError,AttributeError):return None
+        # A business ACK is not a prerequisite for reading actual device pixels.
+        # Give physical writes a short head start, then read at a reduced cadence
+        # without claiming those pixels confirm the selected queue occurrence.
+        now=time.monotonic()
+        if self._display_unconfirmed_at is None:self._display_unconfirmed_at=now
+        if now-self._display_unconfirmed_at<DISPLAY_CONFIRMATION_GRACE:return None
+        return fallback
+
     def _capture_ready(self,client,generation,fence=None):
-        current=self._display_fence(client)
-        return self._valid(client,generation) and current is not None and (fence is None or current==fence)
+        if not self._valid(client,generation):return False
+        current=self._capture_fence(client)
+        return current is not None and (fence is None or current==fence)
 
     def _discard_for_display(self):
         for _ in range(self._latest.discard()): self._drop('displayPausedDropped')
 
     def _invalidate(self):
         self._generation+=1; self._demand=False
+        self._display_unconfirmed_at=None
         if self._active_send is not None and not self._active_send.done():
             self._active_send.cancel()
         for _ in range(self._latest.discard()): self._drop('invalidatedDropped')
@@ -424,14 +454,15 @@ class PreviewBridge:
         self._invalidate()
 
     def _submit_frame(self,device,slot,client,generation):
-        fence=self._display_fence(client)
+        fence=self._capture_fence(client)
         if not self._capture_ready(client,generation,fence) or fence is None:
             self._update(pausedForDisplay=fence is None)
             return False
         if slot!=0 or any(self._busy) or self._pending:
             self._count('busySkipped');return False
         now=asyncio.get_running_loop().time()
-        if now-self._last_capture_started<1/FPS:
+        fps=UNCONFIRMED_FPS if fence[-1]=='unconfirmed' else FPS
+        if now-self._last_capture_started<1/fps:
             self._count('rateLimitedSkipped');return False
         self._last_capture_started=now
         self._busy[slot]=True; self._sequence+=1
@@ -455,14 +486,15 @@ class PreviewBridge:
             self._capture_failures=0; self._capture_retry_at=0
             self._update(status='capturing')
             reason=self._latest.offer(generation,{'type':'frame','sequence':sequence,
-                'capturedAt':captured_at,'pixels':pixels,'_displayFence':fence},last_sent=self._last_sent)
+                'capturedAt':captured_at,'pixels':pixels,'displayConfirmed':fence[-1]!='unconfirmed',
+                '_displayFence':fence},last_sent=self._last_sent)
             if reason is not None: self._drop(reason)
         future.add_done_callback(complete)
         return True
 
     async def _capture(self,client,device_id):
         device=None;verified=-1
-        loop=asyncio.get_running_loop();period=1/FPS
+        loop=asyncio.get_running_loop()
         next_tick=None;last_tick=None
         while True:
             if self._capture_error is not None:raise self._capture_error
@@ -470,12 +502,14 @@ class PreviewBridge:
             if not self._valid(client,generation):
                 next_tick=None;self._update(pausedForDisplay=False)
                 await asyncio.sleep(.02);continue
-            fence=self._display_fence(client)
+            fence=self._capture_fence(client)
             if fence is None:
-                self._update(pausedForDisplay=True,status='paused-for-display')
+                self._update(pausedForDisplay=True,displayConfirmed=False,status='paused-for-display')
                 self._discard_for_display();next_tick=None
                 await asyncio.sleep(.02);continue
-            self._update(pausedForDisplay=False)
+            fps=UNCONFIRMED_FPS if fence[-1]=='unconfirmed' else FPS
+            period=1/fps
+            self._update(pausedForDisplay=False,displayConfirmed=fence[-1]!='unconfirmed',actualTargetFps=fps)
             if loop.time()<self._capture_retry_at:
                 await asyncio.sleep(min(.05,self._capture_retry_at-loop.time()))
                 next_tick=None;continue
@@ -554,6 +588,7 @@ class PreviewBridge:
                 self._drop('displayPausedDropped');continue
             # Local confirmation fences never enter the wire/pixel protocol.
             wire={k:frame[k] for k in ('type','sequence','capturedAt','pixels')}
+            if 'displayConfirmed' in frame:wire['displayConfirmed']=frame['displayConfirmed']
             raw=json.dumps(wire,separators=(',',':'),allow_nan=False)
             if len(raw.encode('utf-8'))>MAX_MESSAGE: raise PreviewError('frame')
             sending=asyncio.create_task(ws.send(raw))

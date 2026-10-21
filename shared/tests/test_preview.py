@@ -437,6 +437,54 @@ class PreviewProtocolTest(unittest.IsolatedAsyncioTestCase):
 class PreviewDisplayPriorityTest(unittest.IsolatedAsyncioTestCase):
     wait_until=PreviewBridgeTest.wait_until
 
+    def test_repeated_cloud_failures_and_changes_do_not_restart_confirmation_grace(self):
+        client=client_for('http://localhost:1234')
+        client.snapshot['health']['status']='offline';client.snapshot['applying']='first'
+        bridge=preview.PreviewBridge('.',{'agent':client},status_path=None)
+        bridge._client=client;bridge._demand=True
+        with patch.object(preview.time,'monotonic',return_value=100)as clock:
+            self.assertIsNone(bridge._capture_fence(client))
+            clock.return_value=101
+            client.snapshot.update(generation=5,applying='second')
+            bridge._capture_failed(client,0,preview.PreviewError('unavailable'))
+            self.assertIsNone(bridge._capture_fence(client))
+            clock.return_value=102.1
+            fence=bridge._capture_fence(client)
+            self.assertEqual(fence,(5,None,'second','unconfirmed'))
+            client.snapshot.update(generation=6,applying='third')
+            bridge._capture_failed(client,0,preview.PreviewError('timeout'))
+            self.assertEqual(bridge._capture_fence(client),(6,None,'third','unconfirmed'))
+            self.assertFalse(bridge._capture_ready(client,0,fence))
+
+    async def test_cloud_offline_does_not_indefinitely_block_readable_device_preview(self):
+        from concurrent.futures import ThreadPoolExecutor
+        client=client_for('http://localhost:1234')
+        client.snapshot['health']['status']='offline';client.snapshot['applying']='pending'
+        device=FakeDevice();bridge=preview.PreviewBridge('.',{'agent':client},status_path=None,
+            device_factory=lambda _:device)
+        bridge._executor=ThreadPoolExecutor(max_workers=1)
+        bridge._client=client;bridge._demand=True
+        task=asyncio.create_task(bridge._capture(client,DEVICE))
+        try:
+            await self.wait_until(lambda:bridge.diagnostics()['pausedForDisplay'])
+            await self.wait_until(lambda:bridge.diagnostics()['captured']>=1,timeout=3)
+            generation,frame=bridge._latest.get_nowait()
+            self.assertFalse(frame['displayConfirmed'])
+            self.assertEqual(device.verified,[DEVICE])
+            self.assertEqual(bridge.diagnostics()['actualTargetFps'],.5)
+            self.assertEqual(bridge.diagnostics()['maxInFlight'],1)
+            await self.wait_until(lambda:len(device.calls)>=2,timeout=2.5)
+            self.assertGreaterEqual(device.calls[1]-device.calls[0],1.99)
+            client.snapshot['health']['status']='healthy';client.snapshot['applying']=None
+            await self.wait_until(lambda:bridge.diagnostics()['displayConfirmed'],timeout=2.5)
+            self.assertEqual(bridge.diagnostics()['actualTargetFps'],2)
+            # Buffered fallback pixels cannot cross back into confirmed context.
+            self.assertFalse(bridge._capture_ready(client,generation,frame['_displayFence']))
+            client.snapshot['services'][0]['config']['allowPreview']=False
+            self.assertFalse(bridge._capture_ready(client,generation))
+        finally:
+            task.cancel();await asyncio.gather(task,return_exceptions=True);await bridge.aclose()
+
     @staticmethod
     def confirmed(client,version=1):
         client.snapshot.update(selected='own',applying=None,generation=3,

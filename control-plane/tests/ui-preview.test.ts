@@ -25,6 +25,20 @@ const frame = {
   pixels: btoa("\0".repeat(3456)),
 };
 describe("actual preview frame isolation", () => {
+  it("preserves an explicit unconfirmed-pixels label without treating it as delivery proof", () => {
+    const fence = new browser.PreviewFence(device);
+    fence.status(status);
+    expect(
+      fence.frame({ ...frame, displayConfirmed: false }, now)?.displayConfirmed,
+    ).toBe(false);
+    expect(
+      fence.frame({ ...frame, sequence: 2, displayConfirmed: "yes" }, now),
+    ).toBeNull();
+    expect(
+      fence.frame({ ...frame, sequence: 2, displayConfirmed: true }, now)
+        ?.displayConfirmed,
+    ).toBe(true);
+  });
   it("paces fresh frames without a startup or post-stall catch-up burst", () => {
     expect(typeof browser.FramePacer).toBe("function");
     const pacer = new browser.FramePacer();

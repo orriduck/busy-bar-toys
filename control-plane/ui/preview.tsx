@@ -294,8 +294,12 @@ export function Preview({
         if (!shown || delayed) {
           shown = true;
           delayed = false;
-          setMessage("");
         }
+        setMessage(
+          frame.displayConfirmed === false
+            ? "Live pixels · display unconfirmed"
+            : "",
+        );
       }
       if (t - sampled >= 1000) {
         const seconds = (t - sampled) / 1000;

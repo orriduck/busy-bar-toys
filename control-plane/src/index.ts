@@ -129,12 +129,19 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     capacityRejected: 0,
     capacityRejectedByKind: { session: 0, computer: 0, publisher: 0 },
     coalesced: 0,
-    closed: { cancelled: 0, lifetime: 0, backpressure: 0, authority: 0 },
+    closed: {
+      cancelled: 0,
+      lifetime: 0,
+      backpressure: 0,
+      authority: 0,
+      replaced: 0,
+    },
   };
   private streams = new Map<
     string,
     {
       auth: Auth;
+      instanceId: string | null;
       controller: ReadableStreamDefaultController<Uint8Array>;
       timer: ReturnType<typeof setTimeout>;
       heartbeat: ReturnType<typeof setInterval>;
@@ -437,6 +444,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
     path: string,
     method: string,
     body: Record<string, unknown> = {},
+    eventInstanceId?: string,
   ): Promise<Response> {
     try {
       // Perform cryptography before reading the mutable state; no external I/O is held under a storage gate.
@@ -702,6 +710,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         );
         response = json({
           implementation: "shared-service-motion-v2-prepared",
+          previewDisplayConfirmation: true,
           snapshotStreams: this.snapshotStreamHealth(),
           generation: s.generation,
           nativeElements: Object.keys(s.nativeElements).length,
@@ -727,7 +736,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       } else if (path === "/api/events" && method === "GET") {
         this.save(s);
         await this.arm();
-        return this.openStream(s, auth);
+        return this.openStream(s, auth, eventInstanceId);
       } else if (orderingServices) {
         (body.groups === undefined ? reorderOwnedServices : reorderOwnedGroups)(
           s,
@@ -1110,7 +1119,18 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       return safeError(error);
     }
   }
-  private openStream(s: State, auth: Auth) {
+  private openStream(s: State, auth: Auth, eventInstanceId?: string) {
+    // Explicit collector identity opts into one downlink per authenticated
+    // service/instance. Legacy readers, other instances and browser tabs keep
+    // their independent streams; no preview publisher lease is involved.
+    const instanceId =
+      eventInstanceId === undefined ? null : identifier(eventInstanceId);
+    if (instanceId !== null)
+      requireThat(
+        auth.kind !== "session" && !!auth.serviceId,
+        "FORBIDDEN",
+        403,
+      );
     // A reconnect request may run before an overdue cleanup callback. Reclaim
     // only streams already past the existing lifetime/backpressure deadlines
     // before deciding that all sixteen slots are occupied.
@@ -1124,6 +1144,20 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
       else if ((entry.controller.desiredSize ?? 0) > 0) entry.queuedAt = null;
       else if (entry.queuedAt !== null && now - entry.queuedAt >= 2000)
         this.closeStream(id, "backpressure");
+      if (
+        this.streams.has(id) &&
+        instanceId !== null &&
+        entry.instanceId === instanceId &&
+        auth.kind !== "session" &&
+        entry.auth.kind !== "session" &&
+        entry.auth.kind === auth.kind &&
+        entry.auth.serviceId === auth.serviceId &&
+        entry.auth.hash === auth.hash &&
+        (auth.kind !== "computer" ||
+          (entry.auth.kind === "computer" &&
+            entry.auth.computerId === auth.computerId))
+      )
+        this.closeStream(id, "replaced");
     }
     if (this.streams.size >= 16) {
       this.streamStats.capacityRejected++;
@@ -1170,6 +1204,7 @@ export class DeviceControl extends DurableObject<RuntimeEnv> {
         }, 2000);
         this.streams.set(id, {
           auth,
+          instanceId,
           controller,
           timer,
           heartbeat,
@@ -2777,6 +2812,9 @@ export default {
         path,
         request.method,
         body,
+        path === "/api/events" && request.method === "GET"
+          ? (request.headers.get("X-Busy-Instance") ?? undefined)
+          : undefined,
       );
     } catch (error) {
       return safeError(error);

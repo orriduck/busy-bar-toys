@@ -11,6 +11,20 @@ import unittest
 from busybar_shared.cloud import Transport, CloudError
 
 class CloudHTTPTest(unittest.TestCase):
+    def test_instance_replacement_header_is_limited_to_snapshot_streams(self):
+        opener=MagicMock();response=opener.open.return_value.__enter__.return_value
+        response.readline.return_value=b'';response.read.return_value=b'{}'
+        response.headers={}
+        http=Transport('http://localhost:8787','test-publisher',instance_id='mac-a',opener=opener)
+        self.assertEqual(list(http.events()),[])
+        request=opener.open.call_args.args[0]
+        self.assertEqual(request.get_header('X-busy-instance'),'mac-a')
+        http.request('GET','/api/snapshot')
+        self.assertIsNone(opener.open.call_args.args[0].get_header('X-busy-instance'))
+        for ident in ('', 'unsafe instance', '__proto__'):
+            with self.subTest(ident=ident),self.assertRaises(CloudError):
+                Transport('http://localhost:8787','test-publisher',instance_id=ident)
+
     @classmethod
     def setUpClass(cls):
         cls.headers=[]
