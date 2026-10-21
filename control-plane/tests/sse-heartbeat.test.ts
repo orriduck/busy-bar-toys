@@ -5,6 +5,198 @@ import { digest } from "../src/security";
 import { StateStore } from "../src/store";
 import { registerService } from "../src/model";
 
+it("keeps fifteen continuously read legacy consumers bounded across normal lifetime rotations", async () => {
+  const { stub } = await fixture();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const auth = legacyCollector(ctx);
+    const base = Date.now();
+    let now = base;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const timeouts = vi.spyOn(globalThis, "setTimeout");
+    const intervals = vi.spyOn(globalThis, "setInterval");
+    const allReaders: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    type Consumer = {
+      reader: ReadableStreamDefaultReader<Uint8Array>;
+      openedAt: number;
+      expire: () => void;
+      pulse: () => void;
+    };
+    const consumers: Consumer[] = [];
+    const open = async () => {
+      const t = timeouts.mock.calls.length,
+        h = intervals.mock.calls.length;
+      const response = await instance.handle(auth, "/api/events", "GET");
+      expect(response.status).toBe(200);
+      const reader = response.body!.getReader();
+      allReaders.push(reader);
+      await reader.read();
+      consumers.push({
+        reader,
+        openedAt: now,
+        expire: timeouts.mock.calls
+          .slice(t)
+          .find(([, ms]) => ms === 55000)![0] as () => void,
+        pulse: intervals.mock.calls
+          .slice(h)
+          .find(([, ms]) => ms === 2000)![0] as () => void,
+      });
+    };
+    try {
+      for (let n = 0; n < 15; n++) {
+        now = base + n * 2000;
+        await open();
+      }
+      for (let rotation = 0; rotation < 30; rotation++) {
+        const old = consumers.shift()!;
+        now = old.openedAt + 55000;
+        old.expire();
+        expect((instance as any).snapshotStreamHealth().active).toBe(14);
+        expect((await old.reader.read()).done).toBe(true);
+        for (const current of consumers) {
+          current.pulse();
+          expect((await current.reader.read()).done).toBe(false);
+        }
+        now += 1000;
+        await open();
+        expect((instance as any).snapshotStreamHealth()).toMatchObject({
+          active: 15,
+          capacityRejected: 0,
+        });
+      }
+      expect((instance as any).snapshotStreamHealth().closed).toMatchObject({
+        lifetime: 30,
+        backpressure: 0,
+      });
+    } finally {
+      await Promise.all(allReaders.map((reader) => reader.cancel()));
+      clock.mockRestore();
+      timeouts.mockRestore();
+      intervals.mockRestore();
+    }
+  });
+});
+
+it.each(["backpressure", "lifetime"] as const)(
+  "characterizes legacy reconnect overlap until %s cleanup without evicting independent consumers",
+  async (cleanup) => {
+    const { stub } = await fixture();
+    await runInDurableObject(stub, async (instance, ctx) => {
+      const auth = legacyCollector(ctx);
+      const base = Date.now();
+      let now = base;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+      const timeouts = vi.spyOn(globalThis, "setTimeout"),
+        intervals = vi.spyOn(globalThis, "setInterval");
+      const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+      const open = async (identity?: string) => {
+        const response = await instance.handle(
+          auth,
+          "/api/events",
+          "GET",
+          {},
+          identity,
+        );
+        if (response.status === 200) {
+          const reader = response.body!.getReader();
+          readers.push(reader);
+          await reader.read();
+        }
+        return response;
+      };
+      try {
+        for (let n = 0; n < 15; n++) {
+          now = base + n * 2000;
+          expect((await open()).status).toBe(200);
+        }
+        // The edge may still consume this old stream after its terminal client
+        // disconnected. No DO-visible cancel or backpressure has happened yet.
+        expect((await open()).status).toBe(200);
+        const rejected = await open();
+        expect(rejected.status).toBe(429);
+        expect(await rejected.json()).toEqual({ error: "SSE_CAPACITY" });
+        expect((instance as any).snapshotStreamHealth()).toMatchObject({
+          active: 16,
+          legacyProducerActive: 16,
+          capacityRejected: 1,
+        });
+        const pulse = intervals.mock.calls.find(
+          ([, ms]) => ms === 2000,
+        )![0] as () => void;
+        if (cleanup === "backpressure") {
+          pulse(); // Now stop the DO's immediate consumer, unlike terminal-only loss.
+          now += 2001;
+          pulse();
+        } else {
+          now = base + 55000;
+          (
+            timeouts.mock.calls.find(([, ms]) => ms === 55000)![0] as () => void
+          )();
+        }
+        expect((instance as any).snapshotStreamHealth().active).toBe(15);
+        expect((await open()).status).toBe(200);
+        expect((instance as any).snapshotStreamHealth()).toMatchObject({
+          active: 16,
+          capacityRejected: 1,
+          closed: { [cleanup]: 1 },
+        });
+      } finally {
+        await Promise.all(readers.map((reader) => reader.cancel()));
+        clock.mockRestore();
+        timeouts.mockRestore();
+        intervals.mockRestore();
+      }
+    });
+  },
+);
+
+it("keeps the same declared instance at fifteen slots while legacy consumers remain independent", async () => {
+  const { stub } = await fixture();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const auth = legacyCollector(ctx);
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    const open = async (id?: string) => {
+      const r = await instance.handle(auth, "/api/events", "GET", {}, id);
+      expect(r.status).toBe(200);
+      const reader = r.body!.getReader();
+      readers.push(reader);
+      await reader.read();
+    };
+    try {
+      await open("collector-a");
+      for (let n = 0; n < 14; n++) await open();
+      for (let n = 0; n < 10; n++) {
+        await open("collector-a");
+        expect((instance as any).snapshotStreamHealth()).toMatchObject({
+          active: 15,
+          optedInProducerActive: 1,
+          legacyProducerActive: 14,
+          capacityRejected: 0,
+        });
+      }
+      expect((instance as any).snapshotStreamHealth().closed.replaced).toBe(10);
+    } finally {
+      await Promise.all(readers.map((r) => r.cancel()));
+    }
+  });
+});
+
+function legacyCollector(ctx: DurableObjectState) {
+  const store = new StateStore(ctx.storage),
+    state = store.load()!;
+  registerService(
+    state,
+    { id: "legacy", name: "Legacy", template: "custom" },
+    "legacy-hash",
+    "epoch",
+    Date.now(),
+  );
+  store.save(state);
+  return {
+    kind: "publisher" as const,
+    serviceId: "legacy",
+    hash: "legacy-hash",
+  };
+}
 it.each(["publisher", "computer"] as const)(
   "replaces only an opt-in %s instance at capacity before its old cancellation arrives",
   async (kind) => {
